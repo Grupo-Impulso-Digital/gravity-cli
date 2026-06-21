@@ -1,0 +1,40 @@
+# Gravity docs checks for GitLab CI.
+#
+# Set GRAVITY_TOKEN as a *masked, protected* CI/CD variable (Settings > CI/CD >
+# Variables). GRAVITY_API_URL and GRAVITY_SITE can be plain variables.
+#
+# Exit-code convention: 0 pass, 1 findings, 2 error. The `docs:check` job below
+# treats findings (exit 1) as a failure so the pipeline is red on drift; flip
+# `allow_failure` to true if you want findings to be advisory.
+
+variables:
+  GRAVITY_API_URL: "https://app.gravity.dev"
+  GRAVITY_SITE: "docs"
+
+.gravity_base:
+  image: golang:1.25
+  before_script:
+    - go install github.com/impulso/gravity-cli/cmd/gravity@latest
+    - export PATH="$PATH:$(go env GOPATH)/bin"
+
+docs:check:
+  extends: .gravity_base
+  stage: test
+  script:
+    - gravity check docs --ci --format text
+  # Findings (exit 1) fail the job; errors (exit 2) also fail.
+  # allow_failure: true   # uncomment to make findings advisory
+
+api:check:
+  extends: .gravity_base
+  stage: test
+  script:
+    - gravity check api --openapi openapi.yaml --ci --format text
+
+release-notes:
+  extends: .gravity_base
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - gravity release-notes --space changelog --ci --output proposal

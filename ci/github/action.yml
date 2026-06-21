@@ -1,0 +1,50 @@
+name: "Gravity CI"
+description: "Run gravity docs checks and release-notes generation in CI."
+author: "impulso"
+
+inputs:
+  token:
+    description: "Gravity API token (sk_live_...). Pass from a secret, e.g. ${{ secrets.GRAVITY_TOKEN }}."
+    required: true
+  api-url:
+    description: "Gravity API base URL."
+    required: false
+    default: "https://app.gravity.dev"
+  site:
+    description: "Site slug to operate on."
+    required: true
+  command:
+    description: "Which gravity command to run: 'check api', 'check docs', or 'release-notes'."
+    required: true
+    default: "check docs"
+  args:
+    description: "Extra arguments appended to the command (e.g. '--openapi openapi.yaml --format github')."
+    required: false
+    default: "--ci --format github"
+  version:
+    description: "gravity CLI version/ref to build from (git ref of this repo)."
+    required: false
+    default: "main"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.25"
+
+    - name: Install gravity
+      shell: bash
+      run: |
+        go install github.com/impulso/gravity-cli/cmd/gravity@${{ inputs.version }}
+
+    - name: Run gravity
+      shell: bash
+      env:
+        GRAVITY_TOKEN: ${{ inputs.token }}
+        GRAVITY_API_URL: ${{ inputs.api-url }}
+        GRAVITY_SITE: ${{ inputs.site }}
+      run: |
+        # Exit codes: 0 pass, 1 findings, 2 error.
+        gravity ${{ inputs.command }} ${{ inputs.args }}

@@ -1,0 +1,43 @@
+# Bitbucket Pipelines example for the Gravity CLI.
+#
+# Place this content in bitbucket-pipelines.yml at the root of your docs/code
+# repository. Add GRAVITY_TOKEN as a SECURED repository variable
+# (Repository settings > Repository variables). GRAVITY_API_URL and
+# GRAVITY_SITE may be plain variables.
+#
+# Exit-code convention: 0 pass, 1 findings, 2 error. A non-zero exit fails the
+# step, turning the build red on drift or error.
+
+image: golang:1.25
+
+definitions:
+  steps:
+    - step: &gravity-check-docs
+        name: Gravity docs check
+        script:
+          - go install github.com/impulso/gravity-cli/cmd/gravity@latest
+          - export PATH="$PATH:$(go env GOPATH)/bin"
+          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravity.dev}"
+          - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
+          # GRAVITY_TOKEN is injected from the secured repository variable.
+          - gravity check docs --ci --format text
+    - step: &gravity-check-api
+        name: Gravity API drift check
+        script:
+          - go install github.com/impulso/gravity-cli/cmd/gravity@latest
+          - export PATH="$PATH:$(go env GOPATH)/bin"
+          - gravity check api --openapi openapi.yaml --ci --format text
+
+pipelines:
+  pull-requests:
+    "**":
+      - step: *gravity-check-docs
+      - step: *gravity-check-api
+  tags:
+    "v*":
+      - step:
+          name: Gravity release notes
+          script:
+            - go install github.com/impulso/gravity-cli/cmd/gravity@latest
+            - export PATH="$PATH:$(go env GOPATH)/bin"
+            - gravity release-notes --space changelog --ci --output proposal
