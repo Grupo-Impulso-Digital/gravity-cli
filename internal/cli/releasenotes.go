@@ -55,6 +55,14 @@ Output modes:
 			if err != nil {
 				return err
 			}
+			// Resolve the target space with the documented precedence
+			// (flag > env > config); the flag default is empty so GRAVITY_SPACE /
+			// .gravity.yaml are honoured. The command default applies only when
+			// nothing else is set.
+			sp := e.cfg.Space
+			if sp == "" {
+				sp = "changelog"
+			}
 			// The agent loop always runs through the gateway, so auth is
 			// required for every output mode.
 			if err := e.requireAuth(); err != nil {
@@ -82,7 +90,7 @@ Output modes:
 			}
 			fmt.Fprintf(logw, "release-notes: %d commit(s) in range\n", len(commits))
 
-			notes, err := runReleaseNotesAgent(cmd.Context(), e.client, repo, rng, logw)
+			notes, err := runReleaseNotesAgent(cmd.Context(), e.client, repo, rng, logw, &api.MessagesContext{Site: e.cfg.Site, Space: sp})
 			if err != nil {
 				return Fail(CodeError, err)
 			}
@@ -93,10 +101,10 @@ Output modes:
 				notes.Title = defaultTitle(rng)
 			}
 
-			return emitReleaseNotes(cmd, e, space, output, dryRun, changelog, notes)
+			return emitReleaseNotes(cmd, e, sp, output, dryRun, changelog, notes)
 		},
 	}
-	cmd.Flags().StringVar(&space, "space", "changelog", "target space slug")
+	cmd.Flags().StringVar(&space, "space", "", "target space slug (default: changelog)")
 	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag, or first commit)")
 	cmd.Flags().StringVar(&to, "to", "", "end git ref (default: HEAD)")
 	cmd.Flags().StringVar(&output, "output", outputProposal, "proposal|file|stdout")
@@ -124,13 +132,14 @@ func defaultTitle(rng git.Range) string {
 }
 
 // runReleaseNotesAgent runs the agent loop and returns the parsed submission.
-func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, logw io.Writer) (*agent.ReleaseNotesInput, error) {
+func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, logw io.Writer, mctx *api.MessagesContext) (*agent.ReleaseNotesInput, error) {
 	tools := append(agent.GitTools(repo), agent.SubmitReleaseNotesTool())
 	runner := &agent.Runner{
-		Client: client,
-		System: prompts.ReleaseNotes,
-		Tools:  tools,
-		Log:    logw,
+		Client:  client,
+		System:  prompts.ReleaseNotes,
+		Tools:   tools,
+		Context: mctx,
+		Log:     logw,
 	}
 	kickoff := fmt.Sprintf(
 		"Generate release notes for the changes between %s and %s. "+

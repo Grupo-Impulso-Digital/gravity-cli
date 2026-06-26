@@ -113,15 +113,23 @@ type ToolChoice struct {
 	Name string `json:"name,omitempty"`
 }
 
+// MessagesContext lets the caller scope the platform gateway's RAG to a
+// specific site/space. Absent context is treated as org/default-site scope.
+type MessagesContext struct {
+	Site  string `json:"site,omitempty"`
+	Space string `json:"space,omitempty"`
+}
+
 // MessagesRequest is the request body of POST /api/llm/v1/messages.
 type MessagesRequest struct {
-	Model       string      `json:"model,omitempty"`
-	System      string      `json:"system,omitempty"`
-	Messages    []Message   `json:"messages"`
-	Tools       []Tool      `json:"tools,omitempty"`
-	ToolChoice  *ToolChoice `json:"tool_choice,omitempty"`
-	MaxTokens   int         `json:"max_tokens,omitempty"`
-	Temperature *float64    `json:"temperature,omitempty"`
+	Model       string           `json:"model,omitempty"`
+	System      string           `json:"system,omitempty"`
+	Messages    []Message        `json:"messages"`
+	Tools       []Tool           `json:"tools,omitempty"`
+	ToolChoice  *ToolChoice      `json:"tool_choice,omitempty"`
+	MaxTokens   int              `json:"max_tokens,omitempty"`
+	Temperature *float64         `json:"temperature,omitempty"`
+	Context     *MessagesContext `json:"context,omitempty"`
 }
 
 // Usage reports token counts.

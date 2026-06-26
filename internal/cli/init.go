@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -42,6 +43,9 @@ func newInitCmd(gf *globalFlags) *cobra.Command {
 			if apiURL == "" {
 				apiURL = firstNonEmpty(gf.apiURL, os.Getenv(config.EnvAPIURL))
 			}
+			if space == "" {
+				space = os.Getenv(config.EnvSpace)
+			}
 
 			reader := bufio.NewReader(cmd.InOrStdin())
 			if !nonInt {
@@ -54,6 +58,13 @@ func newInitCmd(gf *globalFlags) *cobra.Command {
 			}
 			if apiURL == "" {
 				return Failf(CodeError, "api URL is required (pass --api-url or answer the prompt)")
+			}
+
+			// Refuse to clobber an existing config unless --force is set.
+			if !confirm {
+				if _, statErr := os.Stat(filepath.Join(dir, config.ProjectFileName)); statErr == nil {
+					return Failf(CodeError, "%s already exists; pass --force to overwrite", filepath.Join(dir, config.ProjectFileName))
+				}
 			}
 
 			path, err := config.WriteProjectConfig(dir, config.ProjectConfig{

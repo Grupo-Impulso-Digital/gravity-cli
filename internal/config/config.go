@@ -16,6 +16,7 @@ const (
 	EnvToken  = "GRAVITY_TOKEN"
 	EnvAPIURL = "GRAVITY_API_URL"
 	EnvSite   = "GRAVITY_SITE"
+	EnvSpace  = "GRAVITY_SPACE"
 )
 
 // Config is the fully-resolved configuration for a command invocation.
@@ -99,6 +100,9 @@ func Resolve(flags Flags, projectDir string) (Config, error) {
 	}
 	if val := os.Getenv(EnvSite); val != "" {
 		cfg.Site = val
+	}
+	if val := os.Getenv(EnvSpace); val != "" {
+		cfg.Space = val
 	}
 
 	// Highest precedence: explicit flags.

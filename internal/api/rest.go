@@ -206,3 +206,51 @@ func (c *Client) CreateReleaseNotes(ctx context.Context, siteSlug string, req Re
 	}
 	return &out, nil
 }
+
+// SpaceUpsertRequest is the body of POST .../spaces. Upsert is idempotent on
+// slug: an existing space is returned (200) rather than duplicated (201).
+type SpaceUpsertRequest struct {
+	Slug        string `json:"slug"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// EnsureSpace calls POST /api/v1/sites/:siteSlug/spaces, creating the space if
+// it does not exist and returning the existing one otherwise.
+func (c *Client) EnsureSpace(ctx context.Context, siteSlug string, req SpaceUpsertRequest) (*Space, error) {
+	var out Space
+	if err := c.Post(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/spaces", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BlockInput is a single block to author within a page upsert.
+type BlockInput struct {
+	Key           string         `json:"key"`
+	Type          string         `json:"type"`
+	Ownership     string         `json:"ownership"`
+	Content       any            `json:"content"`
+	SourceBinding *SourceBinding `json:"sourceBinding,omitempty"`
+	Position      int            `json:"position"`
+}
+
+// PageUpsertRequest is the body of POST .../pages. Upsert is keyed on
+// (spaceSlug, slug); it produces a DRAFT plus an open proposal and never
+// publishes directly.
+type PageUpsertRequest struct {
+	SpaceSlug string       `json:"spaceSlug"`
+	Slug      string       `json:"slug"`
+	Title     string       `json:"title"`
+	Blocks    []BlockInput `json:"blocks"`
+}
+
+// UpsertPage calls POST /api/v1/sites/:siteSlug/pages. The response mirrors the
+// release-notes shape (pageId, pageSlug, proposalId, status, reviewUrl).
+func (c *Client) UpsertPage(ctx context.Context, siteSlug string, req PageUpsertRequest) (*ReleaseNotesResponse, error) {
+	var out ReleaseNotesResponse
+	if err := c.Post(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/pages", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

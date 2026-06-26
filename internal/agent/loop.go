@@ -30,6 +30,9 @@ type Runner struct {
 	MaxTokens     int
 	MaxIterations int
 	MaxToolCalls  int
+	// Context optionally scopes the gateway's RAG to a site/space. Optional;
+	// absent context is treated as org/default-site scope by the backend.
+	Context *api.MessagesContext
 	// Log receives human-readable progress lines. Optional.
 	Log io.Writer
 }
@@ -100,6 +103,7 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 			Tools:      defs,
 			ToolChoice: &api.ToolChoice{Type: api.ToolChoiceAuto},
 			MaxTokens:  maxTokens,
+			Context:    r.Context,
 		}
 		resp, err := r.Client.Messages(ctx, req)
 		if err != nil {

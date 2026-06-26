@@ -75,7 +75,7 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 				if err != nil {
 					return Fail(CodeError, fmt.Errorf("resolve range: %w", err))
 				}
-				aiFindings, err := runDocsGapAgent(cmd.Context(), e.client, repo, rng, pages, logWriter(cmd, ci))
+				aiFindings, err := runDocsGapAgent(cmd.Context(), e.client, repo, rng, pages, logWriter(cmd, ci), &api.MessagesContext{Site: siteSlug, Space: e.cfg.Space})
 				if err != nil {
 					return Fail(CodeError, err)
 				}
@@ -133,13 +133,14 @@ func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string) outp
 	return res
 }
 
-func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, pages []api.Page, logw io.Writer) ([]output.Finding, error) {
+func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, pages []api.Page, logw io.Writer, mctx *api.MessagesContext) ([]output.Finding, error) {
 	tools := append(agent.GitTools(repo), agent.ReportFindingsTool())
 	runner := &agent.Runner{
-		Client: client,
-		System: prompts.DocsGap,
-		Tools:  tools,
-		Log:    logw,
+		Client:  client,
+		System:  prompts.DocsGap,
+		Tools:   tools,
+		Context: mctx,
+		Log:     logw,
 	}
 	digest := docsDigest(pages)
 	kickoff := fmt.Sprintf(
