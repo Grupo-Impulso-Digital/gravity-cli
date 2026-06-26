@@ -15,7 +15,8 @@ A complete, tested Go CLI built to the Gravity CI-companion contract.
 
 - `gravity version` — version string (overridable via `-ldflags -X main.version`).
 - `gravity init` — writes `.gravity.yaml` (site, apiUrl, optional space);
-  interactive prompts with `--yes` for non-interactive flag/env use.
+  interactive prompts with `--yes` for non-interactive flag/env use. Refuses to
+  overwrite an existing `.gravity.yaml` unless `--force` is passed.
 - `gravity auth login --token --api-url` — stores credentials in
   `~/.config/gravity/config.yaml` at mode `0600`.
 - `gravity doctor` — calls `/api/v1/whoami` + `/api/llm/v1/config`; reports token
@@ -31,6 +32,15 @@ A complete, tested Go CLI built to the Gravity CI-companion contract.
 - `gravity check docs` — pulls `/pages`, verifies machine/hybrid source bindings
   (stale), and with `--ai` runs the docs-gap agent over the `from..to` diff plus
   a docs digest, merging deterministic + AI findings.
+- `gravity selfdoc` — keeps the CLI's own docs current: walks the cobra command
+  tree and deterministically (no AI) emits a `command-reference` page (machine
+  blocks: command table, per-command usage + flag tables, global flags, exit
+  codes — each bound to its source file via `sourceBinding` kind `cli`) plus an
+  `overview` page (one `hybrid` prose block humans may edit). Ensures the target
+  space (`--space`, default `cli`, honours `GRAVITY_SPACE`/`.gravity.yaml`) then
+  upserts both pages as draft + proposal (`status: "proposed"`); `--output
+  proposal|stdout`, `--dry-run`, `--title`. Must run inside the CLI git repo so
+  block hashes use the same git toplevel as the drift checker.
 
 ### Internals
 

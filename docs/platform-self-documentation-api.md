@@ -1,5 +1,16 @@
 # Platform request: self-documentation API for the gravity CLI
 
+> **Status: delivered.** Both requested endpoints — `POST .../spaces` and
+> `POST .../pages` — are live. The page upsert lands a **draft page + open
+> proposal** with `status: "proposed"` (not `"draft"`), matches incoming blocks
+> to existing ones by stable block `key` first, then by `sourceBinding.ref`, and
+> machine blocks carry `sourceBinding.kind: "cli"`. One deviation from the spec
+> below: there is **no `markdown` block type** — prose/code/table genres are used
+> instead. The canonical, shipped contract is
+> `gravity/docs/cli-api-contract.md`; the notes inline below annotate where
+> delivery differs from this original request. The CLI consumes it via
+> `gravity selfdoc`.
+
 **Audience:** the Gravity platform agent (the Workers app behind
 `https://gravity.dave-vermette-1.workers.dev`).
 **Requested by:** the `gravity` CLI (this repo), so it can maintain a dedicated
@@ -53,6 +64,9 @@ endpoints must follow the same conventions so no client rework is needed:
 
 ## Endpoint 1 — Ensure a space (idempotent create)
 
+> **Delivered as specified.** Idempotent on `slug` (200 if it exists, 201 if
+> created), returns the `Space` shape.
+
 ```
 POST /api/v1/sites/:siteSlug/spaces
 ```
@@ -83,6 +97,14 @@ Response (`Space` shape):
 ---
 
 ## Endpoint 2 — Upsert a page + its blocks (draft + proposal)
+
+> **Delivered, with two deviations from the spec below.** (1) The returned
+> `status` is **`"proposed"`**, not `"draft"` — repeated upserts of the same page
+> reuse the same open proposal (keyed `cli-upsert:<pageId>`) rather than
+> accruing duplicates. (2) Block matching is by stable `key` **first**, then by
+> `sourceBinding.ref` — exactly the merge governance shipped. There is **no
+> `markdown` block type**; the CLI emits `prose`/`code`/`table` genres instead.
+> Machine blocks use `sourceBinding.kind: "cli"`.
 
 ```
 POST /api/v1/sites/:siteSlug/pages

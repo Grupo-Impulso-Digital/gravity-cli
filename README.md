@@ -43,7 +43,8 @@ gravity doctor
 Configuration is resolved with this precedence (**highest first**):
 
 1. **flags** — `--token`, `--api-url`, `--site`, `--space`, ...
-2. **environment** — `GRAVITY_TOKEN`, `GRAVITY_API_URL`, `GRAVITY_SITE`
+2. **environment** — `GRAVITY_TOKEN`, `GRAVITY_API_URL`, `GRAVITY_SITE`,
+   `GRAVITY_SPACE`
 3. **project file** — `./.gravity.yaml`
 4. **user file** — `~/.config/gravity/config.yaml`
 
@@ -130,10 +131,47 @@ gravity check docs --site docs --ai --from v1.2.0 --to HEAD
 
 Flags: `--site`, `--from`, `--to`, `--ai`, `--ci`, `--format text|json|github`.
 
+### `gravity selfdoc`
+
+Keep the CLI's own documentation current. `selfdoc` walks the cobra command tree
+and emits a documentation space describing every command, its flags, and the
+exit-code contract — **deterministically, with no AI/agent loop**. It produces
+two pages in the target space (default `cli`):
+
+- **command-reference** — machine blocks (command table, per-command usage +
+  flag tables, global flags, exit codes). Each block is bound to its real source
+  file via `sourceBinding` (kind `cli`, sha256 hash), so `gravity check docs`
+  can later flag drift against the binary.
+- **overview** — a single `hybrid` prose block humans may freely edit; the CLI
+  never overwrites human-authored fields on re-run.
+
+```bash
+# Ensure the space and upsert both pages as drafts + open proposals (default)
+gravity selfdoc --site docs --space cli
+
+# Print the generated blocks without posting
+gravity selfdoc --output stdout
+
+# Show the exact JSON that would be posted (EnsureSpace + each page) without calling the API
+gravity selfdoc --dry-run
+
+# Override the reference page's title
+gravity selfdoc --title "gravity CLI reference"
+```
+
+Flags: `--space` (default `cli`; honours `GRAVITY_SPACE` / `.gravity.yaml` when
+unset), `--output proposal|stdout` (default `proposal`), `--dry-run`, `--title`.
+Like `release-notes` and the page-upsert path, `selfdoc` writes a **draft +
+proposal** (`status: "proposed"`) and never publishes — a human reviews and
+merges in-app. Must run inside the CLI's own git repo so block hashes use the
+same git toplevel the drift checker uses.
+
 ### Other commands
 
 - `gravity version` — print the version.
-- `gravity init` — write `.gravity.yaml` (interactive, or `--yes` for flags/env).
+- `gravity init` — write `.gravity.yaml` (site, apiUrl, optional default space;
+  interactive, or `--yes` for flags/env). Refuses to clobber an existing
+  `.gravity.yaml` unless `--force` is passed.
 - `gravity auth login --token <sk> --api-url <url>` — store credentials (`0600`).
 - `gravity doctor` — check token validity, org, model, tone, and provider key
   via `/whoami` + `/llm/v1/config`. Exits `2` on auth/network failure.
@@ -177,7 +215,10 @@ internal/output        text / json / github findings formatters
 ```
 
 The agent loop (`internal/agent`) calls `POST /api/llm/v1/messages` (an
-Anthropic Messages API subset) through the gateway. The model is given
+Anthropic Messages API subset) through the gateway. Requests carry an optional
+`{ site, space }` context so the gateway can scope its server-side
+RAG/recall to the right site; an absent or unknown slug falls back to
+org/default-site scope. The model is given
 read-only git tools (`git_log`, `git_diff`, `git_show`, `list_files`,
 `read_file`, `grep`) — all paths sandboxed to the repo root — plus a terminal
 "submit" tool (`submit_release_notes` or `report_findings`) that ends the loop

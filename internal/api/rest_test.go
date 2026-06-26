@@ -190,6 +190,185 @@ func TestCreateReleaseNotesRequestShape(t *testing.T) {
 	}
 }
 
+func TestEnsureSpaceRequestShape(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/sites/docs/spaces" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer sk_live_xyz" {
+			t.Errorf("missing bearer token: %q", r.Header.Get("Authorization"))
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "sp_1", "slug": "cli", "name": "Gravity CLI",
+		})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "sk_live_xyz")
+	sp, err := c.EnsureSpace(context.Background(), "docs", api.SpaceUpsertRequest{
+		Slug:        "cli",
+		Name:        "Gravity CLI",
+		Description: "Living reference for the CLI",
+	})
+	if err != nil {
+		t.Fatalf("ensure space: %v", err)
+	}
+	if sp.Slug != "cli" || sp.Name != "Gravity CLI" {
+		t.Errorf("decoded space wrong: %+v", sp)
+	}
+	if captured["slug"] != "cli" || captured["name"] != "Gravity CLI" {
+		t.Errorf("request body not shaped correctly: %+v", captured)
+	}
+	if captured["description"] != "Living reference for the CLI" {
+		t.Errorf("description not sent: %+v", captured["description"])
+	}
+}
+
+func TestEnsureSpaceError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"code": "forbidden", "message": "not authorized for site"},
+		})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "bad")
+	_, err := c.EnsureSpace(context.Background(), "docs", api.SpaceUpsertRequest{Slug: "cli"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	apiErr, ok := err.(*api.APIError)
+	if !ok {
+		t.Fatalf("expected *api.APIError, got %T: %v", err, err)
+	}
+	if apiErr.Code != "forbidden" || apiErr.Message != "not authorized for site" {
+		t.Errorf("envelope not parsed: code=%q msg=%q", apiErr.Code, apiErr.Message)
+	}
+}
+
+func TestUpsertPageRequestShape(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/sites/docs/pages" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer sk_live_pg" {
+			t.Errorf("missing bearer token: %q", r.Header.Get("Authorization"))
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("expected JSON content type, got %q", ct)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"pageId": "p9", "pageSlug": "command-reference", "proposalId": "prop_2",
+			"status": "proposed", "reviewUrl": "https://app/r/prop_2",
+		})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "sk_live_pg")
+	resp, err := c.UpsertPage(context.Background(), "docs", api.PageUpsertRequest{
+		SpaceSlug: "cli",
+		Slug:      "command-reference",
+		Title:     "Command reference",
+		Blocks: []api.BlockInput{
+			{
+				Key:       "cmdref-0",
+				Type:      "heading",
+				Ownership: "machine",
+				Content:   map[string]any{"text": "gravity", "level": 1},
+				SourceBinding: &api.SourceBinding{
+					Kind:      "cli",
+					Ref:       "internal/cli/root.go",
+					Hash:      "sha256:deadbeef",
+					Generator: "gravity selfdoc v0.1.0",
+				},
+				Position: 0,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("upsert page: %v", err)
+	}
+	// Response decodes into *ReleaseNotesResponse.
+	if resp.PageSlug != "command-reference" || resp.Status != "proposed" || resp.ProposalID != "prop_2" {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+
+	// Top-level page fields.
+	if captured["spaceSlug"] != "cli" || captured["slug"] != "command-reference" || captured["title"] != "Command reference" {
+		t.Errorf("page envelope not shaped correctly: %+v", captured)
+	}
+
+	blocks, ok := captured["blocks"].([]any)
+	if !ok || len(blocks) != 1 {
+		t.Fatalf("expected 1 block in body, got %v", captured["blocks"])
+	}
+	blk, ok := blocks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("block not an object: %v", blocks[0])
+	}
+	if blk["key"] != "cmdref-0" {
+		t.Errorf("block key = %v, want cmdref-0", blk["key"])
+	}
+	if blk["type"] != "heading" || blk["ownership"] != "machine" {
+		t.Errorf("block type/ownership wrong: %+v", blk)
+	}
+	bind, ok := blk["sourceBinding"].(map[string]any)
+	if !ok {
+		t.Fatalf("block sourceBinding missing/not object: %v", blk["sourceBinding"])
+	}
+	if bind["kind"] != "cli" || bind["ref"] != "internal/cli/root.go" {
+		t.Errorf("sourceBinding not shaped correctly: %+v", bind)
+	}
+	if bind["hash"] != "sha256:deadbeef" {
+		t.Errorf("sourceBinding hash = %v", bind["hash"])
+	}
+}
+
+func TestUpsertPageError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"code": "invalid_block", "message": "block 0 has invalid type"},
+		})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "t")
+	_, err := c.UpsertPage(context.Background(), "docs", api.PageUpsertRequest{
+		SpaceSlug: "cli", Slug: "x", Title: "X",
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	apiErr, ok := err.(*api.APIError)
+	if !ok {
+		t.Fatalf("expected *api.APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d", apiErr.StatusCode)
+	}
+	if apiErr.Code != "invalid_block" || apiErr.Message != "block 0 has invalid type" {
+		t.Errorf("envelope not parsed: code=%q msg=%q", apiErr.Code, apiErr.Message)
+	}
+}
+
 func TestErrorEnvelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
