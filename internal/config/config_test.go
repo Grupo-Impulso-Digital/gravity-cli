@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/impulso/gravity-cli/internal/config"
@@ -10,14 +11,14 @@ import (
 
 func TestResolvePrecedence_EnvBeatsFile(t *testing.T) {
 	dir := t.TempDir()
-	// Project file sets a site + apiUrl + token.
-	writeYAML(t, filepath.Join(dir, config.ProjectFileName), "site: file-site\napiUrl: https://file\ntoken: file-token\n")
+	// Project file sets a site + apiUrl (never a token — see TestProjectTokenRejected).
+	writeYAML(t, filepath.Join(dir, config.ProjectFileName), "site: file-site\napiUrl: https://file\n")
 
 	// Isolate the user-level config so a real one on disk can't interfere.
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	t.Setenv(config.EnvSite, "env-site")
-	t.Setenv(config.EnvToken, "")  // empty env should NOT override file
+	t.Setenv(config.EnvToken, "")  // empty env should NOT override
 	t.Setenv(config.EnvAPIURL, "") // empty env should NOT override file
 
 	cfg, err := config.Resolve(config.Flags{}, dir)
@@ -32,8 +33,22 @@ func TestResolvePrecedence_EnvBeatsFile(t *testing.T) {
 	if cfg.APIURL != "https://file" {
 		t.Errorf("file value should survive when env is empty; got %q", cfg.APIURL)
 	}
-	if cfg.Token != "file-token" {
-		t.Errorf("file token should survive; got %q", cfg.Token)
+}
+
+// TestProjectTokenRejected asserts the hardening: a token committed to the
+// project file is a loud error, never silently honored.
+func TestProjectTokenRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeYAML(t, filepath.Join(dir, config.ProjectFileName), "site: file-site\napiUrl: https://file\ntoken: sk_live_leaked\n")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(config.EnvToken, "")
+
+	_, err := config.Resolve(config.Flags{}, dir)
+	if err == nil {
+		t.Fatal("expected an error when a token is committed to .gravity.yaml")
+	}
+	if !strings.Contains(err.Error(), "token must not be committed") {
+		t.Errorf("error should explain the token footgun; got %q", err.Error())
 	}
 }
 
@@ -62,7 +77,7 @@ func TestResolvePrecedence_ProjectBeatsUser(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writeYAML(t, userPath, "token: user-token\napiUrl: https://user\nsite: user-site\n")
+	writeYAML(t, userPath, "token: user-token\napiUrl: https://user\n")
 
 	projDir := t.TempDir()
 	writeYAML(t, filepath.Join(projDir, config.ProjectFileName), "site: project-site\n")
@@ -77,14 +92,29 @@ func TestResolvePrecedence_ProjectBeatsUser(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	if cfg.Site != "project-site" {
-		t.Errorf("project file should beat user file for site; got %q", cfg.Site)
+		t.Errorf("project file should provide the site; got %q", cfg.Site)
 	}
-	// User token survives because the project file doesn't set it.
+	// User token survives because the project file cannot carry one.
 	if cfg.Token != "user-token" {
 		t.Errorf("user token should survive; got %q", cfg.Token)
 	}
 	if cfg.APIURL != "https://user" {
 		t.Errorf("user apiUrl should survive; got %q", cfg.APIURL)
+	}
+}
+
+// TestResolveDefaultAPIURL asserts the canonical default fills in when nothing
+// else sets a URL.
+func TestResolveDefaultAPIURL(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(config.EnvAPIURL, "")
+	cfg, err := config.Resolve(config.Flags{}, dir)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if cfg.APIURL != config.DefaultAPIURL {
+		t.Errorf("expected default API URL %q; got %q", config.DefaultAPIURL, cfg.APIURL)
 	}
 }
 
@@ -114,7 +144,6 @@ func TestWriteProjectConfigRoundTrip(t *testing.T) {
 	if cfg.Site != "docs" {
 		t.Errorf("site round-trip = %q", cfg.Site)
 	}
-	// apiUrl must survive viper's case-folding on write+read.
 	if cfg.APIURL != "https://app.example" {
 		t.Errorf("apiUrl round-trip = %q", cfg.APIURL)
 	}

@@ -11,6 +11,7 @@ import (
 const (
 	ToolSubmitReleaseNotes = "submit_release_notes"
 	ToolReportFindings     = "report_findings"
+	ToolSubmitAtoms        = "submit_atoms"
 )
 
 // ReleaseNotesInput is the structured input the model passes to
@@ -32,6 +33,55 @@ type FindingsInput struct {
 		Detail        string `json:"detail"`
 		SuggestedPage string `json:"suggestedPage"`
 	} `json:"findings"`
+}
+
+// AtomsInput is the structured input the model passes to submit_atoms.
+type AtomsInput struct {
+	Atoms []struct {
+		Content string   `json:"content"`
+		Tags    []string `json:"tags"`
+		Links   []string `json:"links"`
+	} `json:"atoms"`
+}
+
+// SubmitAtomsTool builds the terminal tool that ends the nucleus-distill loop.
+func SubmitAtomsTool() Tool {
+	return Tool{
+		Terminal: true,
+		Def: api.Tool{
+			Name:        ToolSubmitAtoms,
+			Description: "Submit the distilled memory atoms. Call this exactly once when done, with an empty array if there is nothing worth remembering.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"atoms": map[string]any{
+						"type":        "array",
+						"description": "Small, self-contained facts worth remembering across the product.",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"content": map[string]any{"type": "string", "description": "One concise, self-contained fact (1-2 sentences)."},
+								"tags":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+								"links":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional ids of related atoms."},
+							},
+							"required": []any{"content"},
+						},
+					},
+				},
+				"required": []any{"atoms"},
+			},
+		},
+		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
+			return "", nil
+		},
+	}
+}
+
+// ParseAtoms decodes a submit_atoms input.
+func ParseAtoms(raw json.RawMessage) (AtomsInput, error) {
+	var in AtomsInput
+	err := json.Unmarshal(raw, &in)
+	return in, err
 }
 
 // SubmitReleaseNotesTool builds the terminal tool that ends the release-notes

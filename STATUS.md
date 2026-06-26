@@ -14,13 +14,16 @@ A complete, tested Go CLI built to the Gravity CI-companion contract.
 ### Commands (cobra)
 
 - `gravity version` — version string (overridable via `-ldflags -X main.version`).
-- `gravity init` — writes `.gravity.yaml` (site, apiUrl, optional space);
-  interactive prompts with `--yes` for non-interactive flag/env use. Refuses to
-  overwrite an existing `.gravity.yaml` unless `--force` is passed.
-- `gravity auth login --token --api-url` — stores credentials in
-  `~/.config/gravity/config.yaml` at mode `0600`.
-- `gravity doctor` — calls `/api/v1/whoami` + `/api/llm/v1/config`; reports token
-  validity, org, model, tone, hasKey; exit `2` on auth/network failure.
+- `gravity init` — scaffolds a rich, commented `.gravity.yaml` (connection,
+  product/multi-repo identity, spaces, example source/document mappings);
+  interactive prompts with `--yes` for non-interactive flag/env use, `--migrate`
+  to upgrade a legacy file in place. Refuses to overwrite unless `--force`.
+- `gravity auth login --token [--api-url]` — stores the token in
+  `~/.config/gravity/config.yaml` at mode `0600`; URL defaults to the platform.
+- `gravity doctor` — loads + validates `.gravity.yaml`, prints the resolved
+  configuration with the source of each value, then calls `/api/v1/whoami` +
+  `/api/llm/v1/config`; reports token validity, org, model, tone, hasKey; exit
+  `2` on config/auth/network failure.
 - `gravity release-notes` — resolves the git range, runs the release-notes agent
   loop (git tools + `submit_release_notes`), and routes output to
   `proposal` (POST + review URL) / `file` (prepend `CHANGELOG.md`) / `stdout`;
@@ -32,16 +35,23 @@ A complete, tested Go CLI built to the Gravity CI-companion contract.
 - `gravity check docs` — pulls `/pages`, verifies machine/hybrid source bindings
   (stale), and with `--ai` runs the docs-gap agent over the `from..to` diff plus
   a docs digest, merging deterministic + AI findings.
-- `gravity selfdoc` — keeps the CLI's own docs current: walks the cobra command
-  tree and deterministically (no AI) emits a `command-reference` page (machine
-  blocks: command table, per-command usage + flag tables, global flags, exit
-  codes — each bound to its source file via `sourceBinding` kind `cli`) plus an
-  `overview` page (one `hybrid` prose block humans may edit). Ensures the target
-  space (`--space`, default `cli`, honours `GRAVITY_SPACE`/`.gravity.yaml`) then
-  upserts both pages as draft + proposal (`status: "proposed"`); `--output
-  proposal|stdout`, `--dry-run`, `--title`. Must run inside the CLI git repo so
-  block hashes use the same git toplevel as the drift checker.
-
+- `gravity sync` — authors the `sources` + `documents` mappings from
+  `.gravity.yaml`: OpenAPI specs → machine-owned `api` blocks (identity keys,
+  whole-file sha256 binding, satisfy `check api` by construction); Markdown →
+  native heading/table/code blocks with the remainder preserved verbatim as
+  prose (`as: page`), or a versioned release (`as: release`). `--only api|docs`,
+  `--page`, `--space`, `--output proposal|stdout`, `--dry-run`, `--ci`. Writes
+  draft + proposal; exit `0/2` only.
+- `gravity capture` (preview, greenfield) — triggers the platform agent runner to
+  navigate/screenshot an app and attach artifacts as a draft + proposal; `status
+  <runId>` polls. Feature-gated: unavailable → exit 0 + notice (`--require` →
+  exit 2); when live, succeeded=0/partial=1/failed=2. Contract defined in
+  `internal/api/capture.go`.
+- `gravity nucleus query|sync` (preview, greenfield) — `query` retrieves memory
+  atoms; `sync` distills atoms from code changes (agent loop + `submit_atoms`) and
+  contributes them. Feature-gated; `sync` pre-checks availability before spending
+  LLM calls. Atom retrieval also augments release-notes/check-docs best-effort
+  (`enrichKickoff`). Contract in `internal/api/nucleus.go`.
 ### Internals
 
 - **HTTP client** (`internal/api`) — built exactly to the contract: bearer auth
@@ -59,8 +69,17 @@ A complete, tested Go CLI built to the Gravity CI-companion contract.
 - **Checks** (`internal/checks`) — libopenapi v2/v3 operation extraction, the
   operation diff, and source-binding hash verification with explicit skip
   reasons.
-- **Config** (`internal/config`) — viper-based precedence: flags > env > project
-  file > user file; empty env values do not clobber file values.
+- **Feature gate** (`internal/api`, `internal/cli/feature.go`) —
+  `(*APIError).IsUnavailable()` (404/501 or `not_implemented`/`feature_disabled`/
+  `unknown_route`) plus `WhoAmI.Features`; `skippableFeature` turns "endpoint not
+  live yet" into a notice + skip (or a hard error with `--require`), and `doctor`
+  reports each preview feature's availability.
+- **Config** (`internal/config`) — typed precedence (flags > env > project file >
+  user file) with no viper dependency; empty values never clobber lower-precedence
+  ones. A typed `.gravity.yaml` manifest (multi-repo product identity, spaces,
+  source/document mappings, knowledge namespace) is loaded and validated, the
+  token is rejected if committed to the project file, and the API URL has a single
+  built-in default (`DefaultAPIURL`).
 - **Output** (`internal/output`) — text, JSON, and GitHub-annotation formatters
   with stable severity-ordered output and AI-severity normalisation.
 
@@ -76,7 +95,12 @@ A complete, tested Go CLI built to the Gravity CI-companion contract.
   envelope; LLM message string-vs-array content marshalling.
 - `internal/checks` — OpenAPI parse + undocumented/orphaned/changed diff on a
   fixture spec; binding hash fresh/stale/skip cases.
-- `internal/config` — env beats file; flags beat everything; project beats user.
+- `internal/docs` — OpenAPI→api blocks satisfy `check api` (binding verified,
+  zero drift); Markdown→native heading/table/code blocks with verbatim prose;
+  deterministic/idempotent re-authoring.
+- `internal/config` — env beats file; flags beat everything; project beats user;
+  committed token rejected; default API URL applied; manifest defaults,
+  multi-repo `PageTarget` namespacing, and validation errors.
 - `internal/output` — text/json/github formatters and severity normalisation.
 
 ### CI ergonomics (`ci/`)

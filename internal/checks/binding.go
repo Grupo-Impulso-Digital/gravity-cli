@@ -31,6 +31,26 @@ type BindingCheck struct {
 	Got  string
 }
 
+// HashRepoFile computes the lowercase hex sha256 of a repo-relative file inside
+// repoRoot, applying the SAME sandbox rules (resolveRepoPath) and digest
+// (hashFile) that VerifyBinding uses. Authoring producers call this so an
+// authored block's recorded hash provably matches what the drift checker later
+// recomputes for the same file.
+func HashRepoFile(repoRoot, ref string) (string, error) {
+	clean, err := resolveRepoPath(repoRoot, ref)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", errors.New("ref is a directory")
+	}
+	return hashFile(clean)
+}
+
 // hashFile computes the sha256 of the file at path.
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path)

@@ -3,40 +3,46 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/impulso/gravity-cli/internal/config"
 )
 
 func newDoctorCmd(gf *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check token validity and gateway configuration",
-		Long:  "Calls /api/v1/whoami and /api/llm/v1/config and reports token validity, org, model, tone, and whether a provider key is configured.\nExits 2 on auth or network failure.",
+		Short: "Validate configuration, token, and gateway",
+		Long:  "Loads and validates .gravity.yaml, prints the resolved configuration (and where each value came from), then calls /api/v1/whoami and /api/llm/v1/config to verify the token and gateway.\nExits 2 on a config, auth, or network failure.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			e, err := resolveEnv(*gf, "")
 			if err != nil {
 				return err
 			}
+			out := cmd.OutOrStdout()
+			printConfigSummary(out, gf, e)
+
 			if err := e.requireAuth(); err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "API URL: %s\n", e.cfg.APIURL)
 
 			who, err := e.client.WhoAmI(cmd.Context())
 			if err != nil {
 				return Fail(CodeError, fmt.Errorf("whoami failed: %w", classifyDoctorErr(err)))
 			}
-			fmt.Fprintf(out, "Token:   valid (%s)\n", who.KeyHint)
+			fmt.Fprintf(out, "\nToken:   valid (%s)\n", who.KeyHint)
 			fmt.Fprintf(out, "Org:     %s (%s)\n", who.OrganizationName, who.OrganizationID)
 			if who.DefaultSiteSlug != nil {
 				fmt.Fprintf(out, "Default site: %s\n", *who.DefaultSiteSlug)
 			} else {
 				fmt.Fprintln(out, "Default site: (none)")
 			}
+			fmt.Fprintf(out, "Runner (capture): %s\n", featureState(who.Features[featureCaptures]))
+			fmt.Fprintf(out, "Nucleus (memory): %s\n", featureState(who.Features[featureNucleus]))
 
 			cfg, err := e.client.LLMConfig(cmd.Context())
 			if err != nil {
@@ -57,6 +63,105 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 		},
 	}
 	return cmd
+}
+
+// printConfigSummary reports the resolved configuration and where each value
+// came from, plus a summary of the project manifest.
+func printConfigSummary(out io.Writer, gf *globalFlags, e *env) {
+	var projSite, projAPIURL, projSpace string
+	if e.proj != nil {
+		projSite = e.proj.Site
+		projAPIURL = e.proj.APIURL
+		projSpace = e.proj.Spaces.Default
+	}
+
+	apiSrc := fieldSource(gf.apiURL, config.EnvAPIURL, projAPIURL)
+	if apiSrc == "" {
+		if e.cfg.APIURL == config.DefaultAPIURL {
+			apiSrc = "default"
+		} else {
+			apiSrc = "user file"
+		}
+	}
+	fmt.Fprintf(out, "API URL: %s  (%s)\n", e.cfg.APIURL, apiSrc)
+	fmt.Fprintf(out, "Site:    %s  (%s)\n", orUnset(e.cfg.Site), srcOrUnset(fieldSource(gf.site, config.EnvSite, projSite)))
+	fmt.Fprintf(out, "Space:   %s  (%s)\n", orUnset(e.cfg.Space), srcOrUnset(fieldSource("", config.EnvSpace, projSpace)))
+	fmt.Fprintf(out, "Token:   %s  (%s)\n", tokenState(e.cfg.Token), tokenSource(gf.token))
+
+	if e.proj != nil {
+		fmt.Fprintf(out, "\nProject: %s\n", config.ProjectFileName)
+		if e.proj.Product.Repo != "" {
+			fmt.Fprintf(out, "Product: %s / %s", orUnset(e.proj.Product.Slug), e.proj.Product.Repo)
+			if e.proj.Product.Role != "" {
+				fmt.Fprintf(out, " (%s)", e.proj.Product.Role)
+			}
+			fmt.Fprintln(out)
+		}
+		fmt.Fprintf(out, "Mappings: %d source(s), %d document(s)\n", len(e.proj.Sources), len(e.proj.Documents))
+		if ns := e.knowledgeNamespace(); ns != "" {
+			fmt.Fprintf(out, "Knowledge namespace: %s\n", ns)
+		}
+	} else {
+		fmt.Fprintf(out, "\nProject: no %s found (run `gravity init`)\n", config.ProjectFileName)
+	}
+}
+
+// fieldSource attributes a resolved value to flag > env > project, returning ""
+// when none of those provided it.
+func fieldSource(flagVal, envName, projVal string) string {
+	if flagVal != "" {
+		return "flag"
+	}
+	if os.Getenv(envName) != "" {
+		return "env " + envName
+	}
+	if projVal != "" {
+		return "project (" + config.ProjectFileName + ")"
+	}
+	return ""
+}
+
+func tokenSource(flagVal string) string {
+	if flagVal != "" {
+		return "flag"
+	}
+	if os.Getenv(config.EnvToken) != "" {
+		return "env " + config.EnvToken
+	}
+	if path, err := config.UserConfigPath(); err == nil {
+		if _, statErr := os.Stat(path); statErr == nil {
+			return "user file"
+		}
+	}
+	return "unset"
+}
+
+func tokenState(token string) string {
+	if token == "" {
+		return "(unset)"
+	}
+	return "set"
+}
+
+func orUnset(s string) string {
+	if s == "" {
+		return "(unset)"
+	}
+	return s
+}
+
+func srcOrUnset(s string) string {
+	if s == "" {
+		return "unset"
+	}
+	return s
+}
+
+func featureState(available bool) string {
+	if available {
+		return "available"
+	}
+	return "not yet available"
 }
 
 // classifyDoctorErr keeps auth errors readable for the doctor output.

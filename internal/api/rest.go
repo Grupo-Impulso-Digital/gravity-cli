@@ -12,6 +12,10 @@ type WhoAmI struct {
 	OrganizationName string  `json:"organizationName"`
 	DefaultSiteSlug  *string `json:"defaultSiteSlug"`
 	KeyHint          string  `json:"keyHint"`
+	// Features advertises optional platform capabilities (e.g. "captures",
+	// "nucleus"). Absent/nil means the platform predates feature reporting, so
+	// every optional feature reads as "not yet available".
+	Features map[string]bool `json:"features,omitempty"`
 }
 
 // WhoAmI calls GET /api/v1/whoami.

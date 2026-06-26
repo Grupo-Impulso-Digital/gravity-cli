@@ -71,6 +71,14 @@ as a masked/protected variable.
 See [`bitbucket/pipe`](bitbucket/pipe). Copy its contents into
 `bitbucket-pipelines.yml`. Add `GRAVITY_TOKEN` as a secured repository variable.
 
+## Authoring vs checking
+
+Run `check api` / `check docs` on pull requests (they only read + verify, exit
+`1` on findings). Run `gravity sync` on merge or release to author the
+`sources`/`documents` mappings from `.gravity.yaml` — it writes a draft +
+proposal for human review and exits `0`/`2` only (never `1`). Keeping authoring
+off the PR gate preserves the meaning of a findings exit.
+
 ## Note on git history
 
 `release-notes` and `check docs --ai` inspect git history and diffs. Make sure

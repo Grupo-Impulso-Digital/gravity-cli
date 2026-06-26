@@ -30,9 +30,11 @@ type globalFlags struct {
 	site   string
 }
 
-// env bundles the resolved config and constructed clients for a command run.
+// env bundles the resolved config, the typed project manifest, and the
+// constructed clients for a command run.
 type env struct {
 	cfg    config.Config
+	proj   *config.Project // nil when no .gravity.yaml is present
 	client *api.Client
 }
 
@@ -42,7 +44,7 @@ func resolveEnv(gf globalFlags, spaceFlag string) (*env, error) {
 	if err != nil {
 		return nil, Fail(CodeError, fmt.Errorf("get working dir: %w", err))
 	}
-	cfg, err := config.Resolve(config.Flags{
+	cfg, proj, err := config.ResolveWithProject(config.Flags{
 		Token:  gf.token,
 		APIURL: gf.apiURL,
 		Site:   gf.site,
@@ -51,16 +53,17 @@ func resolveEnv(gf globalFlags, spaceFlag string) (*env, error) {
 	if err != nil {
 		return nil, Fail(CodeError, err)
 	}
-	return &env{cfg: cfg, client: api.New(cfg.APIURL, cfg.Token)}, nil
+	return &env{cfg: cfg, proj: proj, client: api.New(cfg.APIURL, cfg.Token)}, nil
 }
 
-// requireAuth ensures a token and API URL are present.
+// requireAuth ensures a token and API URL are present, with CI-oriented hints
+// for the two distinct failure modes.
 func (e *env) requireAuth() error {
 	if e.cfg.Token == "" {
-		return Failf(CodeError, "no token configured: run `gravity auth login --token <sk_live_...> --api-url <url>` or set GRAVITY_TOKEN")
+		return Failf(CodeError, "no API token: set %s (CI secret) or run `gravity auth login`", config.EnvToken)
 	}
 	if e.cfg.APIURL == "" {
-		return Failf(CodeError, "no API URL configured: pass --api-url or set GRAVITY_API_URL")
+		return Failf(CodeError, "no API URL: set %s or add `apiUrl` to %s", config.EnvAPIURL, config.ProjectFileName)
 	}
 	return nil
 }
@@ -97,7 +100,9 @@ func NewRootCommand() *cobra.Command {
 		newDoctorCmd(gf),
 		newReleaseNotesCmd(gf),
 		newCheckCmd(gf),
-		newSelfdocCmd(gf),
+		newSyncCmd(gf),
+		newCaptureCmd(gf),
+		newNucleusCmd(gf),
 	)
 	return root
 }

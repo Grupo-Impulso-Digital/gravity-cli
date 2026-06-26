@@ -60,6 +60,20 @@ func (e *APIError) IsAuth() bool {
 	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
 }
 
+// IsUnavailable reports that the platform does not (yet) implement this route —
+// so a greenfield feature can degrade gracefully until its endpoint ships.
+func (e *APIError) IsUnavailable() bool {
+	switch e.StatusCode {
+	case http.StatusNotFound, http.StatusNotImplemented:
+		return true
+	}
+	switch e.Code {
+	case "not_implemented", "feature_disabled", "unknown_route":
+		return true
+	}
+	return false
+}
+
 type errorEnvelope struct {
 	Error struct {
 		Code    string `json:"code"`

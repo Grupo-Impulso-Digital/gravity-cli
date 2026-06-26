@@ -90,7 +90,7 @@ Output modes:
 			}
 			fmt.Fprintf(logw, "release-notes: %d commit(s) in range\n", len(commits))
 
-			notes, err := runReleaseNotesAgent(cmd.Context(), e.client, repo, rng, logw, &api.MessagesContext{Site: e.cfg.Site, Space: sp})
+			notes, err := runReleaseNotesAgent(cmd.Context(), e.client, repo, rng, logw, &api.MessagesContext{Site: e.cfg.Site, Space: sp, Namespace: e.cfg.Namespace})
 			if err != nil {
 				return Fail(CodeError, err)
 			}
@@ -147,6 +147,9 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 			"When finished, call submit_release_notes.",
 		rng.From, rng.To, rng.From, rng.To,
 	)
+	if mctx != nil {
+		kickoff = enrichKickoff(ctx, client, mctx.Namespace, "release notes "+rng.String(), kickoff, mctx)
+	}
 	res, err := runner.Run(ctx, kickoff)
 	if err != nil {
 		return nil, err

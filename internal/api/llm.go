@@ -118,6 +118,9 @@ type ToolChoice struct {
 type MessagesContext struct {
 	Site  string `json:"site,omitempty"`
 	Space string `json:"space,omitempty"`
+	// Namespace is the product-level nucleus knowledge namespace. Additive and
+	// ignored by gateways that don't yet support nucleus-aware RAG.
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // MessagesRequest is the request body of POST /api/llm/v1/messages.

@@ -7,14 +7,15 @@ inputs:
     description: "Gravity API token (sk_live_...). Pass from a secret, e.g. ${{ secrets.GRAVITY_TOKEN }}."
     required: true
   api-url:
-    description: "Gravity API base URL."
+    description: "Gravity API base URL. Defaults to the CLI's built-in default or .gravity.yaml."
     required: false
-    default: "https://app.gravity.dev"
+    default: "https://gravity.dave-vermette-1.workers.dev"
   site:
-    description: "Site slug to operate on."
-    required: true
+    description: "Site slug to operate on. Optional when set in .gravity.yaml."
+    required: false
+    default: ""
   command:
-    description: "Which gravity command to run: 'check api', 'check docs', or 'release-notes'."
+    description: "Which gravity command to run: 'check api', 'check docs', 'sync', or 'release-notes'."
     required: true
     default: "check docs"
   args:
