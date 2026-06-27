@@ -2,6 +2,7 @@ BINARY    := gravity
 PKG       := ./cmd/gravity
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS   := -X main.version=$(VERSION)
+GOLANGCI  := go tool golangci-lint
 
 .DEFAULT_GOAL := build
 
@@ -23,18 +24,16 @@ vet: ## Run go vet
 	go vet ./...
 
 .PHONY: fmt
-fmt: ## Format all Go source
-	gofmt -w .
+fmt: ## Format all Go source (gofumpt + goimports)
+	$(GOLANGCI) fmt
 
 .PHONY: fmt-check
-fmt-check: ## Fail if any file needs gofmt
-	@out="$$(gofmt -l .)"; \
-	if [ -n "$$out" ]; then \
-		echo "gofmt needed on:"; echo "$$out"; exit 1; \
-	fi
+fmt-check: ## Fail if any file needs formatting
+	$(GOLANGCI) fmt --diff
 
 .PHONY: lint
-lint: vet fmt-check ## vet + gofmt check
+lint: ## Run golangci-lint (govet, staticcheck, + curated set) and the format check
+	$(GOLANGCI) run
 
 .PHONY: tidy
 tidy: ## Tidy go.mod/go.sum

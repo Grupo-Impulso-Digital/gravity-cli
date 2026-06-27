@@ -1,0 +1,72 @@
+# golangci-lint v2 configuration. Pinned and run via the go.mod `tool` directive
+# (`make lint` -> `go tool golangci-lint run`), so CI and local use one version.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # `standard` = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - bodyclose # every HTTP response body is closed
+    - errorlint # correct errors.Is/As + %w usage (the codebase wraps heavily)
+    - nilerr # catches `return nil` when err is non-nil
+    - predeclared # catches shadowing builtins (e.g. max, min)
+    - unconvert # removes redundant type conversions
+    - unparam # unused function parameters/return values
+    - misspell # comment/string typos (comments are load-bearing here)
+    - revive # golint successor: naming + doc-comment + error-string style
+    - gocritic # diagnostic + style heuristics
+  settings:
+    staticcheck:
+      # In v2, staticcheck subsumes gosimple (S) and stylecheck (ST).
+      checks: ["all"]
+    revive:
+      rules:
+        - name: exported
+          # Keep the doc-comment enforcement, but don't force renaming the
+          # established api.APIError / api.APIBlock* types (a separate naming
+          # decision; ~40 internal call sites). TODO(lint): revisit a rename.
+          arguments:
+            - disableStutteringCheck
+        - name: error-strings
+        - name: error-return
+        - name: context-as-argument
+        - name: unexported-return
+        - name: var-declaration
+        - name: unreachable-code
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+      disabled-checks:
+        - ifElseChain # if/else chains are idiomatic in the command dispatch
+        - unnamedResult # naming same-type results collides with param names here
+    misspell:
+      # US English is the enforced standard (matches Go/tooling conventions and
+      # avoids false positives on technical literals like `--no-color`).
+      locale: US
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling # ignore unchecked fmt.Fprintln(os.Stderr, ...)
+      - common-false-positives
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+          - bodyclose
+          - gocritic
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/impulso/gravity-cli
+    gofumpt:
+      extra-rules: true
