@@ -63,7 +63,7 @@ type CaptureArtifact struct {
 	Height  int    `json:"height,omitempty"`
 }
 
-// CaptureStats summarises a run.
+// CaptureStats summarizes a run.
 type CaptureStats struct {
 	PagesVisited int `json:"pagesVisited"`
 	Screenshots  int `json:"screenshots"`

@@ -52,7 +52,7 @@ type ContentPart struct {
 	IsError bool   `json:"is_error,omitempty"`
 }
 
-// Message is one turn in the conversation. Content is always serialised as an
+// Message is one turn in the conversation. Content is always serialized as an
 // array of parts in requests for consistency.
 type Message struct {
 	Role    string        `json:"role"`

@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -92,8 +93,8 @@ func TestCaptureUnavailableDegrades(t *testing.T) {
 	defer srv.Close()
 
 	_, err := api.New(srv.URL, "tok").LaunchCapture(context.Background(), "acme", api.CaptureRequest{Target: api.CaptureTarget{URL: "x"}})
-	ae, ok := err.(*api.APIError)
-	if !ok || !ae.IsUnavailable() {
+	var ae *api.APIError
+	if !errors.As(err, &ae) || !ae.IsUnavailable() {
 		t.Fatalf("expected an unavailable API error, got %v", err)
 	}
 }

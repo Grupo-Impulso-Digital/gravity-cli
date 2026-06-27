@@ -1,5 +1,5 @@
 // Package git wraps the system `git` binary (via os/exec). It deliberately
-// avoids a pure-Go git implementation so behaviour matches whatever git CI
+// avoids a pure-Go git implementation so behavior matches whatever git CI
 // already has. All operations are read-only and run within a fixed repo root.
 package git
 

@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/impulso/gravity-cli/internal/pathsafe"
 	yaml "go.yaml.in/yaml/v3"
+
+	"github.com/impulso/gravity-cli/internal/pathsafe"
 )
 
 // SchemaVersion is the highest .gravity.yaml schema version this CLI
@@ -120,7 +121,8 @@ func LoadProject(projectDir string) (*Project, error) {
 func guardNoToken(data []byte, path string) error {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil // malformed YAML is reported by the typed decode in LoadProject
+		//nolint:nilerr // malformed YAML is intentionally ignored here; the typed decode in LoadProject reports it.
+		return nil
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
 		return nil

@@ -58,7 +58,7 @@ Output modes:
 			}
 			// Resolve the target space with the documented precedence
 			// (flag > env > config); the flag default is empty so GRAVITY_SPACE /
-			// .gravity.yaml are honoured. The command default applies only when
+			// .gravity.yaml are honored. The command default applies only when
 			// nothing else is set.
 			sp := e.cfg.Space
 			if sp == "" {

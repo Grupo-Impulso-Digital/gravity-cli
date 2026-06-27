@@ -65,7 +65,7 @@ func TestRenderJSON(t *testing.T) {
 		t.Errorf("decoded result wrong: %+v", decoded)
 	}
 	if decoded.Skipped != 2 {
-		t.Errorf("skipped not serialised: %d", decoded.Skipped)
+		t.Errorf("skipped not serialized: %d", decoded.Skipped)
 	}
 }
 

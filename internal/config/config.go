@@ -24,7 +24,7 @@ import (
 // changing the target host is a one-line change.
 const DefaultAPIURL = "https://gravity.dave-vermette-1.workers.dev"
 
-// Environment variable names recognised by the CLI.
+// Environment variable names recognized by the CLI.
 const (
 	EnvToken     = "GRAVITY_TOKEN"
 	EnvAPIURL    = "GRAVITY_API_URL"
@@ -53,7 +53,7 @@ type Flags struct {
 // ProjectFileName is the project-local config file written by `gravity init`.
 const ProjectFileName = ".gravity.yaml"
 
-// UserConfigPath returns the path to the user-level config file, honouring
+// UserConfigPath returns the path to the user-level config file, honoring
 // XDG_CONFIG_HOME when set.
 func UserConfigPath() (string, error) {
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {

@@ -168,7 +168,7 @@ func newCaptureStatusCmd(gf *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// pollCapture polls until the run reaches a terminal state, honouring ctx and a
+// pollCapture polls until the run reaches a terminal state, honoring ctx and a
 // timeout. The runId is echoed on timeout so a later `capture status` can resume.
 func pollCapture(ctx context.Context, client *api.Client, site, runID string, interval, timeout time.Duration, logw io.Writer) (*api.CaptureRun, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)

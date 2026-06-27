@@ -109,7 +109,7 @@ func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.
 // ReadVerbatim reads a Markdown file unchanged (for the release path, which
 // sends the whole document as bodyMarkdown) and sniffs a title from the first
 // H1, falling back to the filename.
-func ReadVerbatim(repoRoot, fileRef string) (content string, title string, err error) {
+func ReadVerbatim(repoRoot, fileRef string) (content, title string, err error) {
 	data, err := readRepoFile(repoRoot, fileRef)
 	if err != nil {
 		return "", "", fmt.Errorf("read %q: %w", fileRef, err)

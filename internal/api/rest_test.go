@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -75,8 +76,10 @@ func TestPagesQueryParam(t *testing.T) {
 					"id": "p1", "slug": "intro", "title": "Intro", "spaceSlug": "changelog",
 					"version": 3, "releasedAt": "2024-01-01",
 					"blocks": []map[string]any{
-						{"id": "b1", "type": "api", "ownership": "machine", "content": map[string]any{}, "position": 0,
-							"sourceBinding": map[string]any{"kind": "file", "ref": "openapi.yaml", "hash": "deadbeef", "generator": "x"}},
+						{
+							"id": "b1", "type": "api", "ownership": "machine", "content": map[string]any{}, "position": 0,
+							"sourceBinding": map[string]any{"kind": "file", "ref": "openapi.yaml", "hash": "deadbeef", "generator": "x"},
+						},
 					},
 				},
 			},
@@ -246,8 +249,8 @@ func TestEnsureSpaceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	apiErr, ok := err.(*api.APIError)
-	if !ok {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *api.APIError, got %T: %v", err, err)
 	}
 	if apiErr.Code != "forbidden" || apiErr.Message != "not authorized for site" {
@@ -357,8 +360,8 @@ func TestUpsertPageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	apiErr, ok := err.(*api.APIError)
-	if !ok {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *api.APIError, got %T: %v", err, err)
 	}
 	if apiErr.StatusCode != http.StatusUnprocessableEntity {
@@ -383,8 +386,8 @@ func TestErrorEnvelope(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	apiErr, ok := err.(*api.APIError)
-	if !ok {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *api.APIError, got %T: %v", err, err)
 	}
 	if apiErr.StatusCode != http.StatusUnauthorized {
