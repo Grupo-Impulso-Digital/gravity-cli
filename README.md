@@ -256,10 +256,14 @@ and Bitbucket Pipelines snippets. `GRAVITY_TOKEN` is the secret.
 make build   # build ./bin/gravity
 make test    # go test ./...
 make vet     # go vet ./...
-make fmt     # gofmt -w .
-make lint    # vet + gofmt check
+make fmt     # go tool golangci-lint fmt  (gofumpt + goimports)
+make lint    # go tool golangci-lint run  (govet + staticcheck + curated set)
 make ci      # lint + test + build
 ```
+
+`golangci-lint` is pinned via the go.mod `tool` directive, so `make lint` needs
+no separate install. Contributor standards and architecture conventions live in
+[AGENTS.md](AGENTS.md).
 
 ## Architecture
 
@@ -274,6 +278,7 @@ internal/checks        OpenAPI operation diff + source-binding hash verification
 internal/docs          block authoring: OpenAPI→api blocks, Markdown→native blocks
 internal/prompts       system prompts for the release-notes, docs-gap, and nucleus agents
 internal/output        text / json / github findings formatters
+internal/pathsafe      repo-root path validation shared by the above (leaf, stdlib-only)
 ```
 
 The agent loop (`internal/agent`) calls `POST /api/llm/v1/messages` (an
