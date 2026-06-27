@@ -6,7 +6,6 @@ import (
 )
 
 func TestSandboxPath(t *testing.T) {
-	root := filepath.FromSlash("/repo")
 	cases := []struct {
 		name    string
 		in      string
@@ -24,7 +23,7 @@ func TestSandboxPath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := sandboxPath(root, tc.in)
+			got, err := sandboxPath(tc.in)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error for %q, got %q", tc.in, got)

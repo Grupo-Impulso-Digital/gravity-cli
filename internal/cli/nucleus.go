@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -244,7 +245,7 @@ func runNucleusDistill(ctx context.Context, client *api.Client, repo *git.Repo, 
 		if res.Stopped {
 			return agent.AtomsInput{}, fmt.Errorf("nucleus distill did not finish: %s", res.StopReason)
 		}
-		return agent.AtomsInput{}, fmt.Errorf("nucleus distill ended without calling submit_atoms")
+		return agent.AtomsInput{}, errors.New("nucleus distill ended without calling submit_atoms")
 	}
 	return agent.ParseAtoms(res.TerminalInput)
 }

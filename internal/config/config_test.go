@@ -124,30 +124,3 @@ func writeYAML(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
-
-func TestWriteProjectConfigRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv(config.EnvSite, "")
-	t.Setenv(config.EnvToken, "")
-	t.Setenv(config.EnvAPIURL, "")
-
-	if _, err := config.WriteProjectConfig(dir, config.ProjectConfig{
-		Site: "docs", APIURL: "https://app.example", Space: "changelog",
-	}); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	cfg, err := config.Resolve(config.Flags{}, dir)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if cfg.Site != "docs" {
-		t.Errorf("site round-trip = %q", cfg.Site)
-	}
-	if cfg.APIURL != "https://app.example" {
-		t.Errorf("apiUrl round-trip = %q", cfg.APIURL)
-	}
-	if cfg.Space != "changelog" {
-		t.Errorf("space round-trip = %q", cfg.Space)
-	}
-}

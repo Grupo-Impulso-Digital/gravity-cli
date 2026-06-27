@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -85,7 +86,7 @@ type errorEnvelope struct {
 // be nil). A non-2xx status is returned as *APIError.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	if c.BaseURL == "" {
-		return fmt.Errorf("no API URL configured (set --api-url, GRAVITY_API_URL, or run gravity auth login)")
+		return errors.New("no API URL configured (set --api-url, GRAVITY_API_URL, or run gravity auth login)")
 	}
 	u := c.BaseURL + path
 	if len(query) > 0 {

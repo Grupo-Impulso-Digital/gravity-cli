@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -158,7 +159,7 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 		if res.Stopped {
 			return nil, fmt.Errorf("agent did not submit release notes: %s", res.StopReason)
 		}
-		return nil, fmt.Errorf("agent ended without calling submit_release_notes")
+		return nil, errors.New("agent ended without calling submit_release_notes")
 	}
 	notes, err := agent.ParseReleaseNotes(res.TerminalInput)
 	if err != nil {

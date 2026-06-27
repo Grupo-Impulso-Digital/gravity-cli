@@ -50,8 +50,10 @@ type Result struct {
 	Stopped bool
 	// StopReason explains why (cap name) when Stopped is true.
 	StopReason string
+	// Iterations is the number of model turns executed before returning.
 	Iterations int
-	ToolCalls  int
+	// ToolCalls is the number of non-terminal tool calls executed.
+	ToolCalls int
 }
 
 func (r *Runner) logf(format string, args ...any) {

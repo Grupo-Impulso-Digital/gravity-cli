@@ -148,33 +148,6 @@ func (c Config) validate() error {
 	return nil
 }
 
-// ProjectConfig is the minimal subset written programmatically (e.g. the
-// round-trip writer and migration). The rich, commented scaffold emitted by
-// `gravity init` is produced from a template, not this struct.
-type ProjectConfig struct {
-	Version int    `yaml:"version"`
-	Site    string `yaml:"site"`
-	APIURL  string `yaml:"apiUrl"`
-	Space   string `yaml:"space,omitempty"`
-}
-
-// WriteProjectConfig writes a minimal .gravity.yaml in dir. It never writes a
-// token.
-func WriteProjectConfig(dir string, pc ProjectConfig) (string, error) {
-	if pc.Version == 0 {
-		pc.Version = SchemaVersion
-	}
-	data, err := yaml.Marshal(pc)
-	if err != nil {
-		return "", fmt.Errorf("marshal project config: %w", err)
-	}
-	path := filepath.Join(dir, ProjectFileName)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return "", fmt.Errorf("write %s: %w", path, err)
-	}
-	return path, nil
-}
-
 // UserCredentials is the subset persisted by `gravity auth login`.
 type UserCredentials struct {
 	Token  string `yaml:"token"`

@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -161,7 +163,7 @@ func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rn
 		if res.Stopped {
 			return nil, fmt.Errorf("AI docs-gap pass did not finish: %s", res.StopReason)
 		}
-		return nil, fmt.Errorf("AI docs-gap pass ended without calling report_findings")
+		return nil, errors.New("AI docs-gap pass ended without calling report_findings")
 	}
 	parsed, err := agent.ParseFindings(res.TerminalInput)
 	if err != nil {
@@ -193,9 +195,14 @@ func docsDigest(pages []api.Page) string {
 			types[blk.Type]++
 		}
 		if len(types) > 0 {
-			parts := make([]string, 0, len(types))
-			for t, n := range types {
-				parts = append(parts, fmt.Sprintf("%s×%d", t, n))
+			names := make([]string, 0, len(types))
+			for t := range types {
+				names = append(names, t)
+			}
+			sort.Strings(names)
+			parts := make([]string, 0, len(names))
+			for _, t := range names {
+				parts = append(parts, fmt.Sprintf("%s×%d", t, types[t]))
 			}
 			fmt.Fprintf(&b, "    blocks: %s\n", strings.Join(parts, ", "))
 		}

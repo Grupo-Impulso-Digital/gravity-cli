@@ -21,16 +21,13 @@ const (
 
 // Stop reasons.
 const (
-	StopEndTurn   = "end_turn"
-	StopToolUse   = "tool_use"
-	StopMaxTokens = "max_tokens"
+	StopEndTurn = "end_turn"
+	StopToolUse = "tool_use"
 )
 
 // Tool-choice types.
 const (
 	ToolChoiceAuto = "auto"
-	ToolChoiceAny  = "any"
-	ToolChoiceTool = "tool"
 )
 
 // ContentPart is a single piece of message content. It supports the request

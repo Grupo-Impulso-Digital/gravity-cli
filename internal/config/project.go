@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/impulso/gravity-cli/internal/pathsafe"
 	yaml "go.yaml.in/yaml/v3"
 )
 
@@ -231,13 +232,13 @@ func (p *Project) Validate(path string) error {
 }
 
 // checkRepoRelative returns a non-empty message when ref is not a safe
-// repo-relative path (mirrors the drift checker's sandbox rules).
+// repo-relative path.
 func checkRepoRelative(ref string) string {
-	if filepath.IsAbs(ref) {
+	_, err := pathsafe.Rel(ref)
+	switch {
+	case errors.Is(err, pathsafe.ErrAbsolute):
 		return "must be a repo-relative path, not absolute"
-	}
-	clean := filepath.Clean(ref)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	case errors.Is(err, pathsafe.ErrEscape):
 		return "must not escape the repo root"
 	}
 	return ""

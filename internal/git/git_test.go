@@ -140,7 +140,7 @@ func TestResolveRangeNoTags(t *testing.T) {
 	}
 }
 
-func TestLogAndChangedFiles(t *testing.T) {
+func TestLog(t *testing.T) {
 	dir := testRepo(t)
 	ctx := context.Background()
 	repo, err := git.Open(ctx, dir)
@@ -158,22 +158,6 @@ func TestLogAndChangedFiles(t *testing.T) {
 	if !strings.Contains(commits[0].Subject, "add beta") {
 		t.Errorf("unexpected commit subject: %q", commits[0].Subject)
 	}
-
-	files, err := repo.ChangedFiles(ctx, "v1.0.0", "HEAD")
-	if err != nil {
-		t.Fatalf("changed files: %v", err)
-	}
-	want := map[string]bool{"a.txt": false, "b.txt": false}
-	for _, f := range files {
-		if _, ok := want[f]; ok {
-			want[f] = true
-		}
-	}
-	for f, seen := range want {
-		if !seen {
-			t.Errorf("expected %s in changed files, got %v", f, files)
-		}
-	}
 }
 
 func TestDiffAndShow(t *testing.T) {
@@ -184,7 +168,7 @@ func TestDiffAndShow(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	diff, err := repo.Diff(ctx, "v1.0.0", "HEAD", "", false)
+	diff, err := repo.Diff(ctx, "v1.0.0", "HEAD", "")
 	if err != nil {
 		t.Fatalf("diff: %v", err)
 	}

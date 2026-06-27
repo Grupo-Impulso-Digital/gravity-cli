@@ -4,12 +4,17 @@
 package checks
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/pb33f/libopenapi"
 )
+
+// errNoOpenAPIModel is returned when a document parses but neither the v3 nor
+// the v2 model can be built from it.
+var errNoOpenAPIModel = errors.New("unable to build an OpenAPI model from the document")
 
 // Operation is a normalised (method, path) pair plus its summary.
 type Operation struct {
@@ -70,7 +75,7 @@ func ParseOpenAPI(spec []byte) (map[string]Operation, error) {
 		return ops, nil
 	}
 
-	return nil, fmt.Errorf("unable to build an OpenAPI model from the document")
+	return nil, errNoOpenAPIModel
 }
 
 // ParamDetail is one operation parameter captured for an authored api block.
@@ -183,7 +188,7 @@ func ParseOpenAPIDetailed(spec []byte) ([]OperationDetail, error) {
 		return out, nil
 	}
 
-	return nil, fmt.Errorf("unable to build an OpenAPI model from the document")
+	return nil, errNoOpenAPIModel
 }
 
 func sortOperationDetails(ops []OperationDetail) {

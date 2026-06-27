@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/impulso/gravity-cli/internal/pathsafe"
 )
 
 // BindingCheck is the outcome of verifying one block's source binding.
@@ -114,17 +114,14 @@ func VerifyBinding(repoRoot string, b *api.SourceBinding) BindingCheck {
 // resolveRepoPath validates ref is a repo-relative path inside repoRoot and
 // returns the absolute path.
 func resolveRepoPath(repoRoot, ref string) (string, error) {
-	if filepath.IsAbs(ref) {
+	abs, err := pathsafe.Resolve(repoRoot, ref)
+	switch {
+	case errors.Is(err, pathsafe.ErrAbsolute):
 		return "", errors.New("ref is an absolute path; not a repo file")
-	}
-	clean := filepath.Clean(ref)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	case errors.Is(err, pathsafe.ErrEscape):
 		return "", errors.New("ref escapes repository root")
-	}
-	abs := filepath.Join(repoRoot, clean)
-	rel, err := filepath.Rel(repoRoot, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", errors.New("ref escapes repository root")
+	case err != nil:
+		return "", err
 	}
 	return abs, nil
 }

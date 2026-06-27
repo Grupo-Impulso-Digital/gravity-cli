@@ -168,36 +168,13 @@ func (r *Repo) LogOneline(ctx context.Context, from, to string, maxCount int) (s
 	return r.git(ctx, args...)
 }
 
-// ChangedFiles returns the files changed between from and to.
-func (r *Repo) ChangedFiles(ctx context.Context, from, to string) ([]string, error) {
-	if to == "" {
-		to = "HEAD"
-	}
-	args := []string{"diff", "--name-only", diffRange(from, to)}
-	out, err := r.git(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-	return files, nil
-}
-
 // Diff returns the unified diff between from and to, optionally limited to a
-// path. nameOnly toggles `--name-only`.
-func (r *Repo) Diff(ctx context.Context, from, to, path string, nameOnly bool) (string, error) {
+// path.
+func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) {
 	if to == "" {
 		to = "HEAD"
 	}
-	args := []string{"diff", "--no-color"}
-	if nameOnly {
-		args = append(args, "--name-only")
-	}
-	args = append(args, diffRange(from, to))
+	args := []string{"diff", "--no-color", rangeArg(from, to)}
 	if path != "" {
 		args = append(args, "--", path)
 	}
@@ -248,18 +225,10 @@ func (r *Repo) Grep(ctx context.Context, pattern, glob string) (string, error) {
 	return out, nil
 }
 
-// rangeArg renders a log range. Empty from means "all history of to".
+// rangeArg renders a log or diff range. An empty from means "all history up to
+// to" (for log) or "everything reachable from to" (for diff); a non-empty from
+// produces the from..to form, which git accepts for both log and diff.
 func rangeArg(from, to string) string {
-	if from == "" {
-		return to
-	}
-	return from + ".." + to
-}
-
-// diffRange renders a diff range. Empty from diffs against the empty tree by
-// comparing to itself (so a single ref diffs working state); we instead use the
-// from..to form which git accepts for diff as well.
-func diffRange(from, to string) string {
 	if from == "" {
 		return to
 	}

@@ -7,13 +7,14 @@
 package docs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/impulso/gravity-cli/internal/api"
 	"github.com/impulso/gravity-cli/internal/checks"
+	"github.com/impulso/gravity-cli/internal/pathsafe"
 )
 
 // BuildBinding builds a drift-verifiable SourceBinding for a machine block,
@@ -32,14 +33,16 @@ func BuildBinding(repoRoot, ref, kind, generator string) (*api.SourceBinding, er
 }
 
 // readRepoFile reads a repo-relative file, rejecting absolute paths and ".."
-// escapes (mirroring the binding sandbox).
+// escapes.
 func readRepoFile(repoRoot, ref string) ([]byte, error) {
-	if filepath.IsAbs(ref) {
+	clean, err := pathsafe.Rel(ref)
+	switch {
+	case errors.Is(err, pathsafe.ErrAbsolute):
 		return nil, fmt.Errorf("%q is an absolute path; want a repo-relative file", ref)
-	}
-	clean := filepath.Clean(ref)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	case errors.Is(err, pathsafe.ErrEscape):
 		return nil, fmt.Errorf("%q escapes the repo root", ref)
+	case err != nil:
+		return nil, err
 	}
 	return os.ReadFile(filepath.Join(repoRoot, clean))
 }
