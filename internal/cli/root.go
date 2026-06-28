@@ -101,6 +101,7 @@ func NewRootCommand() *cobra.Command {
 		newReleaseNotesCmd(gf),
 		newCheckCmd(gf),
 		newSyncCmd(gf),
+		newDocsCmd(gf),
 		newCaptureCmd(gf),
 		newNucleusCmd(gf),
 	)

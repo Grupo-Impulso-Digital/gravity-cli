@@ -29,11 +29,18 @@ Read side (`check api`/`check docs`): `GET /api/v1/sites/:site`,
 
 ## Block model the CLI authors
 
-Blocks: `{ key, type, ownership, content, sourceBinding?, position }`.
+Blocks: `{ key, type, ownership, audiences?, content, sourceBinding?, position }`.
 
 - **type** — `heading | prose | code | table | api`. (A `markdown` type is
   expected "soon"; until then `sync` decomposes Markdown into the native types
   above and falls back to verbatim `prose` for the rest.)
+- **audiences** — optional `string[]` over `public | users | developers`. Empty
+  or absent ⇒ the block renders to **every** viewer; otherwise it renders only to
+  viewers in a listed audience. This lets one page mix per-audience blocks (the
+  `gravity docs generate` model). It is **greenfield** (see below): the CLI emits
+  it only when the platform advertises `whoami.features["block-audience"]`, and
+  omits it otherwise so blocks render to everyone. Backward-compatible — existing
+  blocks have no `audiences`.
 - **ownership** — `machine | hybrid | human`.
   - `machine`: content is a pure function of `sourceBinding.ref`'s bytes; humans
     cannot edit it in Gravity. The CLI re-authors it deterministically; it
@@ -54,7 +61,8 @@ On upsert the CLI sends **only the blocks it owns**. The platform must:
 match by `key` then `sourceBinding.ref`; replace `machine` blocks from the
 payload; never overwrite `human` blocks; update `hybrid` machine-fields while
 preserving human edits; and **propose removal** (never silently delete) for
-machine blocks absent from the payload.
+machine blocks absent from the payload. Treat `audiences` as a machine field, so
+a `hybrid` re-author updates the audience set while preserving human body edits.
 
 ## Open questions for the platform team
 
@@ -73,7 +81,32 @@ The CLI already speaks these; it degrades gracefully (404/501 or a
 `not_implemented`/`feature_disabled`/`unknown_route` code → skip + notice, or a
 hard error with `--require`) until the platform ships them. The platform should
 also advertise readiness via `whoami.features` (e.g. `{"captures":true,
-"nucleus":true}`).
+"nucleus":true,"docs-generate":true,"block-audience":true}`).
+
+## Server-hosted prompts (`gravity` agents)
+
+- `GET /api/llm/v1/prompts/:name` → `{ name, text, version? }`. Returns the
+  current system prompt for an agent (`release-notes`, `docs-gap`,
+  `nucleus-distill`, `docs-plan`, `docs-author`). The CLI fetches this at the
+  start of each agent command and **falls back to a baked-in default** on any
+  error, so prompts can be tuned server-side without a CLI release. A 404 /
+  `unknown_route` is the expected pre-launch response and is handled silently.
+
+## Documentation generation (`gravity docs generate`)
+
+- Gated on `whoami.features["docs-generate"]`; absent ⇒ notice + exit 0 (or hard
+  error with `--require`), like capture/nucleus.
+- Produces, per planned page, a `POST /api/v1/sites/:site/pages` upsert whose
+  blocks carry `audiences` (above) and `ownership` (AI prose is `hybrid` with a
+  hash-less `sourceBinding{kind:"ai"}` so `check docs` reports it skipped, not
+  stale). Idempotent: the CLI reads existing pages first and reuses block `key`s
+  to update / omits them to propose removal — relying on the merge governance
+  above. **This requires the page read model (`GET …/pages`) to return each
+  block's author `key`** (the CLI keys updates off it); without it, re-runs can
+  duplicate instead of update.
+- Open questions: confirm the `audiences` field name/shape (`audiences[]` set vs a
+  single `audience` enum — the CLI assumes the set with "absent = all"), and that
+  the page read model returns block `key`s for idempotent re-authoring.
 
 ## Runner / capture (`gravity capture`)
 

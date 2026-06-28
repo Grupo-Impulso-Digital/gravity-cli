@@ -104,9 +104,13 @@ type SourceBinding struct {
 
 // ContentBlock is a single block within a page snapshot.
 type ContentBlock struct {
-	ID            string          `json:"id"`
-	Type          string          `json:"type"`
-	Ownership     string          `json:"ownership"`
+	ID        string `json:"id"`
+	Key       string `json:"key"`
+	Type      string `json:"type"`
+	Ownership string `json:"ownership"`
+	// Audiences restricts which viewers see the block (public|users|developers);
+	// empty renders to everyone. Absent on platforms predating block audiences.
+	Audiences     []string        `json:"audiences,omitempty"`
 	Content       json.RawMessage `json:"content"`
 	SourceBinding *SourceBinding  `json:"sourceBinding"`
 	Position      int             `json:"position"`
@@ -229,11 +233,23 @@ func (c *Client) EnsureSpace(ctx context.Context, siteSlug string, req SpaceUpse
 	return &out, nil
 }
 
+// Block audiences. A block with no audiences renders to every viewer; a block
+// with one or more renders only to viewers in a listed audience. The platform
+// must advertise support via whoami.features before the CLI emits the field.
+const (
+	AudiencePublic     = "public"
+	AudienceUsers      = "users"
+	AudienceDevelopers = "developers"
+)
+
 // BlockInput is a single block to author within a page upsert.
 type BlockInput struct {
-	Key           string         `json:"key"`
-	Type          string         `json:"type"`
-	Ownership     string         `json:"ownership"`
+	Key       string `json:"key"`
+	Type      string `json:"type"`
+	Ownership string `json:"ownership"`
+	// Audiences restricts which viewers see the block (public|users|developers);
+	// empty renders to everyone.
+	Audiences     []string       `json:"audiences,omitempty"`
 	Content       any            `json:"content"`
 	SourceBinding *SourceBinding `json:"sourceBinding,omitempty"`
 	Position      int            `json:"position"`

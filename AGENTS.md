@@ -79,7 +79,12 @@ same `golangci-lint` version as CI with no separate install. Config lives in
   `root.go`).
 - **Dependencies**: stdlib-first. The HTTP client and the Anthropic-style
   Messages protocol are hand-rolled on `net/http` — no SDKs. Don't add a module
-  without a reason stated in the PR.
+  without a reason stated in the PR. The non-stdlib direct deps and their
+  justifications: `cobra` (command tree), `libopenapi` (spec parsing),
+  `goldmark` (Markdown parsing), `go.yaml.in/yaml/v3` (manifest), and
+  **`charmbracelet/huh`** — the sanctioned interactive-prompt library, used only
+  by `gravity init`'s wizard. Prefer `huh` over hand-rolled `bufio` prompting for
+  any new interactive flow.
 - **Testing**: stdlib `testing` + `httptest` mocks, table-driven where it fits.
   No live-server integration tests.
 - **Greenfield degradation**: preview features (`capture`, `nucleus`) gate on
@@ -116,6 +121,11 @@ same `golangci-lint` version as CI with no separate install. Config lives in
 - **`gosec` is intentionally not enabled yet** — the git `exec.Command` and the
   computed-path `os.ReadFile` sites are already sandboxed; revisit with targeted
   excludes before turning it on.
+- **`charmbracelet/x/cellbuf` is pinned to `v0.0.15`** in `go.mod`. The
+  `golangci-lint` `tool` directive pulls in a newer `charmbracelet/x/ansi` than
+  `huh`'s `bubbletea`/`cellbuf` stack selects on its own, and the older `cellbuf`
+  is incompatible with that `ansi` API. The pin is the minimum `cellbuf` that
+  compiles against both; `go mod tidy` preserves it. Don't lower it.
 
 ## Pointers
 

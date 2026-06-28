@@ -344,6 +344,41 @@ func TestUpsertPageRequestShape(t *testing.T) {
 	}
 }
 
+func TestUpsertPageAudiences(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		_ = json.NewEncoder(w).Encode(map[string]any{"pageSlug": "x", "status": "proposed"})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "t")
+	_, err := c.UpsertPage(context.Background(), "docs", api.PageUpsertRequest{
+		SpaceSlug: "docs", Slug: "x", Title: "X",
+		Blocks: []api.BlockInput{
+			{Key: "a", Type: "prose", Ownership: "hybrid", Audiences: []string{"developers"}, Content: map[string]any{"text": "dev only"}},
+			{Key: "b", Type: "prose", Ownership: "hybrid", Content: map[string]any{"text": "everyone"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	blocks, ok := captured["blocks"].([]any)
+	if !ok || len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %v", captured["blocks"])
+	}
+	first, _ := blocks[0].(map[string]any)
+	aud, ok := first["audiences"].([]any)
+	if !ok || len(aud) != 1 || aud[0] != "developers" {
+		t.Errorf("block a audiences = %v, want [developers]", first["audiences"])
+	}
+	second, _ := blocks[1].(map[string]any)
+	if _, present := second["audiences"]; present {
+		t.Errorf("block b should omit audiences when empty, got %v", second["audiences"])
+	}
+}
+
 func TestUpsertPageError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)

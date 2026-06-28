@@ -11,8 +11,10 @@ import (
 
 // Optional platform feature keys reported by /whoami.
 const (
-	featureCaptures = "captures"
-	featureNucleus  = "nucleus"
+	featureCaptures      = "captures"
+	featureNucleus       = "nucleus"
+	featureDocsGenerate  = "docs-generate"
+	featureBlockAudience = "block-audience"
 )
 
 // skippableFeature handles "endpoint not live yet" uniformly. When err is an

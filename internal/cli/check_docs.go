@@ -139,7 +139,7 @@ func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rn
 	tools := append(agent.GitTools(repo), agent.ReportFindingsTool())
 	runner := &agent.Runner{
 		Client:  client,
-		System:  prompts.DocsGap,
+		System:  resolvePrompt(ctx, client, prompts.NameDocsGap, logw),
 		Tools:   tools,
 		Context: mctx,
 		Log:     logw,

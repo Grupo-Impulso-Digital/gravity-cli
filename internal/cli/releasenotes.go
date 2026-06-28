@@ -137,7 +137,7 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 	tools := append(agent.GitTools(repo), agent.SubmitReleaseNotesTool())
 	runner := &agent.Runner{
 		Client:  client,
-		System:  prompts.ReleaseNotes,
+		System:  resolvePrompt(ctx, client, prompts.NameReleaseNotes, logw),
 		Tools:   tools,
 		Context: mctx,
 		Log:     logw,

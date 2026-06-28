@@ -39,8 +39,10 @@ make build      # -> ./bin/gravity
 #    --api-url defaults to the platform; pass it to target another host.
 gravity auth login --token sk_live_xxx
 
-# 2. Scaffold ./.gravity.yaml for this repo (site, product identity, mappings)
-gravity init --site docs --yes
+# 2. Configure ./.gravity.yaml for this repo with the interactive wizard
+#    (detects OpenAPI specs + Markdown docs and offers to map them).
+#    Use --yes for a non-interactive scaffold in CI.
+gravity init
 
 # 3. Verify config, token, and gateway model
 gravity doctor
@@ -191,6 +193,35 @@ exclusive to `check`.
 Flags: `--only api|docs`, `--page <slug>`, `--space <slug>`,
 `--output proposal|stdout` (default `proposal`), `--dry-run`, `--ci`.
 
+### `gravity docs generate` (preview)
+
+Scan the codebase with the AI harness and author documentation for three
+audiences — **public**, **users**, and **developers** — as draft proposals.
+Where `sync` pushes Markdown you wrote, `docs generate` *writes* the docs from
+the code.
+
+```bash
+gravity docs generate                      # plan + author all three audiences
+gravity docs generate --audiences public   # one audience
+gravity docs generate --page overview --dry-run
+gravity docs generate --output stdout      # preview the block payloads
+```
+
+It runs in two phases: a **plan** pass proposes the page set, then a per-page
+**author** pass writes that page's blocks. Audience is a **per-block** attribute,
+so one page can carry public, user, and developer blocks and the platform renders
+the ones matching the viewer. Existing pages are read first, so a re-run updates
+blocks in place (reusing keys) and proposes removing ones that are gone, rather
+than duplicating. Every write is a draft + open proposal.
+
+This is a preview gated on platform support (`docs-generate`, `block-audience`)
+and server-hosted prompts. Until those ship it reports unavailability and
+**exits 0** (`--require` to fail). When block audiences aren't supported yet,
+blocks are authored without audience tags and render to everyone.
+
+Flags: `--audiences <list>` (default all three), `--page <slug>`, `--space`,
+`--site`, `--output proposal|stdout`, `--dry-run`, `--require`, `--ci`.
+
 ### `gravity capture` (preview)
 
 Trigger the Gravity platform's agent runner to navigate an app, capture
@@ -227,10 +258,13 @@ commands.
 ### Other commands
 
 - `gravity version` — print the version.
-- `gravity init` — scaffold a rich, commented `.gravity.yaml` (connection,
-  product/multi-repo identity, spaces, and example source/document mappings).
-  Interactive, or `--yes` for flags/env; `--migrate` upgrades a legacy file in
-  place. Refuses to clobber an existing file unless `--force`.
+- `gravity init` — write `.gravity.yaml` for this repo. Runs an interactive
+  wizard (connection, product/multi-repo identity, spaces) that **detects OpenAPI
+  specs and Markdown docs in the repo and offers to map them**, so `gravity sync`
+  has real `sources`/`documents` to author. Use `--yes` (or a non-interactive
+  shell) for flags/env without prompting; `--migrate` upgrades a legacy file in
+  place, preserving its mappings. Refuses to clobber an existing file unless
+  `--force`.
 - `gravity auth login --token <sk>` — store the token (`0600`); `--api-url`
   defaults to the platform.
 - `gravity doctor` — validate `.gravity.yaml`, print the resolved configuration

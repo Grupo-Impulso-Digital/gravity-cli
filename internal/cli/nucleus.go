@@ -227,7 +227,7 @@ func runNucleusDistill(ctx context.Context, client *api.Client, repo *git.Repo, 
 	tools := append(agent.GitTools(repo), agent.SubmitAtomsTool())
 	runner := &agent.Runner{
 		Client:  client,
-		System:  prompts.NucleusDistill,
+		System:  resolvePrompt(ctx, client, prompts.NameNucleus, logw),
 		Tools:   tools,
 		Context: mctx,
 		Log:     logw,

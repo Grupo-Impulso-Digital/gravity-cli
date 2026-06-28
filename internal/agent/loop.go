@@ -16,6 +16,15 @@ const (
 	defaultMaxTokens     = 4096
 )
 
+// Author-phase caps for content-heavy, single-page authoring runs (the docs
+// generator). One page's full multi-audience block set is a larger structured
+// payload than the other agents emit, so it needs more output tokens; callers
+// set these on the Runner explicitly.
+const (
+	DefaultAuthorMaxTokens     = 8192
+	DefaultAuthorMaxIterations = 16
+)
+
 // LLM is the subset of the API client the loop needs (so it can be mocked).
 type LLM interface {
 	Messages(ctx context.Context, req api.MessagesRequest) (*api.MessagesResponse, error)
