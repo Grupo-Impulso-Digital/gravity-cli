@@ -53,7 +53,13 @@ Blocks: `{ key, type, ownership, audiences?, content, sourceBinding?, position }
 - **sourceBinding** — `{ kind, ref, hash:"sha256:<whole-file>", generator }`.
   The CLI hashes `ref` with the exact hasher the drift checker recomputes, so an
   authored machine block passes `check api`/`check docs` immediately and goes
-  stale only when its source file changes.
+  stale only when its source file changes. **`kind` must be one of the server's
+  `CODE_SOURCE_KINDS`** (`route|struct|endpoint|schema|config|cli`) for the block
+  to stay machine/hybrid; the CLI emits **`kind:"cli"`** for every repo-file-bound
+  block (it pins a repo-relative file + sha256). A `machine`/`hybrid` block whose
+  binding kind is unrecognized is **downgraded to `human` and its binding dropped**
+  on write (`src/server/doc-agent-content.ts`), which silently disables drift
+  checking and re-author updates for it.
 
 ### Merge governance the CLI depends on (server-side, shipped)
 
@@ -104,9 +110,22 @@ also advertise readiness via `whoami.features` (e.g. `{"captures":true,
   above. **This requires the page read model (`GET …/pages`) to return each
   block's author `key`** (the CLI keys updates off it); without it, re-runs can
   duplicate instead of update.
-- Open questions: confirm the `audiences` field name/shape (`audiences[]` set vs a
-  single `audience` enum — the CLI assumes the set with "absent = all"), and that
-  the page read model returns block `key`s for idempotent re-authoring.
+- **Validated against the server (2026-06-27):** `audiences` (write+read), the
+  prompt endpoint, the message gateway (accepts `max_tokens:8192`, no temperature),
+  and `whoami.features` (`docs-generate`, `block-audience`, `prompt-endpoint` all
+  true) are PRESENT and matched. Remaining gaps:
+  1. **Block `key` is not returned on page reads** (`GET …/pages`, `GET …/pages/:slug`):
+     the released `ContentBlock` snapshot has no `key`, so re-author idempotency
+     falls back to matching by `sourceBinding` `kind:ref`; keyless/bindingless prose
+     churns. Server fix: project `key` in the released snapshot + both GET endpoints.
+  2. **Non-code-source hybrid blocks are downgraded to `human`** on write (see the
+     `sourceBinding.kind` note above): AI prose authored as `hybrid` with a
+     `kind:"ai"` provenance binding is stored as `human` with the binding dropped,
+     so re-runs can't refresh it. Decide: have the CLI emit `kind:"cli"` for AI
+     prose too (keeps it hybrid + updatable), or have the server recognize an
+     `ai`/`generated` hybrid kind. The CLI's machine blocks already emit `kind:"cli"`.
+- The server-hosted prompt registry serves `release-notes`, `docs-gap`, `nucleus`,
+  `docs-plan`, `docs-author` (the CLI was aligned from `nucleus-distill` → `nucleus`).
 
 ## Runner / capture (`gravity capture`)
 

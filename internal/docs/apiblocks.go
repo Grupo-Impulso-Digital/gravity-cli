@@ -33,7 +33,7 @@ func APIBlocks(repoRoot, specRef, generator string) ([]api.BlockInput, error) {
 	if len(ops) == 0 {
 		return nil, fmt.Errorf("spec %q defines no operations", specRef)
 	}
-	binding, err := BuildBinding(repoRoot, specRef, "openapi", generator)
+	binding, err := BuildBinding(repoRoot, specRef, "cli", generator)
 	if err != nil {
 		return nil, err
 	}

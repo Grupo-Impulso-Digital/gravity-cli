@@ -34,7 +34,7 @@ func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.
 	}
 	var binding *api.SourceBinding
 	if ownership != "human" {
-		binding, err = BuildBinding(repoRoot, fileRef, "doc", generator)
+		binding, err = BuildBinding(repoRoot, fileRef, "cli", generator)
 		if err != nil {
 			return nil, "", err
 		}

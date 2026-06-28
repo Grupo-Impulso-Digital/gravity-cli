@@ -10,7 +10,7 @@ package prompts
 const (
 	NameReleaseNotes = "release-notes"
 	NameDocsGap      = "docs-gap"
-	NameNucleus      = "nucleus-distill"
+	NameNucleus      = "nucleus"
 	NameDocsPlan     = "docs-plan"
 	NameDocsAuthor   = "docs-author"
 )

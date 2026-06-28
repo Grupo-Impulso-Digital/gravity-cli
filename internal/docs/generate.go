@@ -110,7 +110,7 @@ func provenanceBinding(repoRoot, generator, ownership string, sources []string) 
 		return nil, nil
 	}
 	if ownership == "machine" && len(sources) == 1 {
-		return BuildBinding(repoRoot, primary, "code", generator)
+		return BuildBinding(repoRoot, primary, "cli", generator)
 	}
 	return &api.SourceBinding{Kind: "ai", Ref: primary, Generator: generator}, nil
 }
