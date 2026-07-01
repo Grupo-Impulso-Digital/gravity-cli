@@ -103,13 +103,20 @@ also advertise readiness via `whoami.features` (e.g. `{"captures":true,
 - Gated on `whoami.features["docs-generate"]`; absent ⇒ notice + exit 0 (or hard
   error with `--require`), like capture/nucleus.
 - Produces, per planned page, a `POST /api/v1/sites/:site/pages` upsert whose
-  blocks carry `audiences` (above) and `ownership` (AI prose is `hybrid` with a
-  hash-less `sourceBinding{kind:"ai"}` so `check docs` reports it skipped, not
-  stale). Idempotent: the CLI reads existing pages first and reuses block `key`s
-  to update / omits them to propose removal — relying on the merge governance
-  above. **This requires the page read model (`GET …/pages`) to return each
-  block's author `key`** (the CLI keys updates off it); without it, re-runs can
-  duplicate instead of update.
+  blocks carry `audiences` (above) and `ownership`. **The CLI binds code only:** a
+  `machine` block (an API block or verbatim/code mirror) is pinned to its source
+  file's sha256 under **`kind:"cli"`** — the only binding kind the server accepts —
+  so `check docs` verifies it; the AI narrative prose around it is `hybrid`/`human`
+  and **carries no binding**, so the team can edit the text freely. Idempotent: the CLI reads existing pages
+  first and reuses block `key`s to update / omits them to propose removal —
+  relying on the merge governance above. **This requires the page read model
+  (`GET …/pages`) to return each block's author `key`** (the CLI keys updates off
+  it); without it, re-runs can duplicate instead of update.
+- **Whole-set durability:** the CLI persists the authored block set to
+  `.gravity/generated/docs.json` **before** syncing and authors targets
+  independently, so a per-block `400` on one page no longer discards the others,
+  and a saved run replays with `gravity docs generate --from <file>` at no AI
+  cost. See "Resilience contract" below for what the server owes here.
 - **Validated against the server (2026-06-27):** `audiences` (write+read), the
   prompt endpoint, the message gateway (accepts `max_tokens:8192`, no temperature),
   and `whoami.features` (`docs-generate`, `block-audience`, `prompt-endpoint` all
@@ -118,14 +125,39 @@ also advertise readiness via `whoami.features` (e.g. `{"captures":true,
      the released `ContentBlock` snapshot has no `key`, so re-author idempotency
      falls back to matching by `sourceBinding` `kind:ref`; keyless/bindingless prose
      churns. Server fix: project `key` in the released snapshot + both GET endpoints.
-  2. **Non-code-source hybrid blocks are downgraded to `human`** on write (see the
-     `sourceBinding.kind` note above): AI prose authored as `hybrid` with a
-     `kind:"ai"` provenance binding is stored as `human` with the binding dropped,
-     so re-runs can't refresh it. Decide: have the CLI emit `kind:"cli"` for AI
-     prose too (keeps it hybrid + updatable), or have the server recognize an
-     `ai`/`generated` hybrid kind. The CLI's machine blocks already emit `kind:"cli"`.
+  2. **RESOLVED — AI prose is unbound; the CLI binds code only.** The server
+     **hard-rejects** a machine/hybrid block whose binding kind is outside
+     `CODE_SOURCE_KINDS` with a `400 bad_request` (`Invalid source binding: Invalid
+     option: expected one …`) — it no longer silently downgrades. The CLI used to
+     emit `kind:"ai"` on hybrid AI prose, which 400'd the whole page. Fixed: only
+     `machine` blocks (API blocks, verbatim/code mirrors) bind — to a single source's
+     sha256 under `kind:"cli"`. Narrative prose (`hybrid`/`human`) carries **no
+     binding at all**, so the team can freely edit the text and it never drift-locks.
 - The server-hosted prompt registry serves `release-notes`, `docs-gap`, `nucleus`,
   `docs-plan`, `docs-author` (the CLI was aligned from `nucleus-distill` → `nucleus`).
+
+## Resilience contract (server-side hardening the CLI wants)
+
+The CLI now survives a partial failure locally (independent per-target authoring +
+a saved, replayable block set). These server changes would make the whole flow
+robust rather than merely recoverable:
+
+1. **Actionable validation errors.** `Invalid source binding: Invalid option:
+   expected one …` truncates before listing the allowed values and omits which
+   field failed. Return the field path and the accepted set (e.g.
+   `sourceBinding.kind must be one of route|struct|endpoint|schema|config|cli`).
+   The CLI surfaces `error.message` verbatim, so a precise message is self-service.
+2. **Validate the whole block set up front, report all offenders.** A page upsert
+   should 400 with *every* invalid block (index + reason), not just `Block 1`, so
+   one round-trip fixes the page instead of N.
+3. **Atomic or explicitly partial page upsert.** State whether a rejected upsert
+   leaves the page untouched (atomic) or half-applied. The CLI assumes atomic (a
+   failed page = no change); confirm it, or return which blocks landed.
+4. **Return block `key` on page reads** (gap #1) — without it, re-author
+   idempotency degrades to `sourceBinding` matching and keyless prose churns.
+5. **Idempotent proposals.** Re-syncing an unchanged page (e.g. on `--from`
+   replay after a partial failure) should reuse the open proposal, not mint a new
+   one — otherwise replay-to-recover creates duplicate change requests.
 
 ## Runner / capture (`gravity capture`)
 

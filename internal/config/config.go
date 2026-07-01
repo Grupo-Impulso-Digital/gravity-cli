@@ -175,6 +175,30 @@ func loadUserCredentials() (*UserCredentials, error) {
 	return &uc, nil
 }
 
+// LoadUserCredentials reads the user-level credentials file, returning (nil,
+// nil) when it does not exist. Exposed so `gravity auth` can inspect and
+// preserve stored values (e.g. a custom apiUrl) across a token change.
+func LoadUserCredentials() (*UserCredentials, error) {
+	return loadUserCredentials()
+}
+
+// RemoveUserCredentials deletes the user-level credentials file. It returns the
+// path, whether a file was actually present (existed), and any error. A missing
+// file is not an error — existed is false. Used by `gravity auth logout`.
+func RemoveUserCredentials() (path string, existed bool, err error) {
+	path, err = UserConfigPath()
+	if err != nil {
+		return "", false, err
+	}
+	if err = os.Remove(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return path, false, nil
+		}
+		return path, false, fmt.Errorf("remove %s: %w", path, err)
+	}
+	return path, true, nil
+}
+
 // WriteUserCredentials writes the user-level config with 0600 permissions,
 // creating the parent directory if necessary.
 func WriteUserCredentials(creds UserCredentials) (string, error) {

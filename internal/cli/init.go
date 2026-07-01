@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	yaml "go.yaml.in/yaml/v3"
 
+	"github.com/impulso/gravity-cli/internal/api"
 	"github.com/impulso/gravity-cli/internal/config"
 )
 
@@ -70,6 +72,11 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 			var sources []config.SourceMap
 			var documents []config.DocMap
 
+			// client is built best-effort for the interactive wizard so it can
+			// list the org's sites/spaces; it stays nil offline/unauthenticated.
+			var client *api.Client
+			interactive := false
+
 			// Refuse to clobber an existing config unless --force/--migrate is set.
 			// Done up front so the wizard never runs only to fail at write time.
 			if !confirm && !migrate {
@@ -103,7 +110,18 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 				// Non-interactive: rely on flags/env, no detection.
 
 			default:
-				params, write, werr := runInitWizard(cmd, initSeed{
+				interactive = true
+				// Best-effort: resolve a token (env or the user-level config only —
+				// never the project file) plus the API URL so the wizard can list
+				// the org's sites/spaces. A resolve error leaves client nil and the
+				// wizard falls back to free-text entry.
+				if cfg, cerr := config.Resolve(config.Flags{Token: gf.token, APIURL: apiURL, Site: site, Space: sp}, dir); cerr == nil {
+					apiURL = firstNonEmpty(apiURL, cfg.APIURL)
+					if cfg.Token != "" && cfg.APIURL != "" {
+						client = api.New(cfg.APIURL, cfg.Token)
+					}
+				}
+				params, write, werr := runInitWizard(cmd, client, initSeed{
 					Site:    site,
 					APIURL:  firstNonEmpty(apiURL, config.DefaultAPIURL),
 					Space:   firstNonEmpty(sp, repo),
@@ -151,8 +169,18 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 				return Fail(CodeError, fmt.Errorf("write %s: %w", path, err))
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s\n", path)
+
+			// On the interactive path, idempotently create the spaces the manifest
+			// references so they exist on the platform now (not only after the first
+			// `gravity sync`). Best-effort: never fails the command.
+			if interactive && client != nil && site != "" {
+				ensureDeclaredSpaces(cmd, client, site, params)
+			}
+
 			if len(sources) == 0 && len(documents) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No source/document mappings declared yet — edit the file or re-run `gravity init`, then `gravity sync`.")
+			} else if interactive {
+				fmt.Fprintln(cmd.OutOrStdout(), "Note: `gravity sync` authors content as a draft + open proposal — pages appear under review until approved, not as live pages.")
 			}
 			return nil
 		},
@@ -193,17 +221,41 @@ type wizardResult struct {
 	Documents   []config.DocMap
 }
 
-// runInitWizard drives the huh form, detecting candidate specs/docs in ScanDir
-// and offering to map them. The second return is the user's final write/abort
-// choice.
-func runInitWizard(cmd *cobra.Command, seed initSeed) (wizardResult, bool, error) {
+// runInitWizard drives the huh forms, detecting candidate specs/docs in ScanDir
+// and offering to map them. When client is non-nil it lists the org's sites and
+// the chosen site's spaces so the user selects rather than types them; offline
+// it falls back to free-text inputs. The second return is the user's final
+// write/abort choice.
+func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizardResult, bool, error) {
+	ctx := cmd.Context()
+	in := cmd.InOrStdin()
+	errOut := cmd.ErrOrStderr()
+
 	site := seed.Site
 	apiURL := seed.APIURL
 	defaultSpace := seed.Space
 	role := seed.Role
-	productSlug := seed.Site
 	repo := seed.Repo
 	apiSpace := "api"
+
+	// --- Form 1: pick (or type) the target site. Sites are fetched up front so
+	// the picker has real options; errors degrade to a free-text input. ---
+	siteFld := siteField(ctx, client, errOut, &site, seed.Site)
+	form1 := huh.NewForm(huh.NewGroup(siteFld)).WithInput(in).WithOutput(errOut)
+	if err := form1.Run(); err != nil {
+		return wizardResult{}, false, err
+	}
+	if site == siteManualSentinel {
+		site = ""
+		if err := runInput(cmd, "Site slug", "The Gravity site this repo documents.", &site, requiredField); err != nil {
+			return wizardResult{}, false, err
+		}
+	}
+	site = strings.TrimSpace(site)
+	productSlug := site // default the product id to the chosen site; editable below
+
+	// With the site known, fetch its spaces so the space picker is real too.
+	spaces := fetchSpaces(ctx, client, site, errOut)
 
 	specs, mds := detectDocSources(seed.ScanDir)
 	selectedSpecs := append([]string(nil), specs...) // preselect all detected
@@ -211,12 +263,7 @@ func runInitWizard(cmd *cobra.Command, seed initSeed) (wizardResult, bool, error
 
 	groups := []*huh.Group{
 		huh.NewGroup(
-			huh.NewInput().Title("Site slug").
-				Description("The Gravity site this repo documents.").
-				Value(&site).Validate(requiredField),
 			huh.NewInput().Title("API URL").Value(&apiURL).Validate(optionalURL),
-		),
-		huh.NewGroup(
 			huh.NewInput().Title("Product slug").
 				Description("Logical product id; defaults to the site slug.").
 				Value(&productSlug),
@@ -233,9 +280,7 @@ func runInitWizard(cmd *cobra.Command, seed initSeed) (wizardResult, bool, error
 				).Value(&role),
 		),
 		huh.NewGroup(
-			huh.NewInput().Title("Default space").
-				Description("Where this repo's pages live.").
-				Value(&defaultSpace).Validate(requiredField),
+			spaceField("Default space", "Where this repo's pages live.", spaces, &defaultSpace, seed.Space),
 		),
 	}
 
@@ -246,7 +291,7 @@ func runInitWizard(cmd *cobra.Command, seed initSeed) (wizardResult, bool, error
 				Description("Each becomes machine-owned `api` blocks authored by `gravity sync`.").
 				Options(toOptions(specs)...).
 				Value(&selectedSpecs),
-			huh.NewInput().Title("API docs space").Value(&apiSpace),
+			spaceField("API docs space", "", spaces, &apiSpace, "api"),
 		))
 	}
 	if len(mds) > 0 {
@@ -259,9 +304,23 @@ func runInitWizard(cmd *cobra.Command, seed initSeed) (wizardResult, bool, error
 		))
 	}
 
-	form := huh.NewForm(groups...).WithInput(cmd.InOrStdin()).WithOutput(cmd.ErrOrStderr())
+	form := huh.NewForm(groups...).WithInput(in).WithOutput(errOut)
 	if err := form.Run(); err != nil {
 		return wizardResult{}, false, err
+	}
+
+	// Resolve "new space…" choices into a typed slug.
+	if defaultSpace == spaceNewSentinel {
+		defaultSpace = seed.Space
+		if err := runInput(cmd, "New space slug", "Where this repo's pages live.", &defaultSpace, requiredField); err != nil {
+			return wizardResult{}, false, err
+		}
+	}
+	if apiSpace == spaceNewSentinel {
+		apiSpace = "api"
+		if err := runInput(cmd, "New API docs space slug", "", &apiSpace, requiredField); err != nil {
+			return wizardResult{}, false, err
+		}
 	}
 
 	if strings.TrimSpace(productSlug) == "" {
@@ -286,9 +345,11 @@ func runInitWizard(cmd *cobra.Command, seed initSeed) (wizardResult, bool, error
 	}
 	for _, m := range selectedDocs {
 		res.Documents = append(res.Documents, config.DocMap{
-			File:      m,
-			Page:      slugFromPath(m),
-			Ownership: "machine",
+			File: m,
+			Page: slugFromPath(m),
+			// Hand-authored docs are editable in Gravity (seeded once from the repo,
+			// then human-owned). Use machine only for a verbatim/code mirror.
+			Ownership: "human",
 			As:        "page",
 		})
 	}
@@ -314,6 +375,179 @@ func runInitWizard(cmd *cobra.Command, seed initSeed) (wizardResult, bool, error
 		return wizardResult{}, false, err
 	}
 	return res, write, nil
+}
+
+// Sentinel option values for the site/space pickers. They can't collide with a
+// real slug (slugs are ^[a-z0-9-]+$), so a selected sentinel unambiguously means
+// "let me type one instead".
+const (
+	siteManualSentinel = "\x00manual-site"
+	spaceNewSentinel   = "\x00new-space"
+)
+
+// siteField returns the site picker: a Select over the org's sites (plus a
+// manual-entry sentinel) when they can be listed, otherwise a free-text Input.
+// It binds the chosen value into *binding and seeds the default selection.
+func siteField(ctx context.Context, client *api.Client, notice io.Writer, binding *string, seed string) huh.Field {
+	sites, ok := fetchSites(ctx, client, notice)
+	if !ok {
+		if *binding == "" {
+			*binding = seed
+		}
+		return huh.NewInput().Title("Site slug").
+			Description("The Gravity site this repo documents.").
+			Value(binding).Validate(requiredField)
+	}
+	opts := make([]huh.Option[string], 0, len(sites)+1)
+	for _, s := range sites {
+		opts = append(opts, huh.NewOption(siteLabel(s), s.Slug))
+	}
+	opts = append(opts, huh.NewOption("✏️  enter a slug manually", siteManualSentinel))
+	*binding = pickDefaultSite(sites, seed)
+	return huh.NewSelect[string]().Title("Site").
+		Description("The Gravity site this repo documents.").
+		Options(opts...).Value(binding)
+}
+
+// spaceField returns a space picker: a Select over the site's existing spaces
+// (plus a "new space" sentinel) when spaces are known, otherwise a free-text
+// Input. seed preselects/prefills the default.
+func spaceField(title, desc string, spaces []api.Space, binding *string, seed string) huh.Field {
+	if len(spaces) == 0 {
+		if *binding == "" {
+			*binding = seed
+		}
+		return huh.NewInput().Title(title).Description(desc).Value(binding).Validate(requiredField)
+	}
+	opts := make([]huh.Option[string], 0, len(spaces)+1)
+	for _, s := range spaces {
+		opts = append(opts, huh.NewOption(spaceLabel(s), s.Slug))
+	}
+	opts = append(opts, huh.NewOption("＋ new space…", spaceNewSentinel))
+	if slugInSpaces(seed, spaces) {
+		*binding = seed
+	} else {
+		*binding = spaceNewSentinel
+	}
+	return huh.NewSelect[string]().Title(title).Description(desc).Options(opts...).Value(binding)
+}
+
+// runInput runs a one-field form to collect a single value (used to resolve the
+// manual-site / new-space sentinels).
+func runInput(cmd *cobra.Command, title, desc string, binding *string, validate func(string) error) error {
+	return huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title(title).Description(desc).Value(binding).Validate(validate),
+	)).WithInput(cmd.InOrStdin()).WithOutput(cmd.ErrOrStderr()).Run()
+}
+
+// fetchSites lists the org's sites best-effort. It returns ok=false (after a
+// one-line notice) when there's no client, the call fails, or the org has no
+// sites — so the caller falls back to free-text entry.
+func fetchSites(ctx context.Context, client *api.Client, notice io.Writer) ([]api.SiteSummary, bool) {
+	if client == nil {
+		fmt.Fprintln(notice, "Not signed in — type values manually. Run `gravity auth login` to pick from your sites.")
+		return nil, false
+	}
+	sites, err := client.Sites(ctx)
+	if err != nil {
+		fmt.Fprintf(notice, "Couldn't list sites (%v) — type values manually.\n", err)
+		return nil, false
+	}
+	if len(sites) == 0 {
+		return nil, false
+	}
+	return sites, true
+}
+
+// fetchSpaces lists a site's spaces best-effort; any failure yields nil so the
+// caller falls back to free-text space entry.
+func fetchSpaces(ctx context.Context, client *api.Client, site string, notice io.Writer) []api.Space {
+	if client == nil || site == "" {
+		return nil
+	}
+	tree, err := client.SiteTree(ctx, site)
+	if err != nil {
+		fmt.Fprintf(notice, "Couldn't list spaces for %q (%v) — type the space manually.\n", site, err)
+		return nil
+	}
+	return tree.Spaces
+}
+
+// ensureDeclaredSpaces idempotently creates (or confirms) every space the new
+// manifest references, so a freshly-`init`'d repo's spaces exist on the platform
+// immediately rather than only after the first `gravity sync`. Best-effort: a
+// permission (403) or not-yet-available failure is reported and skipped, never
+// fatal — the written file is the command's real output.
+func ensureDeclaredSpaces(cmd *cobra.Command, client *api.Client, site string, p scaffoldParams) {
+	out := cmd.OutOrStdout()
+	seen := map[string]bool{}
+	add := func(s string) []string {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return nil
+		}
+		seen[s] = true
+		return []string{s}
+	}
+	var slugs []string
+	slugs = append(slugs, add(firstNonEmpty(p.Space, p.Repo))...)
+	for _, src := range p.Sources {
+		slugs = append(slugs, add(src.Space)...)
+	}
+	for _, slug := range slugs {
+		_, err := client.EnsureSpace(cmd.Context(), site, api.SpaceUpsertRequest{Slug: slug})
+		if err == nil {
+			fmt.Fprintf(out, "Ensured space %q on site %q.\n", slug, site)
+			continue
+		}
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && (apiErr.IsAuth() || apiErr.IsUnavailable()) {
+			fmt.Fprintf(out, "Note: couldn't create space %q on %q (%s) — `gravity sync` will create it later.\n", slug, site, apiErr.Message)
+			continue
+		}
+		fmt.Fprintf(out, "Note: couldn't create space %q on %q: %v\n", slug, site, err)
+	}
+}
+
+func siteLabel(s api.SiteSummary) string {
+	if s.Name != "" && s.Name != s.Slug {
+		return s.Slug + " — " + s.Name
+	}
+	return s.Slug
+}
+
+func spaceLabel(s api.Space) string {
+	if s.Name != "" && s.Name != s.Slug {
+		return s.Slug + " — " + s.Name
+	}
+	return s.Slug
+}
+
+// pickDefaultSite chooses the initially-selected site: the seed when it is a
+// listed site, otherwise the first site.
+func pickDefaultSite(sites []api.SiteSummary, seed string) string {
+	for _, s := range sites {
+		if s.Slug == seed {
+			return seed
+		}
+	}
+	if len(sites) > 0 {
+		return sites[0].Slug
+	}
+	return seed
+}
+
+// slugInSpaces reports whether slug names one of the spaces.
+func slugInSpaces(slug string, spaces []api.Space) bool {
+	if slug == "" {
+		return false
+	}
+	for _, s := range spaces {
+		if s.Slug == slug {
+			return true
+		}
+	}
+	return false
 }
 
 func requiredField(s string) error {
@@ -486,7 +720,9 @@ const commentedSourcesExample = `# sources:
 const commentedDocumentsExample = `# documents:
 #   - file: docs/getting-started.md
 #     page: getting-started
-#     ownership: machine             # machine | hybrid | human
+#     ownership: human               # human: editable in Gravity, seeded once (default)
+#                                    # machine: verbatim/code mirror, drift-locked, not editable
+#                                    # hybrid: repo stays source, machine fields refreshed
 #     as: page                       # page | release`
 
 // renderScaffold produces a rich, commented .gravity.yaml. Connection/identity

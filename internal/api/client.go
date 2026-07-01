@@ -158,3 +158,8 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values, out any
 func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPost, path, nil, body, out)
 }
+
+// Delete issues a DELETE request.
+func (c *Client) Delete(ctx context.Context, path string, out any) error {
+	return c.do(ctx, http.MethodDelete, path, nil, nil, out)
+}

@@ -19,18 +19,22 @@ import (
 // everything else (paragraphs, lists, quotes, HTML) is preserved verbatim in a
 // prose block. (When the platform ships a `markdown` block type, the verbatim
 // branch can target it instead.) It returns the blocks and a sniffed title
-// (first H1, else the filename).
+// (first H1, else the filename). The first H1 becomes the page title and is NOT
+// also emitted as a heading block — the platform renders the title as the
+// page's main H1, so emitting it would duplicate it at the top of the page.
 //
-// ownership is machine | hybrid | human (default machine). machine/hybrid blocks
-// bind to the source file (whole-file sha256) so `check docs` verifies them;
-// human blocks are seeded once and carry no binding.
+// ownership is machine | hybrid | human (default human). A hand-authored
+// document is human by default so it stays editable in Gravity; pass machine
+// only for a verbatim/code mirror that should be drift-locked and not editable.
+// machine/hybrid blocks bind to the source file (whole-file sha256) so
+// `check docs` verifies them; human blocks are seeded once and carry no binding.
 func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.BlockInput, title string, err error) {
 	data, err := readRepoFile(repoRoot, fileRef)
 	if err != nil {
 		return nil, "", fmt.Errorf("read %q: %w", fileRef, err)
 	}
 	if ownership == "" {
-		ownership = "machine"
+		ownership = "human"
 	}
 	var binding *api.SourceBinding
 	if ownership != "human" {
@@ -81,7 +85,11 @@ func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.
 			section = uniq
 			intra = 0
 			if title == "" && node.Level == 1 {
+				// The first H1 IS the page title (rendered as the page's main H1);
+				// don't also emit it as a heading block. Section bookkeeping above
+				// still runs so content under it keeps stable keys.
 				title = txt
+				continue
 			}
 			emit("heading", map[string]any{"text": txt, "level": node.Level}, fmt.Sprintf("doc:%s:%s", fileRef, uniq))
 		case *ast.FencedCodeBlock:
@@ -209,6 +217,11 @@ func rawSpan(n ast.Node, src []byte) string {
 	}
 	return strings.TrimRight(string(src[start:stop]), "\n")
 }
+
+// Slug lowercases text and collapses non-alphanumerics into single dashes — the
+// same rule the Markdown decomposer uses for section ids. Exported so `sync`'s
+// reconcile can guess the slug a title would canonically produce.
+func Slug(s string) string { return slug(s) }
 
 // slug lowercases text and collapses non-alphanumerics into single dashes.
 func slug(s string) string {

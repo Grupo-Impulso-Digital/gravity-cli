@@ -32,7 +32,7 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 
 			who, err := e.client.WhoAmI(cmd.Context())
 			if err != nil {
-				return Fail(CodeError, fmt.Errorf("whoami failed: %w", classifyDoctorErr(err)))
+				return Fail(CodeError, fmt.Errorf("whoami failed: %w", classifyAuthErr(err)))
 			}
 			fmt.Fprintf(out, "\nToken:   valid (%s)\n", who.KeyHint)
 			fmt.Fprintf(out, "Org:     %s (%s)\n", who.OrganizationName, who.OrganizationID)
@@ -46,7 +46,7 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 
 			cfg, err := e.client.LLMConfig(cmd.Context())
 			if err != nil {
-				return Fail(CodeError, fmt.Errorf("llm config failed: %w", classifyDoctorErr(err)))
+				return Fail(CodeError, fmt.Errorf("llm config failed: %w", classifyAuthErr(err)))
 			}
 			fmt.Fprintf(out, "Provider: %s\n", cfg.Provider)
 			fmt.Fprintf(out, "Model:    %s\n", cfg.Model)
@@ -164,8 +164,8 @@ func featureState(available bool) string {
 	return "not yet available"
 }
 
-// classifyDoctorErr keeps auth errors readable for the doctor output.
-func classifyDoctorErr(err error) error {
+// classifyAuthErr keeps auth errors readable for the doctor output.
+func classifyAuthErr(err error) error {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) && apiErr.IsAuth() {
 		return fmt.Errorf("token rejected (%d): %s", apiErr.StatusCode, apiErr.Message)

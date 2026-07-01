@@ -62,6 +62,64 @@ func TestWhoAmINullDefaultSite(t *testing.T) {
 	}
 }
 
+func TestSites(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/sites" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer sk_live_abc" {
+			t.Errorf("missing bearer token: %q", r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sites": []map[string]any{
+				{"id": "s1", "slug": "docs", "name": "Docs", "description": "Public docs", "visibility": "public"},
+				{"id": "s2", "slug": "internal", "name": "Internal", "visibility": "private"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "sk_live_abc")
+	sites, err := c.Sites(context.Background())
+	if err != nil {
+		t.Fatalf("sites: %v", err)
+	}
+	if len(sites) != 2 {
+		t.Fatalf("expected 2 sites, got %d", len(sites))
+	}
+	if sites[0].Slug != "docs" || sites[0].Name != "Docs" || sites[0].Description != "Public docs" {
+		t.Errorf("site[0] = %+v", sites[0])
+	}
+	if sites[1].Slug != "internal" || sites[1].Visibility != "private" {
+		t.Errorf("site[1] = %+v", sites[1])
+	}
+}
+
+func TestDeletePage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("method = %s, want DELETE", r.Method)
+		}
+		if r.URL.Path != "/api/v1/sites/docs/spaces/cli/pages/agents-md-ed44" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"pageId": "p2", "pageSlug": "agents-md-ed44",
+			"proposalId": "prop_9", "status": "proposed", "reviewUrl": "/app/proposals?id=prop_9",
+		})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "t")
+	resp, err := c.DeletePage(context.Background(), "docs", "cli", "agents-md-ed44")
+	if err != nil {
+		t.Fatalf("delete page: %v", err)
+	}
+	if resp.Status != "proposed" || resp.ProposalID != "prop_9" {
+		t.Errorf("response = %+v", resp)
+	}
+}
+
 func TestPagesQueryParam(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/sites/docs/pages" {

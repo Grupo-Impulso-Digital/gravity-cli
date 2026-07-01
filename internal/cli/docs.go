@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,8 @@ func newDocsGenerateCmd(gf *globalFlags) *cobra.Command {
 		dryRun    bool
 		ci        bool
 		require   bool
+		from      string
+		save      string
 	)
 	cmd := &cobra.Command{
 		Use:     "generate",
@@ -80,11 +83,22 @@ audiences, and the platform renders the blocks matching the viewer.`,
 			if err != nil {
 				return err
 			}
+
+			// Replay: sync a previously authored (and saved) set with no AI cost.
+			// The AI phases already ran; only the sync — the one late-failing step —
+			// needs retrying, so skip planning/authoring entirely.
+			if from != "" {
+				targets, err := loadTargets(from)
+				if err != nil {
+					return Fail(CodeError, fmt.Errorf("load %s: %w", from, err))
+				}
+				return finishDocs(cmd, e, siteSlug, targets, output, dryRun, ci, from)
+			}
+
 			repo, err := git.Open(cmd.Context(), ".")
 			if err != nil {
 				return Fail(CodeError, err)
 			}
-			out := cmd.OutOrStdout()
 			logw := logWriter(cmd, ci)
 
 			// Preview gate plus block-audience degradation, from one whoami call.
@@ -166,18 +180,11 @@ audiences, and the platform renders the blocks matching the viewer.`,
 				})
 			}
 
-			if len(targets) == 0 {
-				fmt.Fprintln(out, "no pages authored")
-				return nil
+			artifact := save
+			if artifact == "" {
+				artifact = defaultDocsArtifact(repo.Root)
 			}
-			if output == outputStdout {
-				printSyncStdout(out, targets)
-				return nil
-			}
-			if dryRun {
-				return printSyncDryRun(out, targets)
-			}
-			return runSync(cmd.Context(), e.client, siteSlug, targets, logw, out)
+			return finishDocs(cmd, e, siteSlug, targets, output, dryRun, ci, artifact)
 		},
 	}
 	cmd.Flags().StringVar(&site, "site", "", "site slug")
@@ -190,7 +197,52 @@ audiences, and the platform renders the blocks matching the viewer.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be posted without calling the API")
 	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable docs generation as a hard error (exit 2)")
+	cmd.Flags().StringVar(&from, "from", "", "replay a saved doc set through sync, skipping the AI phases (use the file printed by a prior run)")
+	cmd.Flags().StringVar(&save, "save", "", "path to persist the authored doc set for replay (default .gravity/generated/docs.json)")
 	return cmd
+}
+
+// defaultDocsArtifact is where `docs generate` persists its authored set for
+// replay: a stable per-repo path so a failed sync can be retried with --from
+// without paying the AI cost again.
+func defaultDocsArtifact(repoRoot string) string {
+	return filepath.Join(repoRoot, ".gravity", "generated", "docs.json")
+}
+
+// finishDocs emits the authored targets: to stdout, as a dry-run, or by syncing.
+// Before a real sync it persists the set to artifactPath so a run whose sync
+// fails late — after all the AI tokens are already spent — can be replayed with
+// `gravity docs generate --from <artifactPath>` at no further cost. On any sync
+// failure it points the user back at that file. This is the durability guarantee:
+// authored content is never lost to a late API error.
+func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarget, output string, dryRun, ci bool, artifactPath string) error {
+	out := cmd.OutOrStdout()
+	if len(targets) == 0 {
+		fmt.Fprintln(out, "no pages authored")
+		return nil
+	}
+	if output == outputStdout {
+		printSyncStdout(out, targets)
+		return nil
+	}
+	if dryRun {
+		return printSyncDryRun(out, targets)
+	}
+	if artifactPath != "" {
+		if err := saveTargets(artifactPath, targets); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not save authored docs to %s (%v); proceeding to sync\n", artifactPath, err)
+			artifactPath = ""
+		} else {
+			fmt.Fprintf(out, "Saved authored docs to %s\n", artifactPath)
+		}
+	}
+	err := runSync(cmd.Context(), e.client, siteSlug, targets, true, logWriter(cmd, ci), out)
+	if err != nil && artifactPath != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: authored docs are saved at %s — fix the cause and replay with `gravity docs generate --from %s` (no AI re-run)\n",
+			artifactPath, artifactPath)
+	}
+	return err
 }
 
 // runDocsPlan runs phase A: survey the repo and propose the page list.

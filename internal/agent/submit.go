@@ -248,7 +248,7 @@ func SubmitPageDocTool() Tool {
 								"type":      map[string]any{"type": "string", "enum": []any{"heading", "prose", "code", "table"}},
 								"ownership": map[string]any{"type": "string", "enum": []any{"machine", "hybrid", "human"}, "description": "Defaults to hybrid."},
 								"audiences": map[string]any{"type": "array", "items": audienceItems, "description": "Audiences for this block; empty = everyone."},
-								"content":   map[string]any{"type": "object", "description": "Shape depends on type: heading/prose/code use {text,...}; table uses {header,rows}."},
+								"content":   map[string]any{"type": "object", "description": "Shape depends on type: heading/prose/code use {text,...}; table uses {rows: string[][] with the header row first, header: true}."},
 								"sources":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Repo files this block draws from."},
 							},
 							"required": []any{"key", "type", "content"},

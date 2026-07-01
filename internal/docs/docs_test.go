@@ -121,9 +121,15 @@ func TestMarkdownPage_NativeBlocks(t *testing.T) {
 				t.Errorf("code block language = %v, want bash", m["language"])
 			}
 		}
+		if b.Type == "heading" {
+			if m, ok := b.Content.(map[string]any); ok && m["text"] == "My Doc" {
+				t.Errorf("the H1 title must not be duplicated as a heading block")
+			}
+		}
 	}
-	if types["heading"] < 2 {
-		t.Errorf("want >=2 heading blocks, got %d", types["heading"])
+	// Only "## Usage" is a heading block; the H1 "My Doc" became the page title.
+	if types["heading"] != 1 {
+		t.Errorf("want exactly 1 heading block (title H1 not duplicated), got %d", types["heading"])
 	}
 	if types["table"] != 1 {
 		t.Errorf("want 1 table block, got %d", types["table"])
@@ -146,6 +152,44 @@ func TestMarkdownPage_NativeBlocks(t *testing.T) {
 	chk := checks.VerifyBinding(dir, blocks[0].SourceBinding)
 	if !chk.Verified || chk.Stale {
 		t.Errorf("doc binding not verified/fresh: %+v", chk)
+	}
+}
+
+func TestMarkdownPage_DefaultsToHumanAndDropsTitleBlock(t *testing.T) {
+	dir := t.TempDir()
+	md := "# Overview\n\nWelcome.\n\n## Details\n\nMore text.\n"
+	writeFile(t, dir, "guide.md", md)
+
+	// Empty ownership => human default: editable in Gravity, no drift binding.
+	blocks, title, err := docs.MarkdownPage(dir, "guide.md", "", "test")
+	if err != nil {
+		t.Fatalf("MarkdownPage: %v", err)
+	}
+	if title != "Overview" {
+		t.Errorf("title = %q, want Overview", title)
+	}
+	for _, b := range blocks {
+		if b.Ownership != "human" {
+			t.Errorf("block %s ownership = %s, want human (default)", b.Key, b.Ownership)
+		}
+		if b.SourceBinding != nil {
+			t.Errorf("human block %s must carry no source binding; got %+v", b.Key, b.SourceBinding)
+		}
+		if b.Type == "heading" {
+			if m, ok := b.Content.(map[string]any); ok && m["text"] == "Overview" {
+				t.Errorf("the H1 title must not be duplicated as a heading block")
+			}
+		}
+	}
+	// "## Details" survives as a heading; "# Overview" is the title, not a block.
+	headings := 0
+	for _, b := range blocks {
+		if b.Type == "heading" {
+			headings++
+		}
+	}
+	if headings != 1 {
+		t.Errorf("want exactly 1 heading block, got %d", headings)
 	}
 }
 

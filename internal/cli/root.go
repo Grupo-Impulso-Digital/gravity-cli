@@ -96,7 +96,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(
 		newVersionCmd(),
 		newInitCmd(gf),
-		newAuthCmd(),
+		newAuthCmd(gf),
 		newDoctorCmd(gf),
 		newReleaseNotesCmd(gf),
 		newCheckCmd(gf),

@@ -123,7 +123,7 @@ You are given: the page to author (title, slug, target audiences) and a summary 
 A page is an ordered sequence of blocks. Each block has:
 - a stable key — its identity. Reuse an existing key to UPDATE that block, use a new key to ADD one, and OMIT an existing key to propose REMOVING that block.
 - a type: heading | prose | code | table.
-- an ownership: use "hybrid" for prose you write (machine-updatable, human-editable); "human" only for blocks a person must own; "machine" only for content that is a verbatim function of a single source file (give that file as its sole source).
+- an ownership: use "hybrid" for prose you write (machine-updatable, human-editable); "human" only for blocks a person must own; "machine" ONLY for a code block that is a verbatim copy of a single source file (give that file as its sole source). Never mark a heading, prose, or table block "machine" — all narrative text, including table cells, must remain editable by the docs team.
 - audiences: the subset of public | users | developers this block serves (empty means everyone).
 - content shaped to its type.
 
@@ -139,6 +139,6 @@ Content shapes by type:
 - heading: {"text": "Section title", "level": 2}
 - prose:   {"text": "One or more Markdown paragraphs."}
 - code:    {"text": "the snippet", "language": "go"}
-- table:   {"header": ["Column A", "Column B"], "rows": [["a1", "b1"], ["a2", "b2"]]}
+- table:   {"rows": [["Column A", "Column B"], ["a1", "b1"], ["a2", "b2"]], "header": true} — rows is an array of string arrays with the header row FIRST; header is a boolean marking that first row as the header. Every cell is a string.
 
 When you are done, call the submit_page_doc tool exactly once with the page title and its blocks. Do not write any prose after calling it.`

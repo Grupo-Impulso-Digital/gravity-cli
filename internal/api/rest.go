@@ -94,6 +94,31 @@ func (c *Client) SiteTree(ctx context.Context, siteSlug string) (*SiteTree, erro
 	return &out, nil
 }
 
+// SiteSummary is one entry in the GET /api/v1/sites list: the org's sites the
+// acting key may see (scope-aware). It carries the platform's Description, which
+// the site-tree Site does not, so it is kept distinct from Site.
+type SiteSummary struct {
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Visibility  string `json:"visibility"`
+}
+
+type sitesResponse struct {
+	Sites []SiteSummary `json:"sites"`
+}
+
+// Sites calls GET /api/v1/sites, returning the sites the token may target. Used
+// by `gravity init` to let the user pick a site rather than type its slug.
+func (c *Client) Sites(ctx context.Context) ([]SiteSummary, error) {
+	var out sitesResponse
+	if err := c.Get(ctx, "/api/v1/sites", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Sites, nil
+}
+
 // SourceBinding ties a block to a source artifact in the repo or an upstream.
 type SourceBinding struct {
 	Kind      string `json:"kind"`
@@ -270,6 +295,22 @@ type PageUpsertRequest struct {
 func (c *Client) UpsertPage(ctx context.Context, siteSlug string, req PageUpsertRequest) (*ReleaseNotesResponse, error) {
 	var out ReleaseNotesResponse
 	if err := c.Post(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/pages", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeletePage calls DELETE /api/v1/sites/:siteSlug/spaces/:spaceSlug/pages/:pageSlug.
+// Deletion is governed: the server opens a `delete` proposal (a change request a
+// reviewer approves) rather than removing the page immediately, and the call is
+// idempotent (re-requesting reuses the open proposal). The response mirrors the
+// upsert shape (pageId, pageSlug, proposalId, status, reviewUrl).
+func (c *Client) DeletePage(ctx context.Context, siteSlug, spaceSlug, pageSlug string) (*ReleaseNotesResponse, error) {
+	var out ReleaseNotesResponse
+	path := "/api/v1/sites/" + url.PathEscape(siteSlug) +
+		"/spaces/" + url.PathEscape(spaceSlug) +
+		"/pages/" + url.PathEscape(pageSlug)
+	if err := c.Delete(ctx, path, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

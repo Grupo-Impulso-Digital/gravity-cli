@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/impulso/gravity-cli/internal/api"
 	"github.com/impulso/gravity-cli/internal/config"
 )
 
@@ -82,6 +83,50 @@ func TestDetectDocSources(t *testing.T) {
 	}
 	if len(mds) != 2 {
 		t.Errorf("mds = %v, want README.md + docs/guide.md", mds)
+	}
+}
+
+func TestPickDefaultSite(t *testing.T) {
+	sites := []api.SiteSummary{
+		{Slug: "docs", Name: "Docs"},
+		{Slug: "internal", Name: "Internal"},
+	}
+	if got := pickDefaultSite(sites, "internal"); got != "internal" {
+		t.Errorf("seed in list: got %q, want internal", got)
+	}
+	if got := pickDefaultSite(sites, "nope"); got != "docs" {
+		t.Errorf("seed not in list: got %q, want first (docs)", got)
+	}
+	if got := pickDefaultSite(nil, "fallback"); got != "fallback" {
+		t.Errorf("empty list: got %q, want seed fallback", got)
+	}
+}
+
+func TestSlugInSpaces(t *testing.T) {
+	spaces := []api.Space{{Slug: "guides"}, {Slug: "api"}}
+	if !slugInSpaces("api", spaces) {
+		t.Error("expected api to be found")
+	}
+	if slugInSpaces("missing", spaces) {
+		t.Error("missing should not be found")
+	}
+	if slugInSpaces("", spaces) {
+		t.Error("empty slug is never a match")
+	}
+}
+
+func TestSiteAndSpaceLabel(t *testing.T) {
+	if got := siteLabel(api.SiteSummary{Slug: "docs", Name: "Docs"}); got != "docs — Docs" {
+		t.Errorf("siteLabel with name = %q", got)
+	}
+	if got := siteLabel(api.SiteSummary{Slug: "docs", Name: "docs"}); got != "docs" {
+		t.Errorf("siteLabel name==slug = %q, want bare slug", got)
+	}
+	if got := siteLabel(api.SiteSummary{Slug: "docs"}); got != "docs" {
+		t.Errorf("siteLabel no name = %q, want bare slug", got)
+	}
+	if got := spaceLabel(api.Space{Slug: "api", Name: "API"}); got != "api — API" {
+		t.Errorf("spaceLabel with name = %q", got)
 	}
 }
 

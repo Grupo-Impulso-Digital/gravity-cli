@@ -1,10 +1,14 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"github.com/impulso/gravity-cli/internal/api"
 )
@@ -65,6 +69,84 @@ type Result struct {
 	ToolCalls int
 }
 
+// RetryBackoff is the base delay between retries of a transient gateway error;
+// the nth retry waits n*RetryBackoff. Zero falls back to a 1s base (tests set a
+// tiny value to stay fast).
+var RetryBackoff = time.Second
+
+// maxLLMAttempts bounds calls per model turn (1 try + up to 2 retries).
+const maxLLMAttempts = 3
+
+// callWithRetry issues one model turn, retrying transient gateway failures. The
+// LLM gateway intermittently 502s (and 429/503s) on otherwise-valid requests; a
+// single blip would otherwise abort a whole multi-step run, so we retry with a
+// short linear backoff. Non-transient errors (and a canceled context) return
+// immediately.
+func (r *Runner) callWithRetry(ctx context.Context, req api.MessagesRequest) (*api.MessagesResponse, error) {
+	base := RetryBackoff
+	if base <= 0 {
+		base = time.Second
+	}
+	var lastErr error
+	for attempt := 1; attempt <= maxLLMAttempts; attempt++ {
+		resp, err := r.Client.Messages(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if attempt == maxLLMAttempts || !transientGatewayErr(err) {
+			return nil, err
+		}
+		r.logf("agent: transient gateway error (attempt %d/%d), retrying: %v", attempt, maxLLMAttempts, err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt) * base):
+		}
+	}
+	return nil, lastErr
+}
+
+// transientGatewayErr reports whether err is a gateway/provider failure worth
+// retrying: a 502 (provider_error), 503, or 429.
+func transientGatewayErr(err error) bool {
+	var ae *api.APIError
+	if errors.As(err, &ae) {
+		switch ae.StatusCode {
+		case 502, 503, 429:
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeContent normalizes an assistant turn so it can't serialize to an
+// Anthropic block the provider rejects with a 400 when echoed back (the omitempty
+// JSON tags drop empty fields, producing structurally invalid blocks):
+//   - an empty/whitespace text part → dropped (would become {"type":"text"});
+//   - a tool_use with empty input → input defaulted to {} (a bare tool_use with
+//     no "input" field is rejected).
+//
+// These are the intermittent mid-run failures: a turn is only invalid when the
+// model happens to emit such a part, so the loop dies several iterations in.
+func sanitizeContent(parts []api.ContentPart) []api.ContentPart {
+	out := make([]api.ContentPart, 0, len(parts))
+	for _, p := range parts {
+		switch p.Type {
+		case api.PartText:
+			if strings.TrimSpace(p.Text) == "" {
+				continue
+			}
+		case api.PartToolUse:
+			if len(bytes.TrimSpace(p.Input)) == 0 {
+				p.Input = json.RawMessage("{}")
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func (r *Runner) logf(format string, args ...any) {
 	if r.Log != nil {
 		fmt.Fprintf(r.Log, format+"\n", args...)
@@ -116,13 +198,17 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 			MaxTokens:  maxTokens,
 			Context:    r.Context,
 		}
-		resp, err := r.Client.Messages(ctx, req)
+		resp, err := r.callWithRetry(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("llm request (iteration %d): %w", iter+1, err)
 		}
 
 		// Record the assistant turn so the model sees its own tool_use parts.
-		messages = append(messages, api.Message{Role: api.RoleAssistant, Content: resp.Content})
+		// Sanitize first: models often emit an empty/whitespace text block
+		// alongside tool_use, and echoing it back serializes to {"type":"text"}
+		// (Text is omitempty), which the provider rejects with a 400 on the next
+		// turn — the intermittent mid-run failure this guards against.
+		messages = append(messages, api.Message{Role: api.RoleAssistant, Content: sanitizeContent(resp.Content)})
 		result.FinalText = resp.TextContent()
 
 		toolUses := resp.ToolUses()
@@ -174,10 +260,17 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 				})
 				continue
 			}
+			// A tool_result's content must be present: an empty string serializes
+			// away (Content is omitempty), leaving a content-less block the provider
+			// rejects. Substitute a placeholder when a tool legitimately returns "".
+			content := out
+			if strings.TrimSpace(content) == "" {
+				content = "(empty output)"
+			}
 			toolResults = append(toolResults, api.ContentPart{
 				Type:      api.PartToolResult,
 				ToolUseID: use.ID,
-				Content:   out,
+				Content:   content,
 			})
 		}
 

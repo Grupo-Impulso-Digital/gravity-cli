@@ -124,3 +124,35 @@ func writeYAML(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestUserCredentialsRoundTripAndRemove(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	// Nothing stored yet.
+	if uc, err := config.LoadUserCredentials(); err != nil || uc != nil {
+		t.Fatalf("expected (nil,nil) for absent creds, got (%v,%v)", uc, err)
+	}
+	// Removing when absent is not an error and reports existed=false.
+	if path, existed, err := config.RemoveUserCredentials(); err != nil || existed {
+		t.Fatalf("remove absent: path=%s existed=%v err=%v", path, existed, err)
+	}
+
+	if _, err := config.WriteUserCredentials(config.UserCredentials{Token: "sk_live_x", APIURL: "https://custom"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	uc, err := config.LoadUserCredentials()
+	if err != nil || uc == nil {
+		t.Fatalf("load after write: %v %v", uc, err)
+	}
+	if uc.Token != "sk_live_x" || uc.APIURL != "https://custom" {
+		t.Errorf("round-trip mismatch: %+v", uc)
+	}
+
+	path, existed, err := config.RemoveUserCredentials()
+	if err != nil || !existed {
+		t.Fatalf("remove present: existed=%v err=%v", existed, err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("file should be gone after remove, stat err = %v", statErr)
+	}
+}

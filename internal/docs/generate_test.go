@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/impulso/gravity-cli/internal/api"
 	"github.com/impulso/gravity-cli/internal/checks"
 	"github.com/impulso/gravity-cli/internal/docs"
 )
@@ -46,6 +47,112 @@ func TestAssembleBlocksValid(t *testing.T) {
 	}
 }
 
+// Tables are canonicalized to the server contract: an array `header` (the
+// natural authoring shape models emit) folds into rows[0] with header=true,
+// and non-string cells become their JSON text.
+func TestAssembleBlocksTableCanonicalized(t *testing.T) {
+	in := []docs.AuthoredBlock{
+		{Key: "t", Type: "table", Content: raw(t, map[string]any{
+			"header": []string{"Flag", "Default"},
+			"rows":   []any{[]any{"--require", false}, []any{"--max", 42}},
+		})},
+	}
+	blocks, err := docs.AssembleBlocks(t.TempDir(), "gen", in)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	m, ok := blocks[0].Content.(map[string]any)
+	if !ok {
+		t.Fatalf("content type = %T", blocks[0].Content)
+	}
+	if hdr, ok := m["header"].(bool); !ok || !hdr {
+		t.Errorf("header = %v, want true (folded)", m["header"])
+	}
+	rows, ok := m["rows"].([][]string)
+	if !ok {
+		t.Fatalf("rows type = %T", m["rows"])
+	}
+	want := [][]string{{"Flag", "Default"}, {"--require", "false"}, {"--max", "42"}}
+	if len(rows) != len(want) {
+		t.Fatalf("rows = %v, want %v", rows, want)
+	}
+	for i := range want {
+		for j := range want[i] {
+			if rows[i][j] != want[i][j] {
+				t.Errorf("rows[%d][%d] = %q, want %q", i, j, rows[i][j], want[i][j])
+			}
+		}
+	}
+}
+
+// Machine ownership is honored only for code blocks. A narrative block the
+// model marks machine — even with a resolvable single source — is downgraded
+// to hybrid and left unbound, so the docs team keeps editing rights over all
+// text (including table cells).
+func TestAssembleBlocksMachineNarrativeDowngraded(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "root.go"), []byte("package cli"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in := []docs.AuthoredBlock{
+		{
+			Key: "t", Type: "table", Ownership: "machine", Sources: []string{"root.go"},
+			Content: raw(t, map[string]any{"rows": [][]string{{"Command", "Purpose"}}, "header": true}),
+		},
+		{
+			Key: "p", Type: "prose", Ownership: "machine", Sources: []string{"root.go"},
+			Content: raw(t, map[string]any{"text": "Narrative."}),
+		},
+		{
+			Key: "c", Type: "code", Ownership: "machine", Sources: []string{"root.go"},
+			Content: raw(t, map[string]any{"text": "package cli", "language": "go"}),
+		},
+	}
+	blocks, err := docs.AssembleBlocks(dir, "gen", in)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	for _, b := range blocks[:2] {
+		if b.Ownership != "hybrid" {
+			t.Errorf("block %q ownership = %q, want hybrid (downgraded)", b.Key, b.Ownership)
+		}
+		if b.SourceBinding != nil {
+			t.Errorf("block %q: downgraded narrative must be unbound, got %+v", b.Key, b.SourceBinding)
+		}
+	}
+	if blocks[2].Ownership != "machine" || blocks[2].SourceBinding == nil {
+		t.Errorf("code block should stay machine + bound, got ownership=%q binding=%+v",
+			blocks[2].Ownership, blocks[2].SourceBinding)
+	}
+}
+
+// SanitizeBlock upgrades a block from a saved artifact in place: legacy table
+// shape canonicalized, machine narrative downgraded, binding dropped.
+func TestSanitizeBlockReplay(t *testing.T) {
+	b := api.BlockInput{
+		Key: "t", Type: "table", Ownership: "machine",
+		SourceBinding: &api.SourceBinding{Kind: "cli", Ref: "root.go"},
+		Content: map[string]any{
+			"header": []any{"A", "B"},
+			"rows":   []any{[]any{"1", "2"}},
+		},
+	}
+	if err := docs.SanitizeBlock(&b); err != nil {
+		t.Fatalf("sanitize: %v", err)
+	}
+	if b.Ownership != "hybrid" || b.SourceBinding != nil {
+		t.Errorf("ownership=%q binding=%+v, want hybrid + unbound", b.Ownership, b.SourceBinding)
+	}
+	m := b.Content.(map[string]any)
+	rows := m["rows"].([][]string)
+	if len(rows) != 2 || rows[0][0] != "A" || rows[1][1] != "2" {
+		t.Errorf("rows = %v, want header folded first", rows)
+	}
+	if hdr, _ := m["header"].(bool); !hdr {
+		t.Errorf("header = %v, want true", m["header"])
+	}
+}
+
 func TestAssembleBlocksRejects(t *testing.T) {
 	cases := map[string][]docs.AuthoredBlock{
 		"missing key":      {{Type: "prose", Content: raw(t, map[string]any{"text": "x"})}},
@@ -65,30 +172,40 @@ func TestAssembleBlocksRejects(t *testing.T) {
 	}
 }
 
-// AI-authored hybrid blocks carry a hash-less provenance binding, which the
-// drift checker must report as skipped (not stale).
-func TestAssembleBlocksAIBindingSkipped(t *testing.T) {
+// The CLI binds CODE only: AI narrative prose is authored hybrid/human and must
+// NOT be bound, whatever source it names — so the team can freely edit the text
+// without it drift-locking. (A bound prose block is also what the server 400s.)
+func TestAssembleBlocksNarrativeUnbound(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	for _, own := range []string{"hybrid", "human", ""} {
+		in := []docs.AuthoredBlock{
+			{Key: "p", Type: "prose", Ownership: own, Sources: []string{"main.go"}, Content: raw(t, map[string]any{"text": "AI prose"})},
+		}
+		blocks, err := docs.AssembleBlocks(dir, "gen", in)
+		if err != nil {
+			t.Fatalf("assemble (ownership=%q): %v", own, err)
+		}
+		if blocks[0].SourceBinding != nil {
+			t.Errorf("ownership=%q: narrative must be unbound, got %+v", own, blocks[0].SourceBinding)
+		}
+	}
+}
+
+// A machine block whose named source doesn't resolve authors unbound — best-effort,
+// so a model's guessed/renamed path never fails the page.
+func TestAssembleBlocksUnresolvableMachineSourceDropsBinding(t *testing.T) {
 	in := []docs.AuthoredBlock{
-		{Key: "p", Type: "prose", Ownership: "hybrid", Sources: []string{"main.go"}, Content: raw(t, map[string]any{"text": "AI prose"})},
+		{Key: "c", Type: "code", Ownership: "machine", Sources: []string{"does/not/exist.go"}, Content: raw(t, map[string]any{"text": "x", "language": "go"})},
 	}
-	blocks, err := docs.AssembleBlocks(dir, "gen", in)
+	blocks, err := docs.AssembleBlocks(t.TempDir(), "gen", in)
 	if err != nil {
-		t.Fatalf("assemble: %v", err)
+		t.Fatalf("assemble should not fail on an unresolvable source: %v", err)
 	}
-	b := blocks[0]
-	if b.SourceBinding == nil || b.SourceBinding.Kind != "ai" {
-		t.Fatalf("expected ai provenance binding, got %+v", b.SourceBinding)
-	}
-	if b.SourceBinding.Hash != "" {
-		t.Errorf("ai binding should be hash-less, got %q", b.SourceBinding.Hash)
-	}
-	check := checks.VerifyBinding(dir, b.SourceBinding)
-	if !check.Skipped || check.Stale {
-		t.Errorf("expected skipped (not stale) for ai binding, got %+v", check)
+	if blocks[0].SourceBinding != nil {
+		t.Errorf("expected no binding for an unresolvable machine source, got %+v", blocks[0].SourceBinding)
 	}
 }
 

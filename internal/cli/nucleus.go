@@ -155,7 +155,7 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 			// the platform can't store yet.
 			avail, err := featureAvailable(cmd.Context(), e.client, featureNucleus)
 			if err != nil {
-				return Fail(CodeError, fmt.Errorf("whoami: %w", classifyDoctorErr(err)))
+				return Fail(CodeError, fmt.Errorf("whoami: %w", classifyAuthErr(err)))
 			}
 			if !avail {
 				if require {

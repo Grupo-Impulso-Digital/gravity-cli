@@ -205,6 +205,7 @@ gravity docs generate                      # plan + author all three audiences
 gravity docs generate --audiences public   # one audience
 gravity docs generate --page overview --dry-run
 gravity docs generate --output stdout      # preview the block payloads
+gravity docs generate --from .gravity/generated/docs.json  # replay a saved run
 ```
 
 It runs in two phases: a **plan** pass proposes the page set, then a per-page
@@ -214,13 +215,21 @@ the ones matching the viewer. Existing pages are read first, so a re-run updates
 blocks in place (reusing keys) and proposes removing ones that are gone, rather
 than duplicating. Every write is a draft + open proposal.
 
+**The authored set is never lost to a late error.** Before syncing, the whole
+block set is saved to `.gravity/generated/docs.json` (override with `--save`), and
+each page is authored independently — one page the server rejects doesn't discard
+the rest. If a sync fails after the AI has done its (expensive) work, fix the
+cause and replay the saved set with `--from <file>`, which skips the AI phases
+entirely and just re-runs the sync.
+
 This is a preview gated on platform support (`docs-generate`, `block-audience`)
 and server-hosted prompts. Until those ship it reports unavailability and
 **exits 0** (`--require` to fail). When block audiences aren't supported yet,
 blocks are authored without audience tags and render to everyone.
 
 Flags: `--audiences <list>` (default all three), `--page <slug>`, `--space`,
-`--site`, `--output proposal|stdout`, `--dry-run`, `--require`, `--ci`.
+`--site`, `--output proposal|stdout`, `--dry-run`, `--require`, `--ci`,
+`--save <file>`, `--from <file>` (replay a saved set with no AI cost).
 
 ### `gravity capture` (preview)
 
@@ -261,12 +270,24 @@ commands.
 - `gravity init` — write `.gravity.yaml` for this repo. Runs an interactive
   wizard (connection, product/multi-repo identity, spaces) that **detects OpenAPI
   specs and Markdown docs in the repo and offers to map them**, so `gravity sync`
-  has real `sources`/`documents` to author. Use `--yes` (or a non-interactive
-  shell) for flags/env without prompting; `--migrate` upgrades a legacy file in
-  place, preserving its mappings. Refuses to clobber an existing file unless
-  `--force`.
-- `gravity auth login --token <sk>` — store the token (`0600`); `--api-url`
-  defaults to the platform.
+  has real `sources`/`documents` to author. When you're signed in (token via
+  `gravity auth login` or `GRAVITY_TOKEN`) it **lists your sites and the chosen
+  site's spaces to pick from** instead of typing them, and creates any new space
+  you name right away (idempotent); offline it falls back to free-text entry. Use
+  `--yes` (or a non-interactive shell) for flags/env without prompting (no network
+  calls); `--migrate` upgrades a legacy file in place, preserving its mappings.
+  Refuses to clobber an existing file unless `--force`.
+- `gravity auth login` — store the token in `~/.config/gravity/config.yaml`
+  (`0600`). Pass `--token <sk>` (or set `GRAVITY_TOKEN`), or run it bare on a
+  terminal to be prompted with **hidden input** so the secret never lands in your
+  shell history. Re-run it any time to **change** the stored token (it confirms
+  before replacing one and preserves a custom `--api-url`); after saving it
+  verifies the token against `/whoami`.
+- `gravity auth status` — show whether a token is configured, where it resolved
+  from (flag / env / user file), and verify it live (`/whoami`). Exits `2` when a
+  configured token is rejected or the gateway is unreachable.
+- `gravity auth logout` — remove the stored credentials file (clear or rotate the
+  token); warns if `GRAVITY_TOKEN` is still set in the environment.
 - `gravity doctor` — validate `.gravity.yaml`, print the resolved configuration
   (and where each value came from), then check token/org/model/provider-key via
   `/whoami` + `/llm/v1/config`. Exits `2` on a config, auth, or network failure.
