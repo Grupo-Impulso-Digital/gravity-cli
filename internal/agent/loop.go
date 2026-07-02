@@ -153,6 +153,16 @@ func (r *Runner) logf(format string, args ...any) {
 	}
 }
 
+// compactLog flattens whitespace and caps length so model text and tool inputs
+// fit on one readable log line.
+func compactLog(s string, limit int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > limit {
+		return s[:limit] + "…"
+	}
+	return s
+}
+
 func (r *Runner) toolByName(name string) (*Tool, bool) {
 	for i := range r.Tools {
 		if r.Tools[i].Def.Name == name {
@@ -186,6 +196,15 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 	messages := []api.Message{api.UserText(initialUser)}
 	result := &Result{}
 
+	// Token accounting across the whole loop, reported on every exit path so a
+	// run's cost is always visible in the log.
+	var inTokens, outTokens int
+	defer func() {
+		if inTokens > 0 || outTokens > 0 {
+			r.logf("agent: tokens: %d in / %d out over %d turn(s)", inTokens, outTokens, result.Iterations)
+		}
+	}()
+
 	for iter := 0; iter < maxIter; iter++ {
 		result.Iterations = iter + 1
 
@@ -210,6 +229,14 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 		// turn — the intermittent mid-run failure this guards against.
 		messages = append(messages, api.Message{Role: api.RoleAssistant, Content: sanitizeContent(resp.Content)})
 		result.FinalText = resp.TextContent()
+		inTokens += resp.Usage.InputTokens
+		outTokens += resp.Usage.OutputTokens
+
+		// Surface the model's narration: this is the run's "mind" — what it
+		// concluded from the last tool results and what it intends to do next.
+		if text := strings.TrimSpace(resp.TextContent()); text != "" {
+			r.logf("agent: 💭 %s", compactLog(text, 400))
+		}
 
 		toolUses := resp.ToolUses()
 		if len(toolUses) == 0 {
@@ -234,6 +261,22 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 			}
 
 			if tool.Terminal {
+				// Validate before accepting: a malformed submission (e.g. blocks
+				// as a JSON-encoded string) is bounced back to the model as an
+				// error tool_result so it can resubmit correctly — losing one
+				// turn instead of the whole run. The iteration cap bounds retries.
+				if tool.Validate != nil {
+					if verr := tool.Validate(use.Input); verr != nil {
+						r.logf("agent: rejected %s input, asking the model to correct it: %v", use.Name, verr)
+						toolResults = append(toolResults, api.ContentPart{
+							Type:      api.PartToolResult,
+							ToolUseID: use.ID,
+							Content:   fmt.Sprintf("error: invalid %s input: %v. Correct the input and call %s again.", use.Name, verr, use.Name),
+							IsError:   true,
+						})
+						continue
+					}
+				}
 				// Terminal tool ends the loop; capture its input.
 				r.logf("agent: model called terminal tool %q", use.Name)
 				result.TerminalTool = use.Name
@@ -249,7 +292,7 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 				return result, nil
 			}
 
-			r.logf("agent: tool %s (%d)", use.Name, result.ToolCalls)
+			r.logf("agent: tool %s (%d) %s", use.Name, result.ToolCalls, compactLog(string(use.Input), 160))
 			out, err := tool.Run(ctx, use.Input)
 			if err != nil {
 				toolResults = append(toolResults, api.ContentPart{

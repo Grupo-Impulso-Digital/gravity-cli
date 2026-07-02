@@ -33,6 +33,12 @@ type Tool struct {
 	// Terminal marks the submit tools that end the loop. Their parsed input is
 	// captured as the loop's result instead of being echoed back.
 	Terminal bool
+	// Validate, if set on a terminal tool, checks the model-supplied input
+	// before the loop accepts it. A validation error does NOT end the loop: it
+	// is fed back as an error tool_result so the model can correct its own
+	// mistake (e.g. a JSON-encoded string where an array belongs) instead of
+	// sinking the whole run after the tokens are already spent.
+	Validate func(input json.RawMessage) error
 }
 
 // sandboxPath validates a model-supplied path stays within the repo root and

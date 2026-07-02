@@ -1,11 +1,45 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/impulso/gravity-cli/internal/api"
 )
+
+// unwrapJSONString detects a value that is a JSON string whose content is
+// itself JSON (a double-encoded object/array — a shape models emit
+// intermittently) and returns the inner JSON.
+func unwrapJSONString(raw json.RawMessage) (json.RawMessage, bool) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, false
+	}
+	t := strings.TrimSpace(s)
+	if strings.HasPrefix(t, "[") || strings.HasPrefix(t, "{") {
+		return json.RawMessage(t), true
+	}
+	return nil, false
+}
+
+// lenientUnmarshal decodes raw into v, tolerating one level of accidental
+// string-encoding. The original error is preserved when the unwrap also fails.
+func lenientUnmarshal(raw json.RawMessage, v any) error {
+	err := json.Unmarshal(raw, v)
+	if err == nil {
+		return nil
+	}
+	if inner, ok := unwrapJSONString(raw); ok {
+		if err2 := json.Unmarshal(inner, v); err2 == nil {
+			return nil
+		}
+	}
+	return err
+}
 
 // Terminal tool names.
 const (
@@ -162,6 +196,25 @@ type DocPlanInput struct {
 	Pages []DocPlanPage `json:"pages"`
 }
 
+// UnmarshalJSON decodes a submit_doc_plan input, tolerating the whole input or
+// the pages field arriving as a JSON-encoded string instead of real JSON.
+func (p *DocPlanInput) UnmarshalJSON(data []byte) error {
+	var shim struct {
+		Pages json.RawMessage `json:"pages"`
+	}
+	if err := lenientUnmarshal(data, &shim); err != nil {
+		return err
+	}
+	p.Pages = nil
+	if len(shim.Pages) == 0 || string(shim.Pages) == "null" {
+		return nil
+	}
+	if err := lenientUnmarshal(shim.Pages, &p.Pages); err != nil {
+		return fmt.Errorf("pages: %w", err)
+	}
+	return nil
+}
+
 // DocPlanPage is one proposed documentation page.
 type DocPlanPage struct {
 	Space     string   `json:"space"`
@@ -176,6 +229,28 @@ type DocPlanPage struct {
 type PageDocInput struct {
 	Title  string          `json:"title"`
 	Blocks []DocBlockInput `json:"blocks"`
+}
+
+// UnmarshalJSON decodes a submit_page_doc input, tolerating the whole input or
+// the blocks field arriving as a JSON-encoded string instead of real JSON —
+// the shape that previously sank an entire authoring run at the last step.
+func (p *PageDocInput) UnmarshalJSON(data []byte) error {
+	var shim struct {
+		Title  string          `json:"title"`
+		Blocks json.RawMessage `json:"blocks"`
+	}
+	if err := lenientUnmarshal(data, &shim); err != nil {
+		return err
+	}
+	p.Title = shim.Title
+	p.Blocks = nil
+	if len(shim.Blocks) == 0 || string(shim.Blocks) == "null" {
+		return nil
+	}
+	if err := lenientUnmarshal(shim.Blocks, &p.Blocks); err != nil {
+		return fmt.Errorf("blocks: %w", err)
+	}
+	return nil
 }
 
 // DocBlockInput is one authored block. Reusing an existing Key updates that
@@ -194,6 +269,7 @@ func SubmitDocPlanTool() Tool {
 	audienceItems := map[string]any{"type": "string", "enum": []any{"public", "users", "developers"}}
 	return Tool{
 		Terminal: true,
+		Validate: ValidateDocPlan,
 		Def: api.Tool{
 			Name:        ToolSubmitDocPlan,
 			Description: "Submit the proposed documentation pages. Call this exactly once when done.",
@@ -231,6 +307,7 @@ func SubmitPageDocTool() Tool {
 	audienceItems := map[string]any{"type": "string", "enum": []any{"public", "users", "developers"}}
 	return Tool{
 		Terminal: true,
+		Validate: ValidatePageDoc,
 		Def: api.Tool{
 			Name:        ToolSubmitPageDoc,
 			Description: "Submit the complete set of blocks for this page. Call this exactly once when done.",
@@ -276,6 +353,49 @@ func ParsePageDoc(raw json.RawMessage) (PageDocInput, error) {
 	var in PageDocInput
 	err := json.Unmarshal(raw, &in)
 	return in, err
+}
+
+// ValidateDocPlan checks a submit_doc_plan input parses and is actionable, so
+// the loop can bounce a bad submission back to the model instead of failing.
+func ValidateDocPlan(raw json.RawMessage) error {
+	in, err := ParseDocPlan(raw)
+	if err != nil {
+		return fmt.Errorf("pages must be a JSON array of page objects, not a string: %v", err)
+	}
+	if len(in.Pages) == 0 {
+		return errors.New("pages is empty — every codebase has documentable surface; propose at least an overview, a usage/getting-started page, and an architecture page grounded in files you read")
+	}
+	for i, pg := range in.Pages {
+		if strings.TrimSpace(pg.Slug) == "" || strings.TrimSpace(pg.Title) == "" {
+			return fmt.Errorf("pages[%d] needs both a slug and a title", i)
+		}
+	}
+	return nil
+}
+
+// ValidatePageDoc checks a submit_page_doc input parses and every block has
+// the required identity/shape, so a malformed submission costs one corrective
+// turn instead of the whole authoring run.
+func ValidatePageDoc(raw json.RawMessage) error {
+	in, err := ParsePageDoc(raw)
+	if err != nil {
+		return fmt.Errorf("blocks must be a JSON array of block objects, not a string: %v", err)
+	}
+	if len(in.Blocks) == 0 {
+		return errors.New("blocks is empty — submit the page's complete block set")
+	}
+	for i, b := range in.Blocks {
+		if strings.TrimSpace(b.Key) == "" {
+			return fmt.Errorf("blocks[%d] needs a key", i)
+		}
+		if strings.TrimSpace(b.Type) == "" {
+			return fmt.Errorf("blocks[%d] (key %q) needs a type", i, b.Key)
+		}
+		if len(bytes.TrimSpace(b.Content)) == 0 {
+			return fmt.Errorf("blocks[%d] (key %q) needs content", i, b.Key)
+		}
+	}
+	return nil
 }
 
 // ParseReleaseNotes decodes a submit_release_notes input.

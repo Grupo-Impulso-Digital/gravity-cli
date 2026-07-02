@@ -138,7 +138,8 @@ audiences, and the platform renders the blocks matching the viewer.`,
 
 			generator := "gravity docs generate v" + version
 			var targets []syncTarget
-			for _, pg := range plan.Pages {
+			var failedPages []string
+			for i, pg := range plan.Pages {
 				if pageSlug != "" && pg.Slug != pageSlug {
 					continue
 				}
@@ -153,18 +154,29 @@ audiences, and the platform renders the blocks matching the viewer.`,
 				}
 				pg.Audiences = aud
 				sp := firstNonEmpty(space, pg.Space, e.cfg.Space, "docs")
+				fmt.Fprintf(logw, "agent: authoring page %d/%d: %s/%s (%s)\n", i+1, len(plan.Pages), sp, pg.Slug, strings.Join(pg.Audiences, "+"))
 
+				// One failed page must not sink the run: every other page's
+				// tokens are already spent, so warn, record, and keep going.
 				authored, stopped, err := runDocsAuthor(cmd.Context(), e.client, repo, authorPrompt, pg, byPage[sp+"\x00"+pg.Slug], logw, mctx)
 				if err != nil {
-					return Fail(CodeError, err)
+					if cmd.Context().Err() != nil {
+						return Fail(CodeError, err)
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: page %q failed to author (%v); continuing with the remaining pages\n", pg.Slug, err)
+					failedPages = append(failedPages, pg.Slug)
+					continue
 				}
 				if stopped {
 					fmt.Fprintf(cmd.ErrOrStderr(), "note: skipped page %q (author run hit a cap before completing)\n", pg.Slug)
+					failedPages = append(failedPages, pg.Slug)
 					continue
 				}
 				blocks, err := docs.AssembleBlocks(repo.Root, generator, toAuthored(authored))
 				if err != nil {
-					return Fail(CodeError, fmt.Errorf("page %s: %w", pg.Slug, err))
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: page %q authored invalid blocks (%v); continuing with the remaining pages\n", pg.Slug, err)
+					failedPages = append(failedPages, pg.Slug)
+					continue
 				}
 				if !audienceOK {
 					for i := range blocks {
@@ -180,11 +192,22 @@ audiences, and the platform renders the blocks matching the viewer.`,
 				})
 			}
 
+			if len(targets) == 0 && len(failedPages) > 0 {
+				return Failf(CodeError, "all %d planned page(s) failed to author: %s", len(failedPages), strings.Join(failedPages, ", "))
+			}
+
 			artifact := save
 			if artifact == "" {
 				artifact = defaultDocsArtifact(repo.Root)
 			}
-			return finishDocs(cmd, e, siteSlug, targets, output, dryRun, ci, artifact)
+			if err := finishDocs(cmd, e, siteSlug, targets, output, dryRun, ci, artifact); err != nil {
+				return err
+			}
+			if len(failedPages) > 0 {
+				return Failf(CodeError, "%d page(s) were not authored (%s); re-run with --page <slug> to retry just those",
+					len(failedPages), strings.Join(failedPages, ", "))
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&site, "site", "", "site slug")

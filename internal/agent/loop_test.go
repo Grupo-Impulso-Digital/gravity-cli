@@ -159,6 +159,72 @@ func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
 	}
 }
 
+// TestRunner_RejectsInvalidTerminalInput guards the run-sinking failure: a
+// terminal submission that fails validation must be bounced back to the model
+// as an error tool_result (one lost turn) instead of ending the loop with
+// unusable input.
+func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
+	badInput := json.RawMessage(`{"title":"Overview","blocks":"totally not an array"}`)
+	goodInput := json.RawMessage(`{"title":"Overview","blocks":[{"key":"h1","type":"heading","content":{"text":"Overview"}}]}`)
+
+	script := &scriptedServer{
+		responses: []api.MessagesResponse{
+			{
+				Type:       "message",
+				Role:       "assistant",
+				StopReason: api.StopToolUse,
+				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_1", Name: agent.ToolSubmitPageDoc, Input: badInput}},
+			},
+			{
+				Type:       "message",
+				Role:       "assistant",
+				StopReason: api.StopToolUse,
+				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_2", Name: agent.ToolSubmitPageDoc, Input: goodInput}},
+			},
+		},
+	}
+	srv := newMessagesServer(t, script)
+	defer srv.Close()
+
+	runner := &agent.Runner{
+		Client: api.New(srv.URL, "test-token"),
+		Tools:  []agent.Tool{agent.SubmitPageDocTool()},
+	}
+	res, err := runner.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.TerminalTool != agent.ToolSubmitPageDoc {
+		t.Fatalf("expected terminal tool after correction, got %q (stopped=%v %s)", res.TerminalTool, res.Stopped, res.StopReason)
+	}
+	if res.Iterations != 2 {
+		t.Errorf("expected 2 iterations (reject + accept), got %d", res.Iterations)
+	}
+	page, err := agent.ParsePageDoc(res.TerminalInput)
+	if err != nil {
+		t.Fatalf("parse accepted input: %v", err)
+	}
+	if len(page.Blocks) != 1 || page.Blocks[0].Key != "h1" {
+		t.Errorf("unexpected accepted page: %+v", page)
+	}
+
+	// The second request must carry the rejection back as an error tool_result.
+	if len(script.requests) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(script.requests))
+	}
+	msgs := script.requests[1].Messages
+	last := msgs[len(msgs)-1]
+	if last.Role != api.RoleUser || len(last.Content) != 1 || last.Content[0].Type != api.PartToolResult {
+		t.Fatalf("expected trailing user tool_result, got %+v", last)
+	}
+	if !last.Content[0].IsError || last.Content[0].ToolUseID != "tu_1" {
+		t.Errorf("expected error tool_result for tu_1, got %+v", last.Content[0])
+	}
+	if !strings.Contains(last.Content[0].Content, "blocks") {
+		t.Errorf("rejection should explain the blocks problem, got %q", last.Content[0].Content)
+	}
+}
+
 func TestRunner_EndTurnStopsLoop(t *testing.T) {
 	script := &scriptedServer{
 		responses: []api.MessagesResponse{

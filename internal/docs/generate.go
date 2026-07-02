@@ -160,14 +160,39 @@ func normalizeContent(typ string, raw json.RawMessage) (map[string]any, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("content is required")
 	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("content must be a JSON object: %w", err)
+	m, err := decodeContentObject(typ, raw)
+	if err != nil {
+		return nil, err
 	}
 	if err := CanonicalizeContent(typ, m); err != nil {
 		return nil, err
 	}
 	return m, nil
+}
+
+// decodeContentObject decodes block content into a map, coercing the two
+// string shapes models intermittently emit: a JSON-encoded object (double
+// encoding) is unwrapped, and bare text for a text-bearing type is folded
+// into {"text": ...} — so neither sinks a page that already cost tokens.
+func decodeContentObject(typ string, raw json.RawMessage) (map[string]any, error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err == nil {
+		return m, nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, fmt.Errorf("content must be a JSON object")
+	}
+	if t := strings.TrimSpace(s); strings.HasPrefix(t, "{") {
+		if err := json.Unmarshal([]byte(t), &m); err == nil {
+			return m, nil
+		}
+	}
+	switch typ {
+	case "heading", "prose", "code":
+		return map[string]any{"text": s}, nil
+	}
+	return nil, fmt.Errorf("content must be a JSON object")
 }
 
 // CanonicalizeContent validates decoded block content in place and coerces the

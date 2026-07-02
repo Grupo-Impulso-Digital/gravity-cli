@@ -112,6 +112,8 @@ Rules:
 - Keep the plan focused: typically 3-8 pages for a first pass. Do not invent pages with no basis in the code.
 - A single page may serve multiple audiences; its individual blocks get tagged per-audience in the next phase.
 - Choose slugs that are stable and descriptive (e.g. "overview", "getting-started", "architecture").
+- NEVER submit an empty pages array. Every codebase with source files has documentable surface: at minimum propose an overview (public), a getting-started/usage page (users), and an architecture page (developers), each grounded in files you actually read. If your survey feels thin, read more files before planning — do not conclude there is nothing to document.
+- The pages field must be a real JSON array of page objects — never a JSON-encoded string.
 
 When you are done, call the submit_doc_plan tool exactly once with the proposed pages. Do not write any prose after calling it.`
 
@@ -140,5 +142,7 @@ Content shapes by type:
 - prose:   {"text": "One or more Markdown paragraphs."}
 - code:    {"text": "the snippet", "language": "go"}
 - table:   {"rows": [["Column A", "Column B"], ["a1", "b1"], ["a2", "b2"]], "header": true} — rows is an array of string arrays with the header row FIRST; header is a boolean marking that first row as the header. Every cell is a string.
+
+Input shape: blocks must be a real JSON array of block objects, and each block's content must be a JSON object — never pass JSON encoded inside a string.
 
 When you are done, call the submit_page_doc tool exactly once with the page title and its blocks. Do not write any prose after calling it.`
