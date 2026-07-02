@@ -271,7 +271,22 @@ func runDocsPlan(ctx context.Context, client *api.Client, repo *git.Repo, system
 		}
 		return agent.DocPlanInput{}, errors.New("docs plan ended without calling submit_doc_plan")
 	}
-	return agent.ParseDocPlan(res.TerminalInput)
+	plan, err := agent.ParseDocPlan(res.TerminalInput)
+	if err != nil {
+		return agent.DocPlanInput{}, fmt.Errorf("docs plan: parsing submit_doc_plan input: %w", err)
+	}
+	fmt.Fprintf(logw, "agent: plan proposed %d page(s)\n", len(plan.Pages))
+	// A valid, empty plan silently flows through phase B (zero iterations) to
+	// "no pages authored" as if that were an unremarkable outcome, hiding a run
+	// where the model surveyed the repo but proposed nothing. Fail loudly instead
+	// so this is never mistaken for "the repo has nothing worth documenting".
+	if len(plan.Pages) == 0 {
+		return agent.DocPlanInput{}, errors.New(
+			"docs plan proposed zero pages — the model surveyed the repo but submit_doc_plan's " +
+				"pages array was empty; retry, or narrow --audiences and check the survey went well",
+		)
+	}
+	return plan, nil
 }
 
 // runDocsAuthor runs phase B for one page. The bool return is true when the run
