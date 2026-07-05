@@ -22,13 +22,42 @@ token.
 
 ## Install
 
-Requires Go 1.25+.
+`gravity` ships as a single static binary — no runtime, no dependencies.
+
+**macOS / Linux — one line:**
 
 ```bash
-# From source
+curl -fsSL https://raw.githubusercontent.com/impulso/gravity-cli/main/install.sh | sh
+```
+
+The script auto-detects your OS/arch, downloads the matching binary from the
+latest [release](https://github.com/impulso/gravity-cli/releases), verifies its
+checksum, and installs it to `/usr/local/bin` (or `~/.local/bin`). Override the
+target with `GRAVITY_INSTALL_DIR=...`, or pin a version with `GRAVITY_VERSION=v0.1.0`.
+
+**Homebrew (macOS / Linux):**
+
+```bash
+brew install impulso/tap/gravity
+```
+
+**Scoop (Windows):**
+
+```powershell
+scoop bucket add impulso https://github.com/impulso/scoop-bucket
+scoop install gravity
+```
+
+**Direct download:** grab the archive for your platform from the
+[releases page](https://github.com/impulso/gravity-cli/releases), unpack it, and
+put `gravity` on your `PATH`. Every release ships a `checksums.txt`.
+
+**From source** (requires Go 1.25+):
+
+```bash
 go install github.com/impulso/gravity-cli/cmd/gravity@latest
 
-# Or build locally
+# Or build locally from a checkout
 make build      # -> ./bin/gravity
 ```
 
@@ -82,6 +111,44 @@ spaces:
 # documents: — Markdown files → pages or releases
 # knowledge: — nucleus memory namespace shared across the product's repos
 ```
+
+#### Multi-repo products: subspaces, shared spaces, home pages
+
+A large product can organize one site as a top-level **space** per product with
+a **subspace** per module, and connect several micro-service repos to one
+"mother" subspace. Each repo declares where it publishes:
+
+```yaml
+# e.g. the fundamentum-device-api repo, one of several feeding "connect"
+product:
+  slug: fundamentum
+  repo: device-api
+spaces:
+  default: connect      # this repo's mother subspace
+  parent: fundamentum   # connect is a subspace of the fundamentum space
+  home: overview        # pin the overview page as the space's home page
+  shared: [connect]     # sibling repos also publish into connect
+documents:
+  - file: README.md
+    page: overview
+```
+
+- **`parent`** nests the default space one level under a top-level space.
+  `gravity sync` (and the `init` wizard) create/reparent it idempotently.
+- **`shared`** marks spaces co-fed by sibling repos. Each repo's pages keep a
+  `repo/` slug prefix (page identity on the platform is `(space, slug)`, so
+  same-named pages from different repos never collide) **and** are grouped into
+  a per-repo **collection** — a page folder named after `product.repo` — so the
+  sidebar shows one tidy group per repo. Unshared spaces stay flat: the common
+  one-repo-one-space setup needs none of this.
+- **`home`** pins a page as the space's landing page. It stays flat and
+  unprefixed (one landing page per space) — declare it from exactly one repo.
+- **`collection:`** on a `sources`/`documents` mapping files that page under an
+  explicit folder, overriding the per-repo default.
+
+All of this requires the platform's `space-hierarchy` capability (`gravity
+doctor` reports it). Older platforms sync flat with a notice — nothing breaks.
+Use `gravity spaces` to see the resulting hierarchy and what feeds it.
 
 `~/.config/gravity/config.yaml` (user, `0600`, holds the token):
 
@@ -157,6 +224,30 @@ gravity check docs --site docs --ai --from v1.2.0 --to HEAD
 
 Flags: `--site`, `--from`, `--to`, `--ai`, `--ci`, `--format text|json|github`.
 
+### `gravity spaces`
+
+Read-only view of the site's content hierarchy: top-level spaces, their
+subspaces, each space's collections (page folders) with page counts, the pinned
+home pages, and which space this repo's manifest publishes into. For multi-repo
+products this is the "who feeds what" inventory — no server-side registry, just
+the site tree plus the local `.gravity.yaml` annotations.
+
+```bash
+gravity spaces
+gravity spaces --json
+```
+
+```text
+dimonoff — Dimonoff Docs
+
+fundamentum  Fundamentum
+└─ connect  Fundamentum Connect   [⌂ overview, ← this repo, shared]
+      · device-api  (collection, 12 pages)
+      · fleet-svc  (collection, 8 pages)
+      1 page
+changelog  Changelog   [release notes]
+```
+
 ### `gravity sync`
 
 Author the doc mappings declared in `.gravity.yaml` onto the platform. This is
@@ -185,6 +276,12 @@ gravity sync --output stdout
   prose. `as: page` upserts a page; `as: release` posts a versioned release.
   `ownership` (`machine`/`hybrid`/`human`) controls whether humans may edit the
   result in Gravity.
+- **Spaces & hierarchy** — target spaces are ensured idempotently, parent
+  first: with `spaces.parent` the default space is created as (or reparented
+  into) a subspace, shared-space pages are filed into per-repo collections, and
+  `spaces.home` is pinned as the space's home page after authoring. On a
+  platform without the `space-hierarchy` capability all of that degrades to
+  today's flat sync with a single notice.
 
 Like every write path, `sync` creates a **draft + open proposal** and never
 publishes. Authoring exits `0` (ok) or `2` (error) — findings (`1`) stay
@@ -291,6 +388,13 @@ commands.
 - `gravity doctor` — validate `.gravity.yaml`, print the resolved configuration
   (and where each value came from), then check token/org/model/provider-key via
   `/whoami` + `/llm/v1/config`. Exits `2` on a config, auth, or network failure.
+- `gravity ping` — send a one-shot setup handshake to `/api/v1/setup/ping` so the
+  Gravity web app (after guiding you through install + `gravity init`) can confirm
+  the token works and surface this repo's resolved configuration: the CLI
+  version/platform, the `.gravity.yaml` connection config (API URL, site, space),
+  and the repo's name/remote/branch. Nothing is written — the server echoes back
+  your organization, the token's key hint, and default site. Add `--json` for the
+  full request + response. Exits `2` on an auth or network failure.
 
 ## Exit codes
 

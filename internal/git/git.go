@@ -82,6 +82,44 @@ func (r *Repo) FirstCommit(ctx context.Context) (string, error) {
 	return lines[len(lines)-1], nil
 }
 
+// CurrentBranch returns the checked-out branch name, or "HEAD" when the repo is
+// in a detached-HEAD state (the value git itself reports).
+func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
+	out, err := r.git(ctx, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// RemoteURL returns the fetch URL of a remote, preferring "origin" and falling
+// back to the first configured remote. A repo with no remotes is not an error —
+// it returns "" — since ping/setup callers treat the remote as best-effort.
+func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
+	list, err := r.git(ctx, "remote")
+	if err != nil {
+		//nolint:nilerr // a remote lookup failure degrades to "no remote", never fatal
+		return "", nil
+	}
+	remotes := strings.Fields(list)
+	if len(remotes) == 0 {
+		return "", nil
+	}
+	name := remotes[0]
+	for _, rem := range remotes {
+		if rem == "origin" {
+			name = "origin"
+			break
+		}
+	}
+	out, err := r.git(ctx, "remote", "get-url", name)
+	if err != nil {
+		//nolint:nilerr // best-effort: an unreadable remote URL is reported as absent
+		return "", nil
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // Range describes the commit range release notes / diffs are computed over.
 type Range struct {
 	From string

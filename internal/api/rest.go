@@ -45,6 +45,56 @@ func (c *Client) LLMConfig(ctx context.Context) (*LLMConfig, error) {
 	return &out, nil
 }
 
+// SetupPingRequest is the body of POST /api/v1/setup/ping — the one-shot setup
+// handshake the web app polls after guiding a user through install + `gravity
+// init`. It carries no secret beyond the bearer token; the server associates the
+// ping with the acting key so the browser can confirm the token works and render
+// this repo's resolved configuration.
+type SetupPingRequest struct {
+	CLI    PingCLI    `json:"cli"`
+	Config PingConfig `json:"config"`
+	Repo   PingRepo   `json:"repo"`
+}
+
+// PingCLI reports the running binary's version and build platform.
+type PingCLI struct {
+	Version string `json:"version"`
+	OS      string `json:"os"`
+	Arch    string `json:"arch"`
+}
+
+// PingConfig is the resolved (flag/env/file) connection config the CLI would use.
+type PingConfig struct {
+	APIURL string `json:"apiUrl"`
+	Site   string `json:"site,omitempty"`
+	Space  string `json:"space,omitempty"`
+}
+
+// PingRepo identifies the local repo: its manifest/directory name, a normalized
+// remote (scheme + credentials stripped), and the current branch.
+type PingRepo struct {
+	Name   string `json:"name,omitempty"`
+	Remote string `json:"remote,omitempty"`
+	Branch string `json:"branch,omitempty"`
+}
+
+// SetupPingResponse is the response of POST /api/v1/setup/ping.
+type SetupPingResponse struct {
+	OK               bool   `json:"ok"`
+	OrganizationName string `json:"organizationName"`
+	KeyHint          string `json:"keyHint"`
+	DefaultSiteSlug  string `json:"defaultSiteSlug"`
+}
+
+// SetupPing calls POST /api/v1/setup/ping.
+func (c *Client) SetupPing(ctx context.Context, req SetupPingRequest) (*SetupPingResponse, error) {
+	var out SetupPingResponse
+	if err := c.Post(ctx, "/api/v1/setup/ping", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // Site describes a documentation site.
 type Site struct {
 	ID         string `json:"id"`
@@ -53,28 +103,38 @@ type Site struct {
 	Visibility string `json:"visibility"`
 }
 
-// Space is a top-level grouping within a site.
+// Space is a page container within a site. A non-nil ParentSpaceID marks it as
+// a subspace (one level of nesting); OverviewPageID is the page rendered when a
+// reader lands on the space itself (its home page). Both are nil on platforms
+// predating the space hierarchy.
 type Space struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	ID             string  `json:"id"`
+	Slug           string  `json:"slug"`
+	Name           string  `json:"name"`
+	ParentSpaceID  *string `json:"parentSpaceId,omitempty"`
+	OverviewPageID *string `json:"overviewPageId,omitempty"`
 }
 
-// Collection groups spaces/pages, possibly nested via ParentID.
+// Collection is a folder of pages INSIDE a space (space-scoped since the
+// hierarchy inversion), self-nesting via ParentID.
 type Collection struct {
-	ID       string  `json:"id"`
-	Slug     string  `json:"slug"`
-	Name     string  `json:"name"`
-	ParentID *string `json:"parentId"`
+	ID        string  `json:"id"`
+	Slug      string  `json:"slug"`
+	Name      string  `json:"name"`
+	ParentID  *string `json:"parentId"`
+	SpaceID   string  `json:"spaceId,omitempty"`
+	SpaceSlug string  `json:"spaceSlug,omitempty"`
 }
 
-// PageRef is a lightweight page reference in the site tree.
+// PageRef is a lightweight page reference in the site tree. A non-nil
+// CollectionID files the page under one of its space's collections.
 type PageRef struct {
-	ID        string `json:"id"`
-	Slug      string `json:"slug"`
-	Title     string `json:"title"`
-	SpaceID   string `json:"spaceId"`
-	SpaceSlug string `json:"spaceSlug"`
+	ID           string  `json:"id"`
+	Slug         string  `json:"slug"`
+	Title        string  `json:"title"`
+	SpaceID      string  `json:"spaceId"`
+	SpaceSlug    string  `json:"spaceSlug"`
+	CollectionID *string `json:"collectionId,omitempty"`
 }
 
 // SiteTree is the response of GET /api/v1/sites/:siteSlug.
@@ -242,20 +302,83 @@ func (c *Client) CreateReleaseNotes(ctx context.Context, siteSlug string, req Re
 
 // SpaceUpsertRequest is the body of POST .../spaces. Upsert is idempotent on
 // slug: an existing space is returned (200) rather than duplicated (201).
+// Parent (a space slug) creates the space as a subspace, one level deep; on
+// the existing-space path a differing parent reparents it (declarative), while
+// an omitted parent leaves the hierarchy untouched. Requires the platform's
+// space-hierarchy feature — older servers reject unknown fields, so callers
+// must omit Parent unless whoami advertises it.
 type SpaceUpsertRequest struct {
 	Slug        string `json:"slug"`
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
+	Parent      string `json:"parent,omitempty"`
+}
+
+// spaceEnvelope matches the { space: {...} } body the space endpoints return.
+type spaceEnvelope struct {
+	Space Space `json:"space"`
 }
 
 // EnsureSpace calls POST /api/v1/sites/:siteSlug/spaces, creating the space if
 // it does not exist and returning the existing one otherwise.
 func (c *Client) EnsureSpace(ctx context.Context, siteSlug string, req SpaceUpsertRequest) (*Space, error) {
-	var out Space
+	var out spaceEnvelope
 	if err := c.Post(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/spaces", req, &out); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return &out.Space, nil
+}
+
+// SpacePatchRequest is the body of PATCH .../spaces/:spaceSlug. Pointer fields
+// distinguish "leave unchanged" (nil) from "set" / "clear" (pointer to a value
+// or to the empty string — the client maps an empty string to JSON null).
+type SpacePatchRequest struct {
+	Name        string  `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	// Parent reparents the space under the named top-level space; a pointer to
+	// "" promotes it back to the top level (sent as null).
+	Parent *string `json:"parent,omitempty"`
+	// HomePage pins the named page (a slug within this space) as the space's
+	// overview/home page; a pointer to "" unsets it (sent as null).
+	HomePage *string `json:"homePage,omitempty"`
+}
+
+// MarshalJSON maps empty-string Parent/HomePage pointers to JSON null (the
+// server's "clear" sentinel) while keeping omitted fields absent.
+func (r SpacePatchRequest) MarshalJSON() ([]byte, error) {
+	m := map[string]any{}
+	if r.Name != "" {
+		m["name"] = r.Name
+	}
+	if r.Description != nil {
+		m["description"] = nullableString(*r.Description)
+	}
+	if r.Parent != nil {
+		m["parent"] = nullableString(*r.Parent)
+	}
+	if r.HomePage != nil {
+		m["homePage"] = nullableString(*r.HomePage)
+	}
+	return json.Marshal(m)
+}
+
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// UpdateSpace calls PATCH /api/v1/sites/:siteSlug/spaces/:spaceSlug (partial
+// update: name / description / parent / home page). Requires the platform's
+// space-hierarchy feature for the Parent/HomePage fields.
+func (c *Client) UpdateSpace(ctx context.Context, siteSlug, spaceSlug string, req SpacePatchRequest) (*Space, error) {
+	var out spaceEnvelope
+	path := "/api/v1/sites/" + url.PathEscape(siteSlug) + "/spaces/" + url.PathEscape(spaceSlug)
+	if err := c.Patch(ctx, path, req, &out); err != nil {
+		return nil, err
+	}
+	return &out.Space, nil
 }
 
 // Block audiences. A block with no audiences renders to every viewer; a block
@@ -282,12 +405,17 @@ type BlockInput struct {
 
 // PageUpsertRequest is the body of POST .../pages. Upsert is keyed on
 // (spaceSlug, slug); it produces a DRAFT plus an open proposal and never
-// publishes directly.
+// publishes directly. Collection (a slug within the space) files the page
+// under that collection, get-or-creating it — how a shared space's pages are
+// grouped per repo. Omitted = the page's current placement is left alone.
+// Requires the platform's space-hierarchy feature; callers must omit it unless
+// whoami advertises support.
 type PageUpsertRequest struct {
-	SpaceSlug string       `json:"spaceSlug"`
-	Slug      string       `json:"slug"`
-	Title     string       `json:"title"`
-	Blocks    []BlockInput `json:"blocks"`
+	SpaceSlug  string       `json:"spaceSlug"`
+	Slug       string       `json:"slug"`
+	Title      string       `json:"title"`
+	Collection string       `json:"collection,omitempty"`
+	Blocks     []BlockInput `json:"blocks"`
 }
 
 // UpsertPage calls POST /api/v1/sites/:siteSlug/pages. The response mirrors the
