@@ -6,10 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/checks"
-	"github.com/impulso/gravity-cli/internal/git"
-	"github.com/impulso/gravity-cli/internal/output"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/output"
 )
 
 func newCheckAPICmd(gf *globalFlags) *cobra.Command {

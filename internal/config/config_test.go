@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
 func TestResolvePrecedence_EnvBeatsFile(t *testing.T) {

@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/impulso/gravity-cli/internal/output"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/output"
 )
 
 func newCheckCmd(gf *globalFlags) *cobra.Command {

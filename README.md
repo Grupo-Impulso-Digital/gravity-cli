@@ -19,7 +19,7 @@ Requires Go 1.25+.
 
 ```bash
 # From source
-go install github.com/impulso/gravity-cli/cmd/gravity@latest
+go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
 
 # Or build locally
 make build      # -> ./bin/gravity

@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # release-notes & --ai need full history
-      - uses: impulso/gravity-cli/ci/github@main
+      - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@main
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
           site: docs

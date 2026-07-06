@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 func newDoctorCmd(gf *globalFlags) *cobra.Command {

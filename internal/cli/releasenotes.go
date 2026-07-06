@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/impulso/gravity-cli/internal/agent"
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/git"
-	"github.com/impulso/gravity-cli/internal/prompts"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 const (

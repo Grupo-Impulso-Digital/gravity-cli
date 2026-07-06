@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
 // Caps on output sizes so a single tool result can't blow the context budget.

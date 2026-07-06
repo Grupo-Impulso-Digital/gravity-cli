@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
 // repoRootForTest resolves the CLI git toplevel the same way selfdoc does at

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
 // testRepo creates a temp git repo with deterministic author/committer env so

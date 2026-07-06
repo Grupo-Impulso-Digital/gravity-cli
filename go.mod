@@ -1,4 +1,4 @@
-module github.com/impulso/gravity-cli
+module github.com/Grupo-Impulso-Digital/gravity-cli
 
 go 1.25.7
 

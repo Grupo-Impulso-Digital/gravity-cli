@@ -15,7 +15,7 @@ definitions:
     - step: &gravity-check-docs
         name: Gravity docs check
         script:
-          - go install github.com/impulso/gravity-cli/cmd/gravity@latest
+          - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
           - export PATH="$PATH:$(go env GOPATH)/bin"
           - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravity.dev}"
           - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
@@ -24,7 +24,7 @@ definitions:
     - step: &gravity-check-api
         name: Gravity API drift check
         script:
-          - go install github.com/impulso/gravity-cli/cmd/gravity@latest
+          - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
           - export PATH="$PATH:$(go env GOPATH)/bin"
           - gravity check api --openapi openapi.yaml --ci --format text
 
@@ -38,6 +38,6 @@ pipelines:
       - step:
           name: Gravity release notes
           script:
-            - go install github.com/impulso/gravity-cli/cmd/gravity@latest
+            - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
             - export PATH="$PATH:$(go env GOPATH)/bin"
             - gravity release-notes --space changelog --ci --output proposal
