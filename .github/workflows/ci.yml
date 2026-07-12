@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go-ci:
+    uses: Grupo-Impulso-Digital/workflows/.github/workflows/go-ci.yml@v1
+    secrets: inherit
+    with:
+      go-version: '1.25.7'
+      working-directory: '.'
+      # No .golangci config exists yet — leave lint off until the repo
+      # adopts a lint config (see ember/pulsar-cli precedent).
+      run-golangci-lint: false
+      coverage-floor: 0
