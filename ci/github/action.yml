@@ -4,7 +4,7 @@ author: "impulso"
 
 inputs:
   token:
-    description: "Gravity API token (sk_live_...). Pass from a secret, e.g. ${{ secrets.GRAVITY_TOKEN }}."
+    description: "Gravity API token (sk_live_...). Pass from a secret, e.g. secrets.GRAVITY_TOKEN."
     required: true
   api-url:
     description: "Gravity API base URL."
