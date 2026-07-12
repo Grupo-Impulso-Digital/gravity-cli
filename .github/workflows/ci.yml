@@ -1,3 +1,8 @@
+# This workflow is intentionally self-contained (not a caller of an org
+# reusable workflow) because gravity-cli is a PUBLIC repository and the
+# Grupo-Impulso-Digital/workflows repo (which hosts the org's reusable
+# go-ci.yml) is PRIVATE — public repos cannot invoke a private reusable
+# workflow. It mirrors that org go-ci contract directly.
 name: CI
 
 on:
@@ -6,13 +11,55 @@ on:
   pull_request:
 
 jobs:
-  go-ci:
-    uses: Grupo-Impulso-Digital/workflows/.github/workflows/go-ci.yml@v1
-    secrets: inherit
-    with:
-      go-version: '1.25.7'
-      working-directory: '.'
-      # No .golangci config exists yet — leave lint off until the repo
-      # adopts a lint config (see ember/pulsar-cli precedent).
-      run-golangci-lint: false
-      coverage-floor: 0
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test
+        run: go test -race -cover ./...
+
+  ci-ok:
+    name: ci-ok
+    runs-on: ubuntu-latest
+    needs: [check, test]
+    if: always()
+    steps:
+      - name: Check status
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || \
+             [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ] || \
+             [ "${{ contains(needs.*.result, 'skipped') }}" = "true" ]; then
+            echo "One or more required jobs did not succeed."
+            exit 1
+          fi
+          echo "All required jobs succeeded."
