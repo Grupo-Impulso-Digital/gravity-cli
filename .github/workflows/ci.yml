@@ -8,11 +8,11 @@ on:
 jobs:
   go-ci:
     uses: Grupo-Impulso-Digital/workflows/.github/workflows/go-ci.yml@v1
-    secrets: inherit
     with:
-      go-version: '1.25.7'
+      go-version: '1.23'
       working-directory: '.'
       # No .golangci config exists yet — leave lint off until the repo
-      # adopts a lint config (see ember/pulsar-cli precedent).
+      # adopts a lint config and fixes any resulting findings.
       run-golangci-lint: false
       coverage-floor: 0
+    secrets: inherit
