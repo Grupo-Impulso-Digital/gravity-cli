@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/impulso/gravity-cli/internal/agent"
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 // scriptedServer returns canned /api/llm/v1/messages responses in sequence and

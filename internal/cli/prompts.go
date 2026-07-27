@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/prompts"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // resolvePrompt returns the server-hosted system prompt for name, falling back

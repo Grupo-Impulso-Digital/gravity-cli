@@ -53,6 +53,40 @@ same `golangci-lint` version as CI with no separate install. Config lives in
 [`.golangci.yml`](.golangci.yml). CI runs on every push/PR via
 `.github/workflows/ci.yml`.
 
+## Releasing / distribution
+
+The downloadable binaries behind the app's Download button are cut by
+[GoReleaser](https://goreleaser.com) ([`.goreleaser.yaml`](.goreleaser.yaml)),
+driven by `.github/workflows/release.yml` on any `v*` tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0   # → cross-compiled release
+```
+
+That builds static binaries for `{linux,darwin,windows} × {amd64,arm64}`,
+uploads the archives + `checksums.txt` as GitHub Release assets, and publishes
+the Homebrew cask (`Grupo-Impulso-Digital/homebrew-tap`) and Scoop manifest
+(`Grupo-Impulso-Digital/scoop-bucket`). Version is stamped via `-X main.version={{.Version}}`,
+the same symbol the Makefile sets.
+
+- **Validate config changes** with `goreleaser check`, and dry-run the whole
+  pipeline with `goreleaser release --snapshot --clean --skip=publish` (writes
+  to `dist/`, gitignored) before tagging.
+- **Two secrets** in repo settings: the default `GITHUB_TOKEN` creates the
+  release; a `GORELEASER_TOKEN` PAT pushes the cask/manifest cross-repo into
+  `Grupo-Impulso-Digital/homebrew-tap` + `…/scoop-bucket`. Without it binaries
+  still ship — only the package-manager publish steps fail. Least-privilege PAT:
+  a **fine-grained** token, resource owner `Grupo-Impulso-Digital`, scoped to
+  just those two repos, with **Contents: read and write** (Metadata: read is
+  added automatically). A classic PAT with the `repo` scope also works but grants
+  far more than needed.
+- **`install.sh`** (repo root) is the `curl … | sh` installer; it reconstructs
+  the archive name from the release tag + `uname`, so keep it in lockstep with
+  the archive `name_template` in `.goreleaser.yaml`.
+- The binaries are **unsigned**. `curl`/terminal downloads aren't Gatekeeper-
+  quarantined, and the Homebrew cask strips the quarantine xattr on install, so
+  no notarization is wired up. Revisit only if a browser-download path is added.
+
 ## Coding standard
 
 - **Comments explain *why*, not *what*.** Document contracts, security

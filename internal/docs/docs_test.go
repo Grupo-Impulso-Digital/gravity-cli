@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/checks"
-	"github.com/impulso/gravity-cli/internal/docs"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 )
 
 const specV3 = `openapi: 3.0.0

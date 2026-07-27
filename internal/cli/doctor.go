@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
 func newDoctorCmd(gf *globalFlags) *cobra.Command {
@@ -43,6 +43,7 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 			}
 			fmt.Fprintf(out, "Runner (capture): %s\n", featureState(who.Features[featureCaptures]))
 			fmt.Fprintf(out, "Nucleus (memory): %s\n", featureState(who.Features[featureNucleus]))
+			fmt.Fprintf(out, "Space hierarchy (subspaces/home pages/collections): %s\n", featureState(who.Features[featureSpaceHierarchy]))
 
 			cfg, err := e.client.LLMConfig(cmd.Context())
 			if err != nil {

@@ -12,10 +12,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/config"
-	"github.com/impulso/gravity-cli/internal/docs"
-	"github.com/impulso/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
 // syncTarget is one resolved authoring action: either a page upsert or a
@@ -24,8 +24,31 @@ type syncTarget struct {
 	kind    string // "page" | "release"
 	space   string
 	label   string
+	home    bool // pin this page as its space's home page after authoring
 	page    api.PageUpsertRequest
 	release api.ReleaseNotesRequest
+}
+
+// hierarchySpec carries the manifest's space-hierarchy declarations into
+// runSync: the parent space to nest the default space under, and the page to
+// pin as the default space's home. All fields optional; a nil spec (or a
+// platform without the space-hierarchy feature) syncs exactly as before.
+type hierarchySpec struct {
+	defaultSpace string
+	parent       string // spaces.parent — makes defaultSpace a subspace of it
+	home         string // spaces.home — page slug pinned as defaultSpace's home
+}
+
+// hierarchyFromProject extracts the sync-relevant hierarchy declarations.
+func hierarchyFromProject(proj *config.Project) *hierarchySpec {
+	if proj == nil {
+		return nil
+	}
+	return &hierarchySpec{
+		defaultSpace: proj.Spaces.Default,
+		parent:       proj.Spaces.Parent,
+		home:         proj.Spaces.Home,
+	}
 }
 
 func newSyncCmd(gf *globalFlags) *cobra.Command {
@@ -106,7 +129,7 @@ Use --only to author just one kind, and --page to target a single mapping.`,
 			if err != nil {
 				return err
 			}
-			return runSync(cmd.Context(), e.client, site, targets, !keepDuplicates, logWriter(cmd, ci), out)
+			return runSync(cmd.Context(), e.client, site, targets, !keepDuplicates, hierarchyFromProject(e.proj), logWriter(cmd, ci), out)
 		},
 	}
 	cmd.Flags().StringVar(&only, "only", "", "author only one kind: api|docs")
@@ -132,13 +155,14 @@ func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilte
 			if err != nil {
 				return nil, fmt.Errorf("source %s: %w", s.Source, err)
 			}
-			sp, slug := proj.PageTarget(s.Space, s.Page)
+			sp, slug, col := proj.PageTarget(s.Space, s.Page, s.Collection)
 			title := firstNonEmpty(s.Title, s.Page)
 			targets = append(targets, syncTarget{
 				kind:  "page",
 				space: sp,
 				label: fmt.Sprintf("api %s -> %s/%s", s.Source, sp, slug),
-				page:  api.PageUpsertRequest{SpaceSlug: sp, Slug: slug, Title: title, Blocks: blocks},
+				home:  proj.Spaces.Home != "" && sp == proj.Spaces.Default && slug == proj.Spaces.Home,
+				page:  api.PageUpsertRequest{SpaceSlug: sp, Slug: slug, Title: title, Collection: col, Blocks: blocks},
 			})
 		}
 	}
@@ -171,12 +195,13 @@ func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilte
 				return nil, fmt.Errorf("document %s: %w", d.File, err)
 			}
 			title = firstNonEmpty(d.Title, title)
-			sp, slug := proj.PageTarget(d.Space, d.Page)
+			sp, slug, col := proj.PageTarget(d.Space, d.Page, d.Collection)
 			targets = append(targets, syncTarget{
 				kind:  "page",
 				space: sp,
 				label: fmt.Sprintf("doc %s -> %s/%s", d.File, sp, slug),
-				page:  api.PageUpsertRequest{SpaceSlug: sp, Slug: slug, Title: title, Blocks: blocks},
+				home:  proj.Spaces.Home != "" && sp == proj.Spaces.Default && slug == proj.Spaces.Home,
+				page:  api.PageUpsertRequest{SpaceSlug: sp, Slug: slug, Title: title, Collection: col, Blocks: blocks},
 			})
 		}
 	}
@@ -319,10 +344,35 @@ func bestTitleMatch(cands []api.Page, title, cfgSlug string) *api.Page {
 	return best
 }
 
-// runSync reconciles against existing pages, ensures each unique space, performs
-// every upsert, then (when pruneDuplicates) proposes removal of the duplicate
-// pages it converged off of.
-func runSync(ctx context.Context, client *api.Client, site string, targets []syncTarget, pruneDuplicates bool, logw, out io.Writer) error {
+// runSync reconciles against existing pages, ensures each unique space (nesting
+// the default space under its declared parent), performs every upsert, pins the
+// declared home page, then (when pruneDuplicates) proposes removal of the
+// duplicate pages it converged off of. hier may be nil.
+func runSync(ctx context.Context, client *api.Client, site string, targets []syncTarget, pruneDuplicates bool, hier *hierarchySpec, logw, out io.Writer) error {
+	// One capability probe decides whether the hierarchy fields (space parent,
+	// home page, page collections) may be sent. Older platforms reject unknown
+	// request fields, so on a probe failure we degrade to the flat shape — the
+	// prefixed shared-space slugs keep multi-repo pages apart either way.
+	hierarchyOK := false
+	if who, err := client.WhoAmI(ctx); err == nil {
+		hierarchyOK = who.Features[featureSpaceHierarchy]
+	} else {
+		fmt.Fprintf(out, "warning: could not probe platform features (%v); syncing without hierarchy fields\n", err)
+	}
+	if !hierarchyOK {
+		stripped := false
+		for i := range targets {
+			if targets[i].page.Collection != "" {
+				targets[i].page.Collection = ""
+				stripped = true
+			}
+		}
+		if stripped || (hier != nil && (hier.parent != "" || hier.home != "")) {
+			fmt.Fprintln(out, "note: this platform predates subspaces/collections — pages sync flat; spaces.parent / spaces.home / collections take effect once the platform supports them")
+		}
+		hier = nil
+	}
+
 	// Read existing pages and reconcile so a re-sync updates the same page instead
 	// of duplicating it. Non-fatal: if the read fails we author with the
 	// configured slugs and say reconciliation was skipped.
@@ -356,15 +406,29 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 		}
 	}
 
+	// Ensure spaces in dependency order: the declared parent space first (it
+	// must exist before anything can nest under it), then every target space.
+	// The default space carries `parent` so it is created as — or reparented
+	// into — a subspace, converging on the manifest.
 	ensured := map[string]bool{}
+	if hier != nil && hier.parent != "" {
+		if _, err := client.EnsureSpace(ctx, site, api.SpaceUpsertRequest{Slug: hier.parent}); err != nil {
+			return syncAPIError(err, fmt.Sprintf("ensure parent space %q", hier.parent))
+		}
+		ensured[hier.parent] = true
+	}
 	for _, t := range targets {
 		if t.space == "" || ensured[t.space] {
 			continue
 		}
-		if _, err := client.EnsureSpace(ctx, site, api.SpaceUpsertRequest{
+		req := api.SpaceUpsertRequest{
 			Slug:        t.space,
 			Description: "Maintained by the gravity CLI.",
-		}); err != nil {
+		}
+		if hier != nil && hier.parent != "" && t.space == hier.defaultSpace {
+			req.Parent = hier.parent
+		}
+		if _, err := client.EnsureSpace(ctx, site, req); err != nil {
 			return syncAPIError(err, fmt.Sprintf("ensure space %q", t.space))
 		}
 		ensured[t.space] = true
@@ -377,6 +441,7 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 	// target would hit identically.
 	var failures []string
 	proposed := 0
+	homeSpace, homeSlug := "", ""
 	for _, t := range targets {
 		fmt.Fprintf(logw, "sync: %s\n", t.label)
 		var resp *api.ReleaseNotesResponse
@@ -396,10 +461,26 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 			failures = append(failures, t.label)
 			continue
 		}
+		if t.home && t.kind == "page" && hier != nil {
+			// The upsert's response slug is the page's real identity (the
+			// server may have honored an existing page), so pin that one.
+			homeSpace, homeSlug = t.space, firstNonEmpty(resp.PageSlug, t.page.Slug)
+		}
 		proposed++
 		fmt.Fprintf(out, "Proposed: %s  status=%s  proposal=%s\n", resp.PageSlug, resp.Status, resp.ProposalID)
 		if resp.ReviewURL != "" {
 			fmt.Fprintf(out, "  review: %s\n", resp.ReviewURL)
+		}
+	}
+
+	// Pin the declared home page onto its space. Best-effort: the pages above
+	// are already proposed, so a failed pin is a note (re-run to retry), not a
+	// failed sync.
+	if homeSlug != "" {
+		if _, err := client.UpdateSpace(ctx, site, homeSpace, api.SpacePatchRequest{HomePage: &homeSlug}); err != nil {
+			fmt.Fprintf(out, "note: could not pin %q as the home page of space %q (%v); re-run `gravity sync` to retry\n", homeSlug, homeSpace, err)
+		} else {
+			fmt.Fprintf(out, "Home page: %s/%s\n", homeSpace, homeSlug)
 		}
 	}
 
@@ -445,6 +526,7 @@ type savedTarget struct {
 	Kind    string                   `json:"kind"`
 	Space   string                   `json:"space"`
 	Label   string                   `json:"label"`
+	Home    bool                     `json:"home,omitempty"`
 	Page    *api.PageUpsertRequest   `json:"page,omitempty"`
 	Release *api.ReleaseNotesRequest `json:"release,omitempty"`
 }
@@ -453,7 +535,7 @@ type savedTarget struct {
 func saveTargets(path string, targets []syncTarget) error {
 	doc := savedDoc{Version: 1}
 	for _, t := range targets {
-		st := savedTarget{Kind: t.kind, Space: t.space, Label: t.label}
+		st := savedTarget{Kind: t.kind, Space: t.space, Label: t.label, Home: t.home}
 		if t.kind == "release" {
 			r := t.release
 			st.Release = &r
@@ -487,7 +569,7 @@ func loadTargets(path string) ([]syncTarget, error) {
 	}
 	targets := make([]syncTarget, 0, len(doc.Targets))
 	for _, st := range doc.Targets {
-		t := syncTarget{kind: st.Kind, space: st.Space, label: st.Label}
+		t := syncTarget{kind: st.Kind, space: st.Space, label: st.Label, home: st.Home}
 		if st.Page != nil {
 			t.page = *st.Page
 			// Re-canonicalize replayed blocks: an artifact saved by an earlier

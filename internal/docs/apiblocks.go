@@ -3,8 +3,8 @@ package docs
 import (
 	"fmt"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/checks"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
 )
 
 // apiContent is the JSON payload of a machine api block. It mirrors the read

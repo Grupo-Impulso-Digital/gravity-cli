@@ -3,7 +3,7 @@ package checks_test
 import (
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/checks"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
 )
 
 const fixtureSpec = `

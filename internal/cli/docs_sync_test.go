@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 // A saved target set must round-trip through disk unchanged so a failed sync can
@@ -111,10 +111,12 @@ func TestLoadTargetsSanitizesLegacyArtifact(t *testing.T) {
 func TestRunSyncPartialFailureAuthorsSurvivors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/whoami"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"organizationId": "org"})
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pages"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"pages": []any{}})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/spaces"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "sp", "slug": "docs", "name": "Docs"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"space": map[string]any{"id": "sp", "slug": "docs", "name": "Docs"}})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pages"):
 			body, _ := io.ReadAll(r.Body)
 			var req api.PageUpsertRequest
@@ -143,7 +145,7 @@ func TestRunSyncPartialFailureAuthorsSurvivors(t *testing.T) {
 		pageTarget("docs", "good-two", "Good Two"),
 	}
 	var out bytes.Buffer
-	err := runSync(context.Background(), client, "docs", targets, true, io.Discard, &out)
+	err := runSync(context.Background(), client, "docs", targets, true, nil, io.Discard, &out)
 
 	if err == nil {
 		t.Fatal("expected an error because one target failed")
@@ -166,10 +168,12 @@ func TestRunSyncAuthFailsFast(t *testing.T) {
 	var pageUpserts int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/whoami"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"organizationId": "org"})
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pages"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"pages": []any{}})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/spaces"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "sp", "slug": "docs", "name": "Docs"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"space": map[string]any{"id": "sp", "slug": "docs", "name": "Docs"}})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pages"):
 			pageUpserts++
 			w.WriteHeader(http.StatusUnauthorized)
@@ -185,7 +189,7 @@ func TestRunSyncAuthFailsFast(t *testing.T) {
 		pageTarget("docs", "one", "One"),
 		pageTarget("docs", "two", "Two"),
 	}
-	err := runSync(context.Background(), client, "docs", targets, true, io.Discard, io.Discard)
+	err := runSync(context.Background(), client, "docs", targets, true, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected an auth error")
 	}

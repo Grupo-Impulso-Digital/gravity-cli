@@ -159,6 +159,11 @@ func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPost, path, nil, body, out)
 }
 
+// Patch issues a PATCH request with a JSON body.
+func (c *Client) Patch(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPatch, path, nil, body, out)
+}
+
 // Delete issues a DELETE request.
 func (c *Client) Delete(ctx context.Context, path string, out any) error {
 	return c.do(ctx, http.MethodDelete, path, nil, nil, out)

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
 func TestNormalizeRemote(t *testing.T) {

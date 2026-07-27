@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/agent"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 )
 
 func TestParseDocPlan(t *testing.T) {

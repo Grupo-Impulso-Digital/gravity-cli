@@ -1,0 +1,23 @@
+name: Docs (Gravity)
+
+# Drift check on PRs (advisory), sync + AI authoring on main, release notes on
+# a published release. Everything gravity writes is a draft + open proposal, so
+# nothing here changes live documentation without a human approving it.
+# Slugs live in .gravity.yaml; GRAVITY_TOKEN is an org secret.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    uses: Grupo-Impulso-Digital/workflows/.github/workflows/gravity-docs.yml@main
+    with:
+      live-branch: main
+    secrets: inherit

@@ -67,6 +67,6 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/impulso/gravity-cli
+        - github.com/Grupo-Impulso-Digital/gravity-cli
     gofumpt:
       extra-rules: true

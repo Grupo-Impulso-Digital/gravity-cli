@@ -16,8 +16,8 @@ import (
 	"github.com/spf13/cobra"
 	yaml "go.yaml.in/yaml/v3"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
 func newInitCmd(gf *globalFlags) *cobra.Command {
@@ -68,6 +68,8 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 			sp := firstNonEmpty(space, os.Getenv(config.EnvSpace))
 			repo := filepath.Base(absDir)
 			productSlug := ""
+			parent, home := "", ""
+			var shared []string
 
 			var sources []config.SourceMap
 			var documents []config.DocMap
@@ -97,6 +99,9 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 				site = firstNonEmpty(site, existing.Site)
 				apiURL = firstNonEmpty(apiURL, existing.APIURL)
 				sp = firstNonEmpty(sp, existing.Spaces.Default)
+				parent = existing.Spaces.Parent
+				home = existing.Spaces.Home
+				shared = existing.Spaces.Shared
 				role = firstNonEmpty(role, existing.Product.Role)
 				productSlug = existing.Product.Slug
 				if existing.Product.Repo != "" {
@@ -139,6 +144,10 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 				site, apiURL, sp = params.Site, params.APIURL, params.Space
 				role, repo, productSlug = params.Role, params.Repo, params.ProductSlug
 				sources, documents = params.Sources, params.Documents
+				parent, home = params.Parent, params.Home
+				if params.Shared && sp != "" {
+					shared = []string{sp}
+				}
 			}
 
 			if apiURL == "" {
@@ -152,6 +161,9 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 				Site:        site,
 				APIURL:      apiURL,
 				Space:       sp,
+				Parent:      parent,
+				Home:        home,
+				Shared:      shared,
 				Role:        role,
 				Repo:        repo,
 				ProductSlug: firstNonEmpty(productSlug, site),
@@ -214,6 +226,9 @@ type wizardResult struct {
 	Site        string
 	APIURL      string
 	Space       string
+	Parent      string // default space nests under this top-level space
+	Home        string // page slug pinned as the default space's home page
+	Shared      bool   // sibling repos also publish into the default space
 	Role        string
 	Repo        string
 	ProductSlug string
@@ -354,12 +369,28 @@ func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizar
 		})
 	}
 
+	// --- Hierarchy: parent space, multi-repo sharing, home page. Only offered
+	// when the platform supports the space hierarchy; older platforms would
+	// reject the fields, so the wizard stays flat there. ---
+	if hierarchySupported(ctx, client) {
+		if err := runHierarchySteps(cmd, spaces, &res); err != nil {
+			return wizardResult{}, false, err
+		}
+	}
+
 	// Preview, then a final write confirmation.
 	out := cmd.OutOrStdout()
+	var sharedList []string
+	if res.Shared && res.Space != "" {
+		sharedList = []string{res.Space}
+	}
 	fmt.Fprintf(out, "\n--- %s preview ---\n%s\n", config.ProjectFileName, renderScaffold(scaffoldParams{
 		Site:        res.Site,
 		APIURL:      firstNonEmpty(res.APIURL, config.DefaultAPIURL),
 		Space:       res.Space,
+		Parent:      res.Parent,
+		Home:        res.Home,
+		Shared:      sharedList,
 		Role:        res.Role,
 		Repo:        res.Repo,
 		ProductSlug: res.ProductSlug,
@@ -384,6 +415,106 @@ const (
 	siteManualSentinel = "\x00manual-site"
 	spaceNewSentinel   = "\x00new-space"
 )
+
+// hierarchySupported reports whether the platform advertises the space
+// hierarchy (subspaces / home pages / collections). Offline or on error the
+// wizard simply skips the hierarchy questions.
+func hierarchySupported(ctx context.Context, client *api.Client) bool {
+	if client == nil {
+		return false
+	}
+	who, err := client.WhoAmI(ctx)
+	return err == nil && who.Features[featureSpaceHierarchy]
+}
+
+// runHierarchySteps asks the space-hierarchy questions — parent space,
+// multi-repo sharing, home page — and fills res in place.
+func runHierarchySteps(cmd *cobra.Command, spaces []api.Space, res *wizardResult) error {
+	// Parent: a Select over the site's top-level spaces (a subspace can't be a
+	// parent — nesting is one level), or free text when none are known.
+	var parentOpts []huh.Option[string]
+	parentOpts = append(parentOpts, huh.NewOption("(none — top-level space)", ""))
+	seedParent := ""
+	for _, s := range spaces {
+		if s.ParentSpaceID != nil || s.Slug == res.Space {
+			continue
+		}
+		parentOpts = append(parentOpts, huh.NewOption(spaceLabel(s), s.Slug))
+	}
+	// Preselect the space's current parent so re-running the wizard converges.
+	if cur := findSpace(spaces, res.Space); cur != nil && cur.ParentSpaceID != nil {
+		for _, s := range spaces {
+			if s.ID == *cur.ParentSpaceID {
+				seedParent = s.Slug
+			}
+		}
+	}
+	parentOpts = append(parentOpts, huh.NewOption("＋ new parent space…", spaceNewSentinel))
+	parent := seedParent
+
+	shared := res.Shared
+	fields := []huh.Field{
+		huh.NewSelect[string]().Title("Parent space").
+			Description(fmt.Sprintf("Nest %q as a subspace of a product space (e.g. modules of one platform).", res.Space)).
+			Options(parentOpts...).Value(&parent),
+		huh.NewConfirm().Title("Shared space?").
+			Description("Do sibling repos of this product also publish into this space?\nTheir pages are then kept apart per repo (a collection per repo).").
+			Value(&shared),
+	}
+
+	// Home page: offer the best candidate page among the mapped documents.
+	home := false
+	homeSlug := homeCandidate(res.Documents)
+	if homeSlug != "" {
+		fields = append(fields, huh.NewConfirm().
+			Title(fmt.Sprintf("Pin %q as the space home page?", homeSlug)).
+			Description("Readers landing on the space see this page first.").
+			Value(&home))
+	}
+
+	form := huh.NewForm(huh.NewGroup(fields...)).
+		WithInput(cmd.InOrStdin()).WithOutput(cmd.ErrOrStderr())
+	if err := form.Run(); err != nil {
+		return err
+	}
+	if parent == spaceNewSentinel {
+		parent = ""
+		if err := runInput(cmd, "New parent space slug", "The top-level product space to nest under.", &parent, requiredField); err != nil {
+			return err
+		}
+	}
+	res.Parent = strings.TrimSpace(parent)
+	res.Shared = shared
+	if home {
+		res.Home = homeSlug
+	}
+	return nil
+}
+
+// homeCandidate picks the page to offer as the space home: the conventional
+// "overview" page (a README mapping) when present, else a single mapped doc's
+// page, else nothing.
+func homeCandidate(docs []config.DocMap) string {
+	for _, d := range docs {
+		if d.Page == "overview" {
+			return "overview"
+		}
+	}
+	if len(docs) == 1 && docs[0].Page != "" {
+		return docs[0].Page
+	}
+	return ""
+}
+
+// findSpace returns the space with the given slug, or nil.
+func findSpace(spaces []api.Space, slug string) *api.Space {
+	for i := range spaces {
+		if spaces[i].Slug == slug {
+			return &spaces[i]
+		}
+	}
+	return nil
+}
 
 // siteField returns the site picker: a Select over the org's sites (plus a
 // manual-entry sentinel) when they can be listed, otherwise a free-text Input.
@@ -411,7 +542,9 @@ func siteField(ctx context.Context, client *api.Client, notice io.Writer, bindin
 
 // spaceField returns a space picker: a Select over the site's existing spaces
 // (plus a "new space" sentinel) when spaces are known, otherwise a free-text
-// Input. seed preselects/prefills the default.
+// Input. Spaces render hierarchically — each top-level space followed by its
+// indented subspaces — so picking a module subspace is natural. seed
+// preselects/prefills the default.
 func spaceField(title, desc string, spaces []api.Space, binding *string, seed string) huh.Field {
 	if len(spaces) == 0 {
 		if *binding == "" {
@@ -420,8 +553,12 @@ func spaceField(title, desc string, spaces []api.Space, binding *string, seed st
 		return huh.NewInput().Title(title).Description(desc).Value(binding).Validate(requiredField)
 	}
 	opts := make([]huh.Option[string], 0, len(spaces)+1)
-	for _, s := range spaces {
-		opts = append(opts, huh.NewOption(spaceLabel(s), s.Slug))
+	for _, s := range orderSpacesForPicker(spaces) {
+		label := spaceLabel(s)
+		if s.ParentSpaceID != nil {
+			label = "  └ " + label
+		}
+		opts = append(opts, huh.NewOption(label, s.Slug))
 	}
 	opts = append(opts, huh.NewOption("＋ new space…", spaceNewSentinel))
 	if slugInSpaces(seed, spaces) {
@@ -430,6 +567,33 @@ func spaceField(title, desc string, spaces []api.Space, binding *string, seed st
 		*binding = spaceNewSentinel
 	}
 	return huh.NewSelect[string]().Title(title).Description(desc).Options(opts...).Value(binding)
+}
+
+// orderSpacesForPicker groups spaces hierarchically: each top-level space
+// followed by its subspaces, then any orphans (a parent the key can't see)
+// flat at the end.
+func orderSpacesForPicker(spaces []api.Space) []api.Space {
+	out := make([]api.Space, 0, len(spaces))
+	emitted := make(map[string]bool, len(spaces))
+	for _, s := range spaces {
+		if s.ParentSpaceID != nil {
+			continue
+		}
+		out = append(out, s)
+		emitted[s.ID] = true
+		for _, c := range spaces {
+			if c.ParentSpaceID != nil && *c.ParentSpaceID == s.ID {
+				out = append(out, c)
+				emitted[c.ID] = true
+			}
+		}
+	}
+	for _, s := range spaces {
+		if !emitted[s.ID] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // runInput runs a one-field form to collect a single value (used to resolve the
@@ -474,38 +638,54 @@ func fetchSpaces(ctx context.Context, client *api.Client, site string, notice io
 }
 
 // ensureDeclaredSpaces idempotently creates (or confirms) every space the new
-// manifest references, so a freshly-`init`'d repo's spaces exist on the platform
+// manifest references — the declared parent space first, then the default space
+// nested under it — so a freshly-`init`'d repo's spaces exist on the platform
 // immediately rather than only after the first `gravity sync`. Best-effort: a
 // permission (403) or not-yet-available failure is reported and skipped, never
 // fatal — the written file is the command's real output.
 func ensureDeclaredSpaces(cmd *cobra.Command, client *api.Client, site string, p scaffoldParams) {
 	out := cmd.OutOrStdout()
+	// The hierarchy fields only go to platforms that understand them (older
+	// servers reject unknown request fields).
+	withParent := p.Parent != "" && hierarchySupported(cmd.Context(), client)
+
+	type ensure struct{ slug, parent string }
 	seen := map[string]bool{}
-	add := func(s string) []string {
-		s = strings.TrimSpace(s)
-		if s == "" || seen[s] {
-			return nil
+	var plan []ensure
+	add := func(slug, parent string) {
+		slug = strings.TrimSpace(slug)
+		if slug == "" || seen[slug] {
+			return
 		}
-		seen[s] = true
-		return []string{s}
+		seen[slug] = true
+		plan = append(plan, ensure{slug: slug, parent: parent})
 	}
-	var slugs []string
-	slugs = append(slugs, add(firstNonEmpty(p.Space, p.Repo))...)
+	defaultSpace := firstNonEmpty(p.Space, p.Repo)
+	if withParent {
+		add(p.Parent, "")
+		add(defaultSpace, p.Parent)
+	} else {
+		add(defaultSpace, "")
+	}
 	for _, src := range p.Sources {
-		slugs = append(slugs, add(src.Space)...)
+		add(src.Space, "")
 	}
-	for _, slug := range slugs {
-		_, err := client.EnsureSpace(cmd.Context(), site, api.SpaceUpsertRequest{Slug: slug})
+	for _, e := range plan {
+		_, err := client.EnsureSpace(cmd.Context(), site, api.SpaceUpsertRequest{Slug: e.slug, Parent: e.parent})
 		if err == nil {
-			fmt.Fprintf(out, "Ensured space %q on site %q.\n", slug, site)
+			if e.parent != "" {
+				fmt.Fprintf(out, "Ensured space %q (subspace of %q) on site %q.\n", e.slug, e.parent, site)
+			} else {
+				fmt.Fprintf(out, "Ensured space %q on site %q.\n", e.slug, site)
+			}
 			continue
 		}
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && (apiErr.IsAuth() || apiErr.IsUnavailable()) {
-			fmt.Fprintf(out, "Note: couldn't create space %q on %q (%s) — `gravity sync` will create it later.\n", slug, site, apiErr.Message)
+			fmt.Fprintf(out, "Note: couldn't create space %q on %q (%s) — `gravity sync` will create it later.\n", e.slug, site, apiErr.Message)
 			continue
 		}
-		fmt.Fprintf(out, "Note: couldn't create space %q on %q: %v\n", slug, site, err)
+		fmt.Fprintf(out, "Note: couldn't create space %q on %q: %v\n", e.slug, site, err)
 	}
 }
 
@@ -689,6 +869,9 @@ type scaffoldParams struct {
 	Site        string
 	APIURL      string
 	Space       string
+	Parent      string   // default space nests under this top-level space
+	Home        string   // page slug pinned as the default space's home page
+	Shared      []string // spaces co-owned with sibling repos
 	Role        string
 	Repo        string
 	ProductSlug string
@@ -704,7 +887,12 @@ func projectFromScaffold(p scaffoldParams) *config.Project {
 		Site:    p.Site,
 		APIURL:  p.APIURL,
 		Product: config.Product{Slug: firstNonEmpty(p.ProductSlug, p.Site), Repo: p.Repo, Role: p.Role},
-		Spaces:  config.Spaces{Default: firstNonEmpty(p.Space, p.Repo)},
+		Spaces: config.Spaces{
+			Default: firstNonEmpty(p.Space, p.Repo),
+			Parent:  p.Parent,
+			Home:    p.Home,
+			Shared:  p.Shared,
+		},
 		Sources: p.Sources, Documents: p.Documents,
 		ReleaseNotes: config.ReleaseNotes{Space: firstNonEmpty(p.Space, "changelog"), Changelog: "CHANGELOG.md"},
 	}
@@ -754,9 +942,7 @@ product:
 %s
 
 # --- Spaces ---
-spaces:
-  default: %s
-  # shared: [changelog]   # spaces co-owned with sibling repos (pages get slug-prefixed)
+%s
 
 # --- Machine-owned, code-derived doc blocks (authored by `+"`gravity sync`"+`) ---
 %s
@@ -777,12 +963,40 @@ knowledge:
 		config.EnvToken, config.SchemaVersion,
 		p.Site, p.APIURL,
 		productSlug, p.Repo, roleLine,
-		defaultSpace,
+		renderSpacesBlock(defaultSpace, p.Parent, p.Home, p.Shared),
 		renderSourcesBlock(p.Sources),
 		renderDocumentsBlock(p.Documents),
 		releaseSpace,
 		productSlug, p.Repo,
 	)
+}
+
+// renderSpacesBlock emits the spaces section: declared hierarchy keys as live
+// YAML, undeclared ones as commented examples so the file teaches its own schema.
+func renderSpacesBlock(defaultSpace, parent, home string, shared []string) string {
+	var b strings.Builder
+	b.WriteString("spaces:\n")
+	fmt.Fprintf(&b, "  default: %s\n", yamlScalar(defaultSpace))
+	if parent != "" {
+		fmt.Fprintf(&b, "  parent: %s\n", yamlScalar(parent))
+	} else {
+		b.WriteString("  # parent: platform      # nest `default` as a subspace of this top-level space\n")
+	}
+	if home != "" {
+		fmt.Fprintf(&b, "  home: %s\n", yamlScalar(home))
+	} else {
+		b.WriteString("  # home: overview        # page slug pinned as the space's home page\n")
+	}
+	if len(shared) > 0 {
+		quoted := make([]string, len(shared))
+		for i, s := range shared {
+			quoted[i] = yamlScalar(s)
+		}
+		fmt.Fprintf(&b, "  shared: [%s]\n", strings.Join(quoted, ", "))
+	} else {
+		b.WriteString("  # shared: [changelog]   # spaces co-fed by sibling repos (pages grouped per repo)")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func renderSourcesBlock(sources []config.SourceMap) string {

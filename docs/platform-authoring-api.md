@@ -20,12 +20,49 @@ The canonical, shipped contract lives in the `gravity` repo
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/sites/:site/spaces` | idempotent ensure-space (on slug) |
-| `POST` | `/api/v1/sites/:site/pages` | upsert a page's blocks → draft + proposal |
+| `POST` | `/api/v1/sites/:site/spaces` | idempotent ensure-space (on slug); `parent` nests/reparents a subspace* |
+| `PATCH` | `/api/v1/sites/:site/spaces/:space` | partial update; `homePage` pins the space's overview page, `parent` reparents* |
+| `POST` | `/api/v1/sites/:site/pages` | upsert a page's blocks → draft + proposal; `collection` files it under a page folder (get-or-create)* |
 | `POST` | `/api/v1/sites/:site/release-notes` | versioned release page (used by `documents.as=release`, via `bodyMarkdown`) |
 
+\* Hierarchy fields require `whoami.features["space-hierarchy"]` (see below);
+the CLI omits them entirely when the flag is absent.
+
 Read side (`check api`/`check docs`): `GET /api/v1/sites/:site`,
-`…/pages?space=`, `…/api-blocks` — unchanged.
+`…/pages?space=`, `…/api-blocks` — unchanged in shape, except the site tree now
+returns each space's `parentSpaceId`/`overviewPageId`, each collection's
+`spaceId`/`spaceSlug`, and each page's `collectionId` (all nullable).
+
+## Space hierarchy (`space-hierarchy` feature)
+
+Since the platform's hierarchy inversion (migration 0050) the content tree is:
+
+```
+Site → Space (+ one level of Subspace via parentSpaceId)
+     → Collection (page folder INSIDE a space, self-nesting)
+     → Page → Block
+```
+
+The CLI consumes it as follows, all gated on `whoami.features["space-hierarchy"]`:
+
+- **`spaces.parent`** (manifest) → `POST /spaces` with `parent` for the default
+  space (parent ensured first). On the existing-space path a differing `parent`
+  REPARENTS the space — declarative, so re-running `gravity sync` converges.
+  One level only; the server 400s deeper nesting.
+- **Shared spaces** (`spaces.shared`) → each page upsert carries
+  `collection: <product.repo>` (explicit mapping `collection:` wins), grouping
+  the repo's pages into a folder the server get-or-creates. The `repo/` slug
+  prefix is KEPT — page identity is `(space, slug)` server-side, so the prefix
+  is what stops sibling repos' same-named pages from upserting onto each other;
+  the collection is presentation.
+- **`spaces.home`** → after authoring, `PATCH /spaces/:space {homePage: <slug>}`
+  pins the page (by its post-reconcile slug) as the space's overview page. The
+  home page must sit flat in the space — the server rejects a collection-filed
+  overview page — so the CLI never prefixes or collects it.
+- **Degradation**: without the feature flag the CLI strips `collection` from
+  upserts, sends no `parent`/`homePage`, and prints one notice. Shared-space
+  slugs stay prefixed either way, so content identity is identical on old and
+  new platforms.
 
 ## Block model the CLI authors
 
@@ -87,7 +124,8 @@ The CLI already speaks these; it degrades gracefully (404/501 or a
 `not_implemented`/`feature_disabled`/`unknown_route` code → skip + notice, or a
 hard error with `--require`) until the platform ships them. The platform should
 also advertise readiness via `whoami.features` (e.g. `{"captures":true,
-"nucleus":true,"docs-generate":true,"block-audience":true}`).
+"nucleus":true,"docs-generate":true,"block-audience":true,
+"space-hierarchy":true}`).
 
 ## Server-hosted prompts (`gravity` agents)
 

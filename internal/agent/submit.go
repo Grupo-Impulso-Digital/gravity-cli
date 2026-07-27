@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 // unwrapJSONString detects a value that is a JSON string whose content is
@@ -360,7 +360,7 @@ func ParsePageDoc(raw json.RawMessage) (PageDocInput, error) {
 func ValidateDocPlan(raw json.RawMessage) error {
 	in, err := ParseDocPlan(raw)
 	if err != nil {
-		return fmt.Errorf("pages must be a JSON array of page objects, not a string: %v", err)
+		return fmt.Errorf("pages must be a JSON array of page objects, not a string: %w", err)
 	}
 	if len(in.Pages) == 0 {
 		return errors.New("pages is empty — every codebase has documentable surface; propose at least an overview, a usage/getting-started page, and an architecture page grounded in files you read")
@@ -379,7 +379,7 @@ func ValidateDocPlan(raw json.RawMessage) error {
 func ValidatePageDoc(raw json.RawMessage) error {
 	in, err := ParsePageDoc(raw)
 	if err != nil {
-		return fmt.Errorf("blocks must be a JSON array of block objects, not a string: %v", err)
+		return fmt.Errorf("blocks must be a JSON array of block objects, not a string: %w", err)
 	}
 	if len(in.Blocks) == 0 {
 		return errors.New("blocks is empty — submit the page's complete block set")

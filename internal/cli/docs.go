@@ -10,11 +10,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/impulso/gravity-cli/internal/agent"
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/docs"
-	"github.com/impulso/gravity-cli/internal/git"
-	"github.com/impulso/gravity-cli/internal/prompts"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 func newDocsCmd(gf *globalFlags) *cobra.Command {
@@ -154,11 +154,20 @@ audiences, and the platform renders the blocks matching the viewer.`,
 				}
 				pg.Audiences = aud
 				sp := firstNonEmpty(space, pg.Space, e.cfg.Space, "docs")
-				fmt.Fprintf(logw, "agent: authoring page %d/%d: %s/%s (%s)\n", i+1, len(plan.Pages), sp, pg.Slug, strings.Join(pg.Audiences, "+"))
+				// Route through the manifest's target resolution so generated
+				// pages honor the same shared-space namespacing + per-repo
+				// collection grouping as `gravity sync` (no-op without a
+				// manifest or for unshared spaces).
+				slug, col, home := pg.Slug, "", false
+				if e.proj != nil {
+					home = e.proj.Spaces.Home != "" && sp == e.proj.Spaces.Default && slug == e.proj.Spaces.Home
+					sp, slug, col = e.proj.PageTarget(sp, slug, "")
+				}
+				fmt.Fprintf(logw, "agent: authoring page %d/%d: %s/%s (%s)\n", i+1, len(plan.Pages), sp, slug, strings.Join(pg.Audiences, "+"))
 
 				// One failed page must not sink the run: every other page's
 				// tokens are already spent, so warn, record, and keep going.
-				authored, stopped, err := runDocsAuthor(cmd.Context(), e.client, repo, authorPrompt, pg, byPage[sp+"\x00"+pg.Slug], logw, mctx)
+				authored, stopped, err := runDocsAuthor(cmd.Context(), e.client, repo, authorPrompt, pg, byPage[sp+"\x00"+slug], logw, mctx)
 				if err != nil {
 					if cmd.Context().Err() != nil {
 						return Fail(CodeError, err)
@@ -187,8 +196,9 @@ audiences, and the platform renders the blocks matching the viewer.`,
 				targets = append(targets, syncTarget{
 					kind:  "page",
 					space: sp,
-					label: fmt.Sprintf("docs %s -> %s/%s", strings.Join(pg.Audiences, "+"), sp, pg.Slug),
-					page:  api.PageUpsertRequest{SpaceSlug: sp, Slug: pg.Slug, Title: title, Blocks: blocks},
+					label: fmt.Sprintf("docs %s -> %s/%s", strings.Join(pg.Audiences, "+"), sp, slug),
+					home:  home,
+					page:  api.PageUpsertRequest{SpaceSlug: sp, Slug: slug, Title: title, Collection: col, Blocks: blocks},
 				})
 			}
 
@@ -259,7 +269,7 @@ func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarge
 			fmt.Fprintf(out, "Saved authored docs to %s\n", artifactPath)
 		}
 	}
-	err := runSync(cmd.Context(), e.client, siteSlug, targets, true, logWriter(cmd, ci), out)
+	err := runSync(cmd.Context(), e.client, siteSlug, targets, true, hierarchyFromProject(e.proj), logWriter(cmd, ci), out)
 	if err != nil && artifactPath != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"note: authored docs are saved at %s — fix the cause and replay with `gravity docs generate --from %s` (no AI re-run)\n",

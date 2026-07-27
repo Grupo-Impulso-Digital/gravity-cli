@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 // Default caps on the loop to bound cost and latency.

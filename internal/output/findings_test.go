@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/output"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/output"
 )
 
 func sampleResult() output.Result {

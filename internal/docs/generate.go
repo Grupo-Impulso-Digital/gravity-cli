@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 // AuthoredBlock is a block produced by the docs-generator agent, before it is

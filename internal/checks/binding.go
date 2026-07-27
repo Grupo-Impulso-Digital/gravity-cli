@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/impulso/gravity-cli/internal/api"
-	"github.com/impulso/gravity-cli/internal/pathsafe"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
 // BindingCheck is the outcome of verifying one block's source binding.

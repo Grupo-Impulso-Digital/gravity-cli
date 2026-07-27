@@ -11,7 +11,7 @@ import (
 
 	yaml "go.yaml.in/yaml/v3"
 
-	"github.com/impulso/gravity-cli/internal/pathsafe"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
 // SchemaVersion is the highest .gravity.yaml schema version this CLI
@@ -47,33 +47,47 @@ type Product struct {
 }
 
 // Spaces declares where this repo's pages live and which spaces are co-owned
-// with sibling repos (and therefore slug-namespaced to avoid clobbering).
+// with sibling repos. On a platform with space-hierarchy support a shared
+// space's pages are grouped into a per-repo collection; older platforms fall
+// back to slug-namespacing (repo/page) to avoid clobbering.
 type Spaces struct {
 	Default string   `yaml:"default"`
 	Shared  []string `yaml:"shared"`
+	// Parent makes the default space a subspace of this top-level space
+	// (one level of nesting — e.g. default `connect` under parent
+	// `fundamentum`). Applies to the default space only; mapping-level
+	// spaces stay top-level.
+	Parent string `yaml:"parent"`
+	// Home names the page slug (within the default space) pinned as the
+	// space's home/overview page after `gravity sync`. The home page always
+	// stays flat in the space — the platform rejects a collection-filed
+	// overview page — so it is never grouped into the per-repo collection.
+	Home string `yaml:"home"`
 }
 
 // SourceMap binds a source artifact (a spec or a code file) to a doc page made
 // of machine-owned, drift-locked blocks.
 type SourceMap struct {
-	Source    string `yaml:"source"` // repo-relative file (hashed into the binding)
-	Kind      string `yaml:"kind"`   // openapi | code
-	Space     string `yaml:"space"`  // optional; default Spaces.Default
-	Page      string `yaml:"page"`   // target page slug
-	Title     string `yaml:"title"`
-	Generator string `yaml:"generator"`
+	Source     string `yaml:"source"` // repo-relative file (hashed into the binding)
+	Kind       string `yaml:"kind"`   // openapi | code
+	Space      string `yaml:"space"`  // optional; default Spaces.Default
+	Page       string `yaml:"page"`   // target page slug
+	Title      string `yaml:"title"`
+	Generator  string `yaml:"generator"`
+	Collection string `yaml:"collection"` // optional; collection (page folder) inside the space
 }
 
 // DocMap ingests a human-authored Markdown file into Gravity as native blocks,
 // either as a standalone page or as a versioned release.
 type DocMap struct {
-	File      string `yaml:"file"`      // repo-relative .md file
-	Space     string `yaml:"space"`     // optional; default Spaces.Default
-	Page      string `yaml:"page"`      // target page slug (required when as=page)
-	Title     string `yaml:"title"`     // optional; default first H1 or filename
-	Ownership string `yaml:"ownership"` // machine | hybrid | human (default machine)
-	As        string `yaml:"as"`        // page | release (default page)
-	Version   string `yaml:"version"`   // explicit version for as=release
+	File       string `yaml:"file"`       // repo-relative .md file
+	Space      string `yaml:"space"`      // optional; default Spaces.Default
+	Page       string `yaml:"page"`       // target page slug (required when as=page)
+	Title      string `yaml:"title"`      // optional; default first H1 or filename
+	Ownership  string `yaml:"ownership"`  // machine | hybrid | human (default machine)
+	As         string `yaml:"as"`         // page | release (default page)
+	Version    string `yaml:"version"`    // explicit version for as=release
+	Collection string `yaml:"collection"` // optional; collection (page folder) inside the space
 }
 
 // ReleaseNotes configures the git-derived release-notes command.
@@ -227,10 +241,71 @@ func (p *Project) Validate(path string) error {
 	if strings.TrimSpace(p.Spaces.Default) == "" {
 		errs = append(errs, "spaces.default could not be derived (set spaces.default or product.repo)")
 	}
+	if p.Spaces.Parent != "" {
+		if msg := checkSlug(p.Spaces.Parent); msg != "" {
+			errs = append(errs, "spaces.parent: "+msg)
+		}
+		if p.Spaces.Parent == p.Spaces.Default {
+			errs = append(errs, "spaces.parent must name a different space than spaces.default (a space cannot be its own parent)")
+		}
+	}
+	if p.Spaces.Home != "" {
+		if msg := checkSlug(p.Spaces.Home); msg != "" {
+			errs = append(errs, "spaces.home: "+msg)
+		}
+		// Catch a typo'd home slug offline: when mappings are declared, one of
+		// them must produce that page in the default space. A manifest with no
+		// mappings at all is left alone — `docs generate` plans its own pages
+		// and the home pin resolves against those at sync time.
+		if (len(p.Sources) > 0 || len(p.Documents) > 0) && !p.mapsHomePage() {
+			errs = append(errs, fmt.Sprintf("spaces.home %q matches no source/document page in the default space %q", p.Spaces.Home, p.Spaces.Default))
+		}
+	}
+	for i, s := range p.Sources {
+		if s.Collection != "" {
+			if msg := checkSlug(s.Collection); msg != "" {
+				errs = append(errs, fmt.Sprintf("sources[%d].collection: %s", i, msg))
+			}
+		}
+	}
+	for i, d := range p.Documents {
+		if d.Collection != "" {
+			if msg := checkSlug(d.Collection); msg != "" {
+				errs = append(errs, fmt.Sprintf("documents[%d].collection: %s", i, msg))
+			}
+		}
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s:\n  - %s", path, strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// mapsHomePage reports whether any page-producing mapping targets the
+// spaces.home slug in the default space.
+func (p *Project) mapsHomePage() bool {
+	inDefault := func(space string) bool { return space == "" || space == p.Spaces.Default }
+	for _, s := range p.Sources {
+		if s.Page == p.Spaces.Home && inDefault(s.Space) {
+			return true
+		}
+	}
+	for _, d := range p.Documents {
+		if (d.As == "" || d.As == "page") && d.Page == p.Spaces.Home && inDefault(d.Space) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkSlug returns a non-empty message when s is not a lowercase slug.
+func checkSlug(s string) string {
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return fmt.Sprintf("%q must be a lowercase slug (a-z, 0-9, dashes)", s)
+		}
+	}
+	return ""
 }
 
 // checkRepoRelative returns a non-empty message when ref is not a safe
@@ -246,20 +321,42 @@ func checkRepoRelative(ref string) string {
 	return ""
 }
 
-// PageTarget resolves the effective (space, slug) for a page, prefixing the
-// slug with product.repo when the space is shared so sibling repos in the same
-// product don't clobber each other.
-func (p *Project) PageTarget(space, slug string) (string, string) {
+// PageTarget resolves the effective (space, slug, collection) for a page.
+//
+// Shared spaces get BOTH separations: the slug keeps its product.repo prefix
+// (page identity on the platform is (space, slug) — without the prefix two
+// repos' same-named pages would upsert onto one another) AND the page is
+// grouped into a per-repo collection for presentation (explicit mapping
+// collection wins). Unshared spaces — the common one-repo-one-space case —
+// are untouched: flat slug, no collection unless explicitly mapped.
+//
+// The spaces.home page is the exception: it is the space's single landing
+// page, so it stays unprefixed and uncollected (the platform rejects a
+// collection-filed overview page). Exactly one repo should declare `home`
+// for a shared space.
+func (p *Project) PageTarget(space, slug, collection string) (string, string, string) {
 	if space == "" {
 		space = p.Spaces.Default
 	}
-	if p.isShared(space) && p.Product.Repo != "" {
-		return space, p.Product.Repo + "/" + slug
+	if p.isHomePage(space, slug) {
+		return space, slug, ""
 	}
-	return space, slug
+	if p.IsShared(space) && p.Product.Repo != "" {
+		if collection == "" {
+			collection = p.Product.Repo
+		}
+		return space, p.Product.Repo + "/" + slug, collection
+	}
+	return space, slug, collection
 }
 
-func (p *Project) isShared(space string) bool {
+// isHomePage reports whether slug is the declared home page of space.
+func (p *Project) isHomePage(space, slug string) bool {
+	return p.Spaces.Home != "" && slug == p.Spaces.Home && space == p.Spaces.Default
+}
+
+// IsShared reports whether space is co-owned with sibling repos.
+func (p *Project) IsShared(space string) bool {
 	for _, s := range p.Spaces.Shared {
 		if s == space {
 			return true

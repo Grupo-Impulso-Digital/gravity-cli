@@ -38,7 +38,7 @@ runs:
     - name: Install gravity
       shell: bash
       run: |
-        go install github.com/impulso/gravity-cli/cmd/gravity@${{ inputs.version }}
+        go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@${{ inputs.version }}
 
     - name: Run gravity
       shell: bash

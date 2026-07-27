@@ -14,7 +14,7 @@ variables:
 .gravity_base:
   image: golang:1.25
   before_script:
-    - go install github.com/impulso/gravity-cli/cmd/gravity@latest
+    - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
     - export PATH="$PATH:$(go env GOPATH)/bin"
 
 docs:check:

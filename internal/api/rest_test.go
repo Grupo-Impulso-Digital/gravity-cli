@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 func TestWhoAmI(t *testing.T) {
@@ -267,8 +267,9 @@ func TestEnsureSpaceRequestShape(t *testing.T) {
 		if err := json.Unmarshal(body, &captured); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
+		// The server wraps the space in an envelope: { space: {...} }.
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "sp_1", "slug": "cli", "name": "Gravity CLI",
+			"space": map[string]any{"id": "sp_1", "slug": "cli", "name": "Gravity CLI"},
 		})
 	}))
 	defer srv.Close()

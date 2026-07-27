@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/impulso/gravity-cli/internal/cli"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/cli"
 )
 
 // version is set via -ldflags "-X main.version=..." at build time.

@@ -6,15 +6,16 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 // Optional platform feature keys reported by /whoami.
 const (
-	featureCaptures      = "captures"
-	featureNucleus       = "nucleus"
-	featureDocsGenerate  = "docs-generate"
-	featureBlockAudience = "block-audience"
+	featureCaptures       = "captures"
+	featureNucleus        = "nucleus"
+	featureDocsGenerate   = "docs-generate"
+	featureBlockAudience  = "block-audience"
+	featureSpaceHierarchy = "space-hierarchy"
 )
 
 // skippableFeature handles "endpoint not live yet" uniformly. When err is an

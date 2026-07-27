@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/impulso/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 // WritePageText prints a human-readable preview of a page's blocks (used by

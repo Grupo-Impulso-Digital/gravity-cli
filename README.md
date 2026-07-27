@@ -27,35 +27,35 @@ token.
 **macOS / Linux — one line:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/impulso/gravity-cli/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.sh | sh
 ```
 
 The script auto-detects your OS/arch, downloads the matching binary from the
-latest [release](https://github.com/impulso/gravity-cli/releases), verifies its
+latest [release](https://github.com/Grupo-Impulso-Digital/gravity-cli/releases), verifies its
 checksum, and installs it to `/usr/local/bin` (or `~/.local/bin`). Override the
 target with `GRAVITY_INSTALL_DIR=...`, or pin a version with `GRAVITY_VERSION=v0.1.0`.
 
 **Homebrew (macOS / Linux):**
 
 ```bash
-brew install impulso/tap/gravity
+brew install Grupo-Impulso-Digital/tap/gravity
 ```
 
 **Scoop (Windows):**
 
 ```powershell
-scoop bucket add impulso https://github.com/impulso/scoop-bucket
+scoop bucket add impulso https://github.com/Grupo-Impulso-Digital/scoop-bucket
 scoop install gravity
 ```
 
 **Direct download:** grab the archive for your platform from the
-[releases page](https://github.com/impulso/gravity-cli/releases), unpack it, and
+[releases page](https://github.com/Grupo-Impulso-Digital/gravity-cli/releases), unpack it, and
 put `gravity` on your `PATH`. Every release ships a `checksums.txt`.
 
 **From source** (requires Go 1.25+):
 
 ```bash
-go install github.com/impulso/gravity-cli/cmd/gravity@latest
+go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
 
 # Or build locally from a checkout
 make build      # -> ./bin/gravity
