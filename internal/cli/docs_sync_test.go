@@ -14,8 +14,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
-// A saved target set must round-trip through disk unchanged so a failed sync can
-// be replayed with --from at no AI cost.
 func TestSaveLoadTargetsRoundTrip(t *testing.T) {
 	targets := []syncTarget{
 		{
@@ -60,10 +58,6 @@ func TestSaveLoadTargetsRoundTrip(t *testing.T) {
 	}
 }
 
-// A replayed artifact saved by an earlier CLI may carry the legacy array-header
-// table shape (which the server 400s) and machine-owned narrative blocks.
-// loadTargets must sanitize both so `docs generate --from` succeeds after the
-// contract fix instead of replaying the same failure forever.
 func TestLoadTargetsSanitizesLegacyArtifact(t *testing.T) {
 	targets := []syncTarget{{
 		kind:  "page",
@@ -106,8 +100,6 @@ func TestLoadTargetsSanitizesLegacyArtifact(t *testing.T) {
 	}
 }
 
-// runSync must author every target it can even when one fails: a single bad
-// target (a 400) does not discard the siblings that authored cleanly.
 func TestRunSyncPartialFailureAuthorsSurvivors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -162,8 +154,6 @@ func TestRunSyncPartialFailureAuthorsSurvivors(t *testing.T) {
 	}
 }
 
-// A systemic auth failure is fail-fast: no point hammering every target with a
-// request that will 401 identically.
 func TestRunSyncAuthFailsFast(t *testing.T) {
 	var pageUpserts int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

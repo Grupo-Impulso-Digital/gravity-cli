@@ -15,7 +15,6 @@ func newCheckCmd(gf *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// validateFormat returns an error for an unrecognized --format value.
 func validateFormat(format string) error {
 	if !output.ValidFormat(format) {
 		return Failf(CodeError, "invalid --format %q (want text|json|github)", format)

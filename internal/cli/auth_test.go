@@ -12,8 +12,6 @@ import (
 	"testing"
 )
 
-// runCLI executes the root command with args, isolating credentials to a temp
-// XDG dir and forcing a non-TTY stdin so interactive prompts never run.
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -23,7 +21,7 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetIn(strings.NewReader("")) // non-TTY => isInteractive is false
+	root.SetIn(strings.NewReader(""))
 	root.SetArgs(args)
 	err := root.ExecuteContext(context.Background())
 	return out.String(), err
@@ -59,7 +57,6 @@ func TestAuthLoginWritesAndVerifies(t *testing.T) {
 	if !strings.Contains(out, "Saved credentials") || !strings.Contains(out, "Verified: org Acme") {
 		t.Errorf("output missing save/verify lines:\n%s", out)
 	}
-	// The credentials file landed in the isolated XDG dir.
 	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "gravity", "config.yaml")
 	if _, statErr := os.Stat(path); statErr != nil {
 		t.Errorf("expected credentials at %s: %v", path, statErr)

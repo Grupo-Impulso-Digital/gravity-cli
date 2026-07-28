@@ -1,14 +1,25 @@
 # Bitbucket Pipelines example for the Gravity CLI.
 #
 # Place this content in bitbucket-pipelines.yml at the root of your docs/code
-# repository. Add GRAVITY_TOKEN as a SECURED repository variable
-# (Repository settings > Repository variables). GRAVITY_API_URL and
-# GRAVITY_SITE may be plain variables.
+# repository. Add GRAVITY_TOKEN as a SECURED repository variable (Repository
+# settings > Repository variables). GRAVITY_API_URL and GRAVITY_SITE may be
+# plain variables.
 #
-# Exit-code convention: 0 pass, 1 findings, 2 error. A non-zero exit fails the
-# step, turning the build red on drift or error.
+# Cadence (see ci/README.md):
+#   pull request     check docs + check api        read-only
+#   push to main     ping -> sync -> docs generate --since <last green sha>
+#   tag v*           release-notes
+#
+# Exit-code convention: 0 pass, 1 findings, 2 error. The pull-request steps let
+# findings fail the build so drift is visible; the branch/tag steps swallow
+# exit 1 (`|| [ $? -eq 1 ]`) because documentation drift must never gate a
+# deploy, while a broken setup (exit 2) still fails.
 
 image: golang:1.25
+
+# release-notes, `check docs --ai` and `--since` all walk git history.
+clone:
+  depth: full
 
 definitions:
   steps:
@@ -17,22 +28,69 @@ definitions:
         script:
           - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
           - export PATH="$PATH:$(go env GOPATH)/bin"
-          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://gravity.dave-vermette-1.workers.dev}"
+          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravitydocs.io}"
           - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
           # GRAVITY_TOKEN is injected from the secured repository variable.
           - gravity check docs --ci --format text
+
     - step: &gravity-check-api
         name: Gravity API drift check
         script:
           - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
           - export PATH="$PATH:$(go env GOPATH)/bin"
+          # Drop --openapi to verify each api block's source-binding hash
+          # instead of diffing a spec.
           - gravity check api --openapi openapi.yaml --ci --format text
+
+    - step: &gravity-sync
+        name: Gravity sync
+        # Bitbucket serializes steps that target the same deployment
+        # environment. Create one named gravity-docs-live in repository settings
+        # and uncomment this so two pushes cannot race on page attribution
+        # (last-writer-wins) or on the declarative inventory.
+        # deployment: gravity-docs-live
+        script:
+          - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
+          - export PATH="$PATH:$(go env GOPATH)/bin"
+          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravitydocs.io}"
+          - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
+          # ping registers/refreshes this repo (branch, commit, manifest) so
+          # attribution and coverage see the right revision.
+          - gravity ping
+          # sync first: it shapes spaces/collections/home pages so generated
+          # pages land in an existing structure.
+          - gravity sync --ci || [ $? -eq 1 ]
+
+    - step: &gravity-generate
+        name: Gravity docs generate
+        script:
+          - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
+          - export PATH="$PATH:$(go env GOPATH)/bin"
+          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravitydocs.io}"
+          - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
+          # The incremental base is the previous SUCCESSFUL run's commit, never
+          # HEAD~1 — a failed or skipped run must not leave a permanent gap.
+          # Bitbucket has no built-in for that, so the step reads a `docs-synced`
+          # marker tag; with no tag it falls back to a full survey, which is
+          # always correct, only slower.
+          - git fetch --tags --quiet || true
+          - SINCE="$(git rev-parse --verify --quiet 'docs-synced^{commit}' || true)"
+          - if [ -n "$SINCE" ]; then gravity docs generate --ci --since "$SINCE" || [ $? -eq 1 ]; else gravity docs generate --ci || [ $? -eq 1 ]; fi
+          # To enable the incremental path, move the marker here on success:
+          #   - git tag -f docs-synced "$BITBUCKET_COMMIT"
+          #   - git push -f origin docs-synced
+          # --min defaults to coverage.min from .gravity.yaml.
+          - gravity coverage --ci --format text || [ $? -eq 1 ]
 
 pipelines:
   pull-requests:
     "**":
       - step: *gravity-check-docs
       - step: *gravity-check-api
+  branches:
+    main:
+      - step: *gravity-sync
+      - step: *gravity-generate
   tags:
     "v*":
       - step:
@@ -40,4 +98,6 @@ pipelines:
           script:
             - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
             - export PATH="$PATH:$(go env GOPATH)/bin"
-            - gravity release-notes --space changelog --ci --output proposal
+            - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravitydocs.io}"
+            - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
+            - gravity release-notes --space changelog --ci --output proposal || [ $? -eq 1 ]

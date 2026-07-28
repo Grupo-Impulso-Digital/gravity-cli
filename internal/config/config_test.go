@@ -11,32 +11,26 @@ import (
 
 func TestResolvePrecedence_EnvBeatsFile(t *testing.T) {
 	dir := t.TempDir()
-	// Project file sets a site + apiUrl (never a token — see TestProjectTokenRejected).
 	writeYAML(t, filepath.Join(dir, config.ProjectFileName), "site: file-site\napiUrl: https://file\n")
 
-	// Isolate the user-level config so a real one on disk can't interfere.
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	t.Setenv(config.EnvSite, "env-site")
-	t.Setenv(config.EnvToken, "")  // empty env should NOT override
-	t.Setenv(config.EnvAPIURL, "") // empty env should NOT override file
+	t.Setenv(config.EnvToken, "")
+	t.Setenv(config.EnvAPIURL, "")
 
 	cfg, err := config.Resolve(config.Flags{}, dir)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	// Env wins for site.
 	if cfg.Site != "env-site" {
 		t.Errorf("env should beat file for site; got %q", cfg.Site)
 	}
-	// File still applies where env is empty.
 	if cfg.APIURL != "https://file" {
 		t.Errorf("file value should survive when env is empty; got %q", cfg.APIURL)
 	}
 }
 
-// TestProjectTokenRejected asserts the hardening: a token committed to the
-// project file is a loud error, never silently honored.
 func TestProjectTokenRejected(t *testing.T) {
 	dir := t.TempDir()
 	writeYAML(t, filepath.Join(dir, config.ProjectFileName), "site: file-site\napiUrl: https://file\ntoken: sk_live_leaked\n")
@@ -82,7 +76,6 @@ func TestResolvePrecedence_ProjectBeatsUser(t *testing.T) {
 	projDir := t.TempDir()
 	writeYAML(t, filepath.Join(projDir, config.ProjectFileName), "site: project-site\n")
 
-	// Clear env so files are the deciding factor.
 	t.Setenv(config.EnvSite, "")
 	t.Setenv(config.EnvToken, "")
 	t.Setenv(config.EnvAPIURL, "")
@@ -94,7 +87,6 @@ func TestResolvePrecedence_ProjectBeatsUser(t *testing.T) {
 	if cfg.Site != "project-site" {
 		t.Errorf("project file should provide the site; got %q", cfg.Site)
 	}
-	// User token survives because the project file cannot carry one.
 	if cfg.Token != "user-token" {
 		t.Errorf("user token should survive; got %q", cfg.Token)
 	}
@@ -103,8 +95,6 @@ func TestResolvePrecedence_ProjectBeatsUser(t *testing.T) {
 	}
 }
 
-// TestResolveDefaultAPIURL asserts the canonical default fills in when nothing
-// else sets a URL.
 func TestResolveDefaultAPIURL(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -128,11 +118,9 @@ func writeYAML(t *testing.T, path, content string) {
 func TestUserCredentialsRoundTripAndRemove(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	// Nothing stored yet.
 	if uc, err := config.LoadUserCredentials(); err != nil || uc != nil {
 		t.Fatalf("expected (nil,nil) for absent creds, got (%v,%v)", uc, err)
 	}
-	// Removing when absent is not an error and reports existed=false.
 	if path, existed, err := config.RemoveUserCredentials(); err != nil || existed {
 		t.Fatalf("remove absent: path=%s existed=%v err=%v", path, existed, err)
 	}

@@ -56,16 +56,10 @@ Output modes:
 			if err != nil {
 				return err
 			}
-			// Resolve the target space with the documented precedence
-			// (flag > env > config); the flag default is empty so GRAVITY_SPACE /
-			// .gravity.yaml are honored. The command default applies only when
-			// nothing else is set.
 			sp := e.cfg.Space
 			if sp == "" {
 				sp = "changelog"
 			}
-			// The agent loop always runs through the gateway, so auth is
-			// required for every output mode.
 			if err := e.requireAuth(); err != nil {
 				return err
 			}
@@ -116,9 +110,6 @@ Output modes:
 	return cmd
 }
 
-// logWriter returns where progress logs go. Logs always go to stderr (whether
-// or not --ci is set) so stdout stays clean for machine consumption; the ci
-// flag is retained for callers that want to vary verbosity in the future.
 func logWriter(cmd *cobra.Command, ci bool) io.Writer {
 	_ = ci
 	return cmd.ErrOrStderr()
@@ -132,7 +123,6 @@ func defaultTitle(rng git.Range) string {
 	return to
 }
 
-// runReleaseNotesAgent runs the agent loop and returns the parsed submission.
 func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, logw io.Writer, mctx *api.MessagesContext) (*agent.ReleaseNotesInput, error) {
 	tools := append(agent.GitTools(repo), agent.SubmitReleaseNotesTool())
 	runner := &agent.Runner{
@@ -242,21 +232,17 @@ func renderReleaseNotesMarkdown(notes *agent.ReleaseNotesInput) string {
 	return b.String()
 }
 
-// prependChangelog inserts md at the top of the changelog (after any leading
-// title), creating the file if needed.
 func prependChangelog(path, md string) error {
 	existing, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
-		// New file.
 		header := "# Changelog\n\n"
 		return os.WriteFile(path, []byte(header+md), 0o644)
 	}
 
 	content := string(existing)
-	// If the file starts with a top-level "# " title, keep it on top.
 	if strings.HasPrefix(content, "# ") {
 		if idx := strings.Index(content, "\n"); idx >= 0 {
 			head := content[:idx+1]

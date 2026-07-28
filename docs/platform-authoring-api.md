@@ -1,37 +1,203 @@
-# Platform contract: authoring API consumed by `gravity sync`
+# Platform contract: the API `gravity` speaks (v2)
 
-This documents the platform endpoints and block semantics the CLI relies on to
-author **customer** documentation (not the CLI's own docs — `selfdoc` is gone).
-The canonical, shipped contract lives in the `gravity` repo
-(`docs/cli-api-contract.md`); this file is the CLI-side view.
+This is the CLI-side view of the platform endpoints the `gravity` binary calls to
+author **customer** documentation, register itself, and report coverage. The
+canonical, shipped contract lives in the `gravity` repo
+(`docs/cli-api-contract.md`); this file mirrors it and adds the CLI's side of each
+exchange (which command sends what, and how it degrades).
 
-**Audience:** the Gravity platform (Workers app).
-**Consumer:** `gravity sync` (and `gravity release-notes`).
+**Audience:** CLI contributors and the Gravity platform team.
+**Consumer:** `gravity sync`, `docs generate`, `coverage`, `repos`, `ping`,
+`capture`, `check api`, `check docs`, `release-notes`, `nucleus`.
 
 ## Conventions (already assumed by `internal/api`)
 
 - Base + auth: `https://<host>/api/v1/...`, `Authorization: Bearer sk_live_…`,
   scoped to the key's org. `/app` is the dashboard SPA, not the API.
 - Error envelope: non-2xx returns `{"error":{"code":"...","message":"..."}}`.
-- Governance: machine writes never publish — they create a **draft + open
-  proposal** and return `{ pageId, pageSlug, proposalId, status, reviewUrl }`.
+  `(*APIError).IsUnavailable()` treats `not_implemented` / `feature_disabled` /
+  `unknown_route` (and 404/501/412 on a preview route) as "skip with a notice".
+- Governance: machine **content** writes never publish — they create a
+  **draft + open proposal** and return
+  `{ pageId, pageSlug, proposalId, status, reviewUrl }`. Repo registration,
+  inventory, attribution and translation requests are **metadata** writes and land
+  directly.
+- Exit codes: `0` pass · `1` findings · `2` operational error. v2 adds none.
 
-## Endpoints `gravity sync` uses (all shipped)
+## Endpoint map
 
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/api/v1/sites/:site/spaces` | idempotent ensure-space (on slug); `parent` nests/reparents a subspace* |
-| `PATCH` | `/api/v1/sites/:site/spaces/:space` | partial update; `homePage` pins the space's overview page, `parent` reparents* |
-| `POST` | `/api/v1/sites/:site/pages` | upsert a page's blocks → draft + proposal; `collection` files it under a page folder (get-or-create)* |
-| `POST` | `/api/v1/sites/:site/release-notes` | versioned release page (used by `documents.as=release`, via `bodyMarkdown`) |
+| Method | Path | Used by | Feature flag |
+|---|---|---|---|
+| `GET` | `/api/v1/whoami` | `doctor`, every gated command | — |
+| `POST` | `/api/v1/setup/ping` | `ping`, `repos` | — (v2 fields degrade) |
+| `GET` | `/api/v1/sites` | `sites`, `init` | — |
+| `GET` | `/api/v1/sites/:site` | `sync`, `docs generate`, `nucleus` | — |
+| `POST` | `/api/v1/sites/:site/spaces` | `sync`, `spaces`, `init` | `space-hierarchy` for `parent` |
+| `PATCH` | `/api/v1/sites/:site/spaces/:space` | `sync` | `space-hierarchy` |
+| `GET` | `/api/v1/sites/:site/pages` | `sync`, `docs generate`, `check docs`, `coverage` | — (`repo=`/`languages=1` are v2) |
+| `GET` | `/api/v1/sites/:site/spaces/:space/pages/:page` | `check docs` | — |
+| `GET` | `/api/v1/sites/:site/api-blocks` | `check api` | — |
+| `POST` | `/api/v1/sites/:site/pages` | `sync`, `docs generate` | `repos` / `page-languages` for the v2 fields |
+| `POST` | `/api/v1/sites/:site/release-notes` | `release-notes`, `sync` (`as: release`) | same |
+| `POST` | `/api/v1/sites/:site/inventory` | `docs generate` | `inventory` |
+| `GET` | `/api/v1/sites/:site/coverage` | `coverage` | `coverage` |
+| `POST` | `/api/v1/sites/:site/doc-agent/runs` | `capture` | `doc-agent-runs` |
+| `GET` | `/api/v1/sites/:site/doc-agent/runs/:runId` | `capture`, `capture status` | `doc-agent-runs` |
+| `POST` | `/api/v1/nucleus/recall` · `/api/v1/sites/:site/nucleus/recall` | `nucleus query`, agent kickoffs | `memory` module |
+| `POST` | `/api/v1/nucleus/memories` | `nucleus sync` | `memory` module |
+| `POST` | `/api/llm/v1/messages` · `GET /api/llm/v1/config` · `GET /api/llm/v1/prompts/:name` | every AI command | `prompt-endpoint` |
 
-\* Hierarchy fields require `whoami.features["space-hierarchy"]` (see below);
-the CLI omits them entirely when the flag is absent.
+## `whoami.features`
 
-Read side (`check api`/`check docs`): `GET /api/v1/sites/:site`,
-`…/pages?space=`, `…/api-blocks` — unchanged in shape, except the site tree now
-returns each space's `parentSpaceId`/`overviewPageId`, each collection's
-`spaceId`/`spaceSlug`, and each page's `collectionId` (all nullable).
+```jsonc
+{
+  // v1
+  "block-audience":  true,  // blocks accept + return `audiences`
+  "prompt-endpoint": true,  // GET /api/llm/v1/prompts/:name
+  "docs-generate":   true,  // the server side of `gravity docs generate`
+  "space-hierarchy": true,  // subspaces, home pages, page-upsert collections
+  // v2
+  "repos":          true,   // connected_repo: ping registration + `repo` on writes
+  "inventory":      true,   // POST /api/v1/sites/:site/inventory
+  "coverage":       true,   // GET  /api/v1/sites/:site/coverage
+  "doc-agent-runs": true,   // POST/GET /api/v1/sites/:site/doc-agent/runs[/:runId]
+  "page-languages": true    // page upsert `languages` + page read `languages[]`
+}
+```
+
+The constants live in `internal/cli/feature.go`. `gravity doctor` prints one line
+per flag. The same map is echoed as `serverFeatures` on the ping response, so
+`gravity ping` needs one round-trip.
+
+Degradation per flag:
+
+| Flag absent | CLI behavior |
+|---|---|
+| `repos` | `repo` is stripped from every write; `myRemoteKey` stays empty, so orphan/duplicate detection reverts to the pre-v2 site-wide form. One notice. |
+| `inventory` | `docs generate` prints one notice and skips the inventory POST; authoring is unaffected. |
+| `coverage` | `gravity coverage` reports unavailability and exits `0` (`--require` ⇒ exit `2`). |
+| `doc-agent-runs` | `gravity capture` reports unavailability and exits `0` (`--require` ⇒ exit `2`); a `412 feature_disabled` from the route behaves the same. |
+| `page-languages` | `languages` is stripped from every write. One notice. |
+| `space-hierarchy` | `collection` stripped, no `parent`/`homePage`. One notice. Shared-space slugs stay prefixed either way. |
+| `block-audience` | blocks are authored with no `audiences`, so they render to everyone. |
+
+## Repo identity — `remoteKey`
+
+`internal/git.NormalizeRemoteKey` reduces a git remote to the stable identity the
+platform keys `connected_repo` on. It is **idempotent**, so a value an older CLI
+already normalized re-normalizes unchanged server-side. Only the host is
+lowercased — some self-hosted forges are case-sensitive, where `acme/Orbit` is
+not `acme/orbit`.
+
+```
+https://GitHub.com/Acme/orbit-api.git   ┐
+git@github.com:Acme/orbit-api.git       ├─→ github.com/Acme/orbit-api
+ssh://git@github.com:22/Acme/orbit-api  │
+https://u:p@github.com/Acme/orbit-api/  ┘
+```
+
+With no git remote (fresh `git init`, tarball checkout, vendored subtree) the CLI
+falls back to `product.slug + "/" + product.repo` from the resolved manifest and
+reports `repo.remoteKeySource: "config"`. With neither, the repo has **no
+identity**: writes go out unattributed and every repo-scoped behavior degrades to
+its pre-v2 form. `internal/cli.localRepoRef` is the one place that resolves this.
+
+## `POST /api/v1/setup/ping` — handshake + repo registration
+
+Sent by `gravity ping` and `gravity repos` (running `repos` therefore also
+refreshes the registration). It carries the CLI build, the connection config, git
+facts, the **fully-resolved manifest as JSON** (`configFull`), the **raw manifest
+text** (`configYaml`), and a counts-only `docSources` summary for the web wizard.
+Neither config field can carry a token: `config.Project` has no token field and a
+committed `token:` is rejected at load — and the server redacts defensively
+anyway.
+
+Response adds `serverFeatures`, plus `repo: { id, firstSeenAt }` and `siblings[]`
+when the platform could derive an identity. `firstSeenAt` is the **first ping
+ever** for this repo, not this one. Both `repo` and `siblings` are omitted on a
+v1 platform or when no identity exists — `gravity repos` renders that as "this
+platform does not register repos yet". The ping never fails on a registry
+problem.
+
+`gravity ping` prints org / key / default site / registration / features /
+siblings; `--json` emits `{request, response}`.
+
+## Write attribution
+
+Every authoring write carries `repo: { remoteKey, name? }` when
+`features["repos"]` is set. Server-side, after the content write succeeds:
+the repo row is **created if unknown** (a repo that writes before it pings is
+registered by the write), `page.repoId` is set last-writer-wins,
+`connected_repo.lastWriteAt` is touched, and every inventory unit claiming the
+written slug gets `documentedHash = sourceHash`. All of it is best-effort — it can
+never turn a successful write into an error.
+
+Read side: `GET …/pages`, the site tree's `pages[]`, and the single-page detail
+each project `repoId` and `repoRemoteKey` (both nullable). `GET …/pages?repo=<remoteKey>`
+filters to one repo — an unknown key is `200` with an empty list, not `404`.
+
+Two call sites consume the attribution, and they key off different fields:
+
+- **`gravity sync`** — `reconcilePageTargets` and the duplicate-pruning gate use
+  **`repoRemoteKey`**, because the CLI knows its own remote key locally without a
+  round-trip.
+- **`gravity docs generate`** — `reportOrphans` uses **`repoId`**, recovered by
+  `repoIDFor` from the already-read page list (the first page this repo wrote
+  carries the id). A repo that has never written resolves to `""` and gets the
+  site-wide behavior.
+
+Either way the rule is the same:
+
+| Page's attribution | Behavior |
+|---|---|
+| unattributed (human-authored / pre-v2) | eligible for matching and orphan reporting, as in v1; a duplicate is **reported, not pruned** |
+| this repo's | eligible, as in v1; a duplicate may be auto-proposed for deletion |
+| a sibling repo's | **excluded entirely** — never matched, never orphaned, never pruned |
+
+An empty local identity (no remote and no manifest, or `features["repos"]`
+absent) restores byte-identical v1 behavior. `--keep-duplicates` still suppresses
+all pruning.
+
+## Block model the CLI authors
+
+Blocks: `{ key, type, ownership, audiences?, content, sourceBinding?, position }`.
+
+- **type** — `heading | prose | code | table | api`. (A `markdown` type is
+  expected "soon"; until then `sync` decomposes Markdown into the native types
+  above and falls back to verbatim `prose` for the rest.)
+- **audiences** — optional `string[]` over `public | users | developers`. Empty
+  or absent ⇒ the block renders to **every** viewer. Emitted only when
+  `features["block-audience"]` is set.
+- **ownership** — `machine | hybrid | human`.
+  - `machine`: content is a pure function of `sourceBinding.ref`'s bytes; humans
+    cannot edit it in Gravity. It changes **iff** the source changes.
+  - `hybrid`: machine fields updated, human edits preserved around them.
+  - `human`: seeded once, never overwritten.
+- **key** — stable, identity-derived (`api:<METHOD>:<path>`,
+  `doc:<file>:<section>[:n]`), never positional, so re-authoring produces clean
+  diffs across insertions and reorderings. **`key` is now returned on every page
+  read** (`GET …/pages`, `GET …/spaces/:space/pages/:page`, `GET …/api-blocks`) as
+  an explicit `null` when absent, which closes the v1 idempotency gap. The
+  re-author matcher is **`key` first, then `sourceBinding` `kind:ref`, then
+  create** — the binding fallback stays forever for human-authored and legacy
+  blocks.
+- **sourceBinding** — `{ kind, ref, hash:"sha256:<whole-file>", generator }`.
+  The CLI hashes `ref` with the exact hasher the drift checker recomputes, so an
+  authored machine block passes `check api`/`check docs` immediately and goes
+  stale only when its source file changes. **`kind` must be one of the server's
+  `CODE_SOURCE_KINDS`** (`route|struct|endpoint|schema|config|cli`) for the block
+  to stay machine/hybrid; the CLI emits **`kind:"cli"`** for every repo-file-bound
+  block. AI narrative prose is `hybrid`/`human` and carries **no binding at all**,
+  so the team can edit it freely and it never drift-locks.
+
+### Merge governance the CLI depends on (server-side, shipped)
+
+On upsert the CLI sends **only the blocks it owns**. The platform must:
+match by `key` then `sourceBinding.ref`; replace `machine` blocks from the
+payload; never overwrite `human` blocks; update `hybrid` machine-fields while
+preserving human edits; and **propose removal** (never silently delete) for
+machine blocks absent from the payload. `audiences` is a machine field, so a
+`hybrid` re-author updates the audience set while preserving human body edits.
 
 ## Space hierarchy (`space-hierarchy` feature)
 
@@ -43,188 +209,214 @@ Site → Space (+ one level of Subspace via parentSpaceId)
      → Page → Block
 ```
 
-The CLI consumes it as follows, all gated on `whoami.features["space-hierarchy"]`:
-
-- **`spaces.parent`** (manifest) → `POST /spaces` with `parent` for the default
-  space (parent ensured first). On the existing-space path a differing `parent`
-  REPARENTS the space — declarative, so re-running `gravity sync` converges.
-  One level only; the server 400s deeper nesting.
+- **`spaces.parent`** → `POST /spaces` with `parent` for the default space
+  (parent ensured first). On the existing-space path a differing `parent`
+  REPARENTS the space — declarative, so re-running `gravity sync` converges. One
+  level only; the server 400s deeper nesting.
 - **Shared spaces** (`spaces.shared`) → each page upsert carries
-  `collection: <product.repo>` (explicit mapping `collection:` wins), grouping
-  the repo's pages into a folder the server get-or-creates. The `repo/` slug
-  prefix is KEPT — page identity is `(space, slug)` server-side, so the prefix
-  is what stops sibling repos' same-named pages from upserting onto each other;
-  the collection is presentation.
-- **`spaces.home`** → after authoring, `PATCH /spaces/:space {homePage: <slug>}`
-  pins the page (by its post-reconcile slug) as the space's overview page. The
-  home page must sit flat in the space — the server rejects a collection-filed
-  overview page — so the CLI never prefixes or collects it.
-- **Degradation**: without the feature flag the CLI strips `collection` from
-  upserts, sends no `parent`/`homePage`, and prints one notice. Shared-space
-  slugs stay prefixed either way, so content identity is identical on old and
-  new platforms.
+  `collection: <product.repo>` (an explicit mapping `collection:` wins). The
+  `repo/` slug prefix is KEPT — page identity is `(space, slug)` server-side, so
+  the prefix is what stops sibling repos' same-named pages from upserting onto
+  each other; the collection is presentation. (With `repos` shipped, attribution
+  is the *second* line of defense: a sibling's page is now excluded from
+  reconciliation outright.)
+- **`spaces.home`** → after authoring, `PATCH /spaces/:space {homePage: <slug>}`.
+  The home page must sit flat in the space, so the CLI never prefixes or collects
+  it.
 
-## Block model the CLI authors
+## Feature inventory + coverage
 
-Blocks: `{ key, type, ownership, audiences?, content, sourceBinding?, position }`.
+### `POST /api/v1/sites/:site/inventory` (`docs generate`)
 
-- **type** — `heading | prose | code | table | api`. (A `markdown` type is
-  expected "soon"; until then `sync` decomposes Markdown into the native types
-  above and falls back to verbatim `prose` for the rest.)
-- **audiences** — optional `string[]` over `public | users | developers`. Empty
-  or absent ⇒ the block renders to **every** viewer; otherwise it renders only to
-  viewers in a listed audience. This lets one page mix per-audience blocks (the
-  `gravity docs generate` model). It is **greenfield** (see below): the CLI emits
-  it only when the platform advertises `whoami.features["block-audience"]`, and
-  omits it otherwise so blocks render to everyone. Backward-compatible — existing
-  blocks have no `audiences`.
-- **ownership** — `machine | hybrid | human`.
-  - `machine`: content is a pure function of `sourceBinding.ref`'s bytes; humans
-    cannot edit it in Gravity. The CLI re-authors it deterministically; it
-    changes **iff** the source changes.
-  - `hybrid`: machine fields updated, human edits preserved around them.
-  - `human`: seeded once, never overwritten.
-- **key** — stable, identity-derived (`api:<METHOD>:<path>`,
-  `doc:<file>:<section>[:n]`), never positional, so re-authoring produces clean
-  diffs across insertions/reorderings.
-- **sourceBinding** — `{ kind, ref, hash:"sha256:<whole-file>", generator }`.
-  The CLI hashes `ref` with the exact hasher the drift checker recomputes, so an
-  authored machine block passes `check api`/`check docs` immediately and goes
-  stale only when its source file changes. **`kind` must be one of the server's
-  `CODE_SOURCE_KINDS`** (`route|struct|endpoint|schema|config|cli`) for the block
-  to stay machine/hybrid; the CLI emits **`kind:"cli"`** for every repo-file-bound
-  block (it pins a repo-relative file + sha256). A `machine`/`hybrid` block whose
-  binding kind is unrecognized is **downgraded to `human` and its binding dropped**
-  on write (`src/server/doc-agent-content.ts`), which silently disables drift
-  checking and re-author updates for it.
+After the plan phase and **before authoring** — so a run that dies mid-authoring
+still records what the survey found — `gravity docs generate` publishes the units
+the planner enumerated. Types live in `internal/api/inventory.go`.
 
-### Merge governance the CLI depends on (server-side, shipped)
+```jsonc
+{
+  "repo":  { "remoteKey": "github.com/Acme/orbit-api", "name": "orbit-api" },
+  "generatedAt": "2026-07-27T14:03:11Z",   // sent; the server ignores it
+  "replace": true,
+  "units": [{
+    "key": "svc.billing.invoicing",   // ^[a-z0-9][a-z0-9._-]{0,127}$, stable across runs
+    "kind": "service",                // feature|service|system|api|capability
+    "title": "Invoicing service",
+    "summary": "…",
+    "sourceRefs": ["src/billing/invoice.ts"],
+    "sourceHash": "sha256:…",         // docs.UnitSourceHash over sourceRefs
+    "audiences": ["developers"],
+    "pageSlugs": ["orbit-api/invoicing"]
+  }]
+}
+```
 
-On upsert the CLI sends **only the blocks it owns**. The platform must:
-match by `key` then `sourceBinding.ref`; replace `machine` blocks from the
-payload; never overwrite `human` blocks; update `hybrid` machine-fields while
-preserving human edits; and **propose removal** (never silently delete) for
-machine blocks absent from the payload. Treat `audiences` as a machine field, so
-a `hybrid` re-author updates the audience set while preserving human body edits.
+- `replace: true` is sent by a **full** run and is declarative — units absent
+  from the body are deleted. `replace: false` is sent by `--page` and `--since`
+  runs, which only surveyed a slice of the repo and must not delete what they
+  never looked at.
+- A unit whose `key` fails `agent.UnitKeyPattern` is dropped client-side. A unit
+  with no `kind` inherits `Project.ResolveUnitKind()`.
+- `pageSlugs` are namespaced through the manifest's own page targeting, so they
+  match the slug the platform will actually see in a shared space.
+- Every failure degrades to a notice — a lost inventory must never cost the
+  pages. No repo identity, or a plan with zero units, skips the call entirely.
+  `--no-inventory` skips it unconditionally.
 
-## Open questions for the platform team
+Response: `{ repoId, units: {received, created, updated, unchanged, removed}, coverageUrl }`.
 
-1. **`markdown` block type** — confirm the name/shape so `sync` can target it for
-   the verbatim branch instead of `prose`.
-2. **`position` vs human-inserted blocks** — confirm identity (`key`) wins and
-   human blocks keep their slot when the CLI re-sends machine positions `0..N`.
-3. **`check api` multi-spec scoping** — `…/api-blocks` is site-wide; a per-page
-   or per-spec scope is needed if one site documents several specs.
+### `GET /api/v1/sites/:site/coverage` (`gravity coverage`)
 
----
+Params: `repo=<remoteKey>`, `kind=<one of the five>`. The CLI always requests the
+full projection and shapes output locally; `format=summary` exists server-side
+but the CLI does not use it.
 
-# Greenfield contracts (not yet implemented)
+Unit states, as the platform resolves them:
 
-The CLI already speaks these; it degrades gracefully (404/501 or a
-`not_implemented`/`feature_disabled`/`unknown_route` code → skip + notice, or a
-hard error with `--require`) until the platform ships them. The platform should
-also advertise readiness via `whoami.features` (e.g. `{"captures":true,
-"nucleus":true,"docs-generate":true,"block-audience":true,
-"space-hierarchy":true}`).
+- **`documented`** — some listed `pageSlug` resolves to a page in the site whose
+  `repoId` is null or this repo's.
+- **`stale`** — documented, and the unit's `documentedHash` (stamped by the last
+  page write) differs from its current `sourceHash`.
+- **`undocumented`** — everything else.
 
-## Server-hosted prompts (`gravity` agents)
+`totals.documented` **includes** stale units; `totals.stale` is a subset of it;
+`totals.undocumented = units - documented`; `ratio = documented / units`, and a
+repo with zero units reports `ratio: 1`. `byKind` always lists all five kinds.
+`uncoveredPages` is the reverse view — pages this repo wrote that its inventory
+no longer claims.
 
-- `GET /api/llm/v1/prompts/:name` → `{ name, text, version? }`. Returns the
-  current system prompt for an agent (`release-notes`, `docs-gap`,
-  `nucleus-distill`, `docs-plan`, `docs-author`). The CLI fetches this at the
-  start of each agent command and **falls back to a baked-in default** on any
-  error, so prompts can be tuned server-side without a CLI release. A 404 /
-  `unknown_route` is the expected pre-launch response and is handled silently.
+CLI behavior: `gravity coverage` defaults to **this repo** (scoped by the locally
+derived `remoteKey`), `--all` covers the site, `--repo` names another. The gate
+is `--min`, defaulting to `coverage.min` from `.gravity.yaml`; the ratio is
+recomputed locally from the totals so server-side rounding can never skew it. A
+repo below the bar is a `warn` finding, a missing `coverage.require` page is an
+`error` finding, and both exit `1`. Staleness alone never fails the bar — that is
+`check docs`'s job. Required pages are asserted against the site's published page
+list, not the inventory, because a required page may be human-authored.
 
-## Documentation generation (`gravity docs generate`)
+## Doc Agent runs (`gravity capture`)
 
-- Gated on `whoami.features["docs-generate"]`; absent ⇒ notice + exit 0 (or hard
-  error with `--require`), like capture/nucleus.
-- Produces, per planned page, a `POST /api/v1/sites/:site/pages` upsert whose
-  blocks carry `audiences` (above) and `ownership`. **The CLI binds code only:** a
-  `machine` block (an API block or verbatim/code mirror) is pinned to its source
-  file's sha256 under **`kind:"cli"`** — the only binding kind the server accepts —
-  so `check docs` verifies it; the AI narrative prose around it is `hybrid`/`human`
-  and **carries no binding**, so the team can edit the text freely. Idempotent: the CLI reads existing pages
-  first and reuses block `key`s to update / omits them to propose removal —
-  relying on the merge governance above. **This requires the page read model
-  (`GET …/pages`) to return each block's author `key`** (the CLI keys updates off
-  it); without it, re-runs can duplicate instead of update.
-- **Whole-set durability:** the CLI persists the authored block set to
-  `.gravity/generated/docs.json` **before** syncing and authors targets
-  independently, so a per-block `400` on one page no longer discards the others,
-  and a saved run replays with `gravity docs generate --from <file>` at no AI
-  cost. See "Resilience contract" below for what the server owes here.
-- **Validated against the server (2026-06-27):** `audiences` (write+read), the
-  prompt endpoint, the message gateway (accepts `max_tokens:8192`, no temperature),
-  and `whoami.features` (`docs-generate`, `block-audience`, `prompt-endpoint` all
-  true) are PRESENT and matched. Remaining gaps:
-  1. **Block `key` is not returned on page reads** (`GET …/pages`, `GET …/pages/:slug`):
-     the released `ContentBlock` snapshot has no `key`, so re-author idempotency
-     falls back to matching by `sourceBinding` `kind:ref`; keyless/bindingless prose
-     churns. Server fix: project `key` in the released snapshot + both GET endpoints.
-  2. **RESOLVED — AI prose is unbound; the CLI binds code only.** The server
-     **hard-rejects** a machine/hybrid block whose binding kind is outside
-     `CODE_SOURCE_KINDS` with a `400 bad_request` (`Invalid source binding: Invalid
-     option: expected one …`) — it no longer silently downgrades. The CLI used to
-     emit `kind:"ai"` on hybrid AI prose, which 400'd the whole page. Fixed: only
-     `machine` blocks (API blocks, verbatim/code mirrors) bind — to a single source's
-     sha256 under `kind:"cli"`. Narrative prose (`hybrid`/`human`) carries **no
-     binding at all**, so the team can freely edit the text and it never drift-locks.
-- The server-hosted prompt registry serves `release-notes`, `docs-gap`, `nucleus`,
-  `docs-plan`, `docs-author` (the CLI was aligned from `nucleus-distill` → `nucleus`).
+`gravity capture` is retargeted, not removed. The never-built
+`POST /api/v1/sites/:site/captures` contract is gone; the command now drives the
+platform's Doc Agent, whose target comes from the space's stored
+`tenant_connection` and the run brief. Credentials never leave the platform.
 
-## Resilience contract (server-side hardening the CLI wants)
+- `POST /api/v1/sites/:site/doc-agent/runs` →
+  `202 { runId, status, statusUrl }`. Body:
+  `{ spaceSlug, connectionLabel?, brief?, async, repo? }`.
+- `GET /api/v1/sites/:site/doc-agent/runs/:runId` → `DocAgentRun`
+  (`{ runId, status, statusUrl, spaceSlug, connectionLabel, trigger, proposalId,
+  reviewUrl, error, createdAt, startedAt, finishedAt, stats, artifacts[] }`).
 
-The CLI now survives a partial failure locally (independent per-target authoring +
-a saved, replayable block set). These server changes would make the whole flow
-robust rather than merely recoverable:
+Statuses: `queued | running | succeeded | failed | cancelled`. `succeeded` exits
+`0`; `failed` and `cancelled` exit `1` (the run's `error` is printed). There is no
+`partial` — that was capture-only. `artifacts[]` is capped at the newest 200,
+while `stats.artifacts` counts them all.
+
+Flag mapping:
+
+| v1 flag | v2 |
+|---|---|
+| `--space` | → `spaceSlug` |
+| `--label` | deprecated; sent as `connectionLabel`. Prefer `--connection`. |
+| `--async`, `--timeout`, `--poll-interval`, `--require`, `--ci`, `--format`, `--dry-run` | unchanged |
+| `--url`, `--path`, `--capture`, `--max-pages`, `--auth-secret`, `--attach`, `--release-proposal` | **removed** — hidden flags that hard-error (exit `2`) naming their replacement |
+
+New: `--connection <label>`, `--brief <text>`, `--brief-file <path>` (repo-relative,
+sandboxed through `pathsafe` — a brief is model input and must not become a way to
+read arbitrary CI files). `--brief` and `--brief-file` are mutually exclusive.
+
+Unknown `connectionLabel` is `404` (deliberately not `403` — the label space is
+not an existence oracle). No agent transport configured is
+`412 feature_disabled`, which `IsUnavailable()` already treats as a skip.
+
+## i18n — `languages` on writes, `languages[]` on reads
+
+`i18n.languages` from the manifest is sent on every page upsert (and release-notes
+create) when `features["page-languages"]` is set. Server-side it becomes
+`page.translationLanguages`; on publish the platform takes the **union** of the
+site's own auto-translate targets and the page's request. `[]` clears the request;
+omitting the field leaves it alone.
+
+The read side (`languages[]`: `{ language, status: draft|live, outdated, updatedAt }`)
+is typed in `internal/api` and available on the single-page detail read and on
+`GET …/pages?languages=1`, but **no command requests it yet** and `check docs`
+emits no translation findings.
+
+## Nucleus memory (`gravity nucleus`)
+
+The `/api/v1/knowledge/:namespace/atoms*` contract earlier drafts of this file
+described **never existed**. The shipped surface is:
+
+- `POST /api/v1/sites/:site/nucleus/recall` when a site is resolved, else
+  `POST /api/v1/nucleus/recall`. Body
+  `{ query, limit?, spaceId?, kinds?, tags?, minConfidence? }` → `{ scope, hits[] }`
+  with `score` and `matchedBy`. `spaceId` is the space **id**, resolved from the
+  slug via the site tree and cached for the process; an unresolvable slug drops it
+  and recalls at site scope rather than erroring.
+- `POST /api/v1/nucleus/memories` — `{ title, body, kind?, tags?, confidence?,
+  sources?, scope?, siteSlug?, spaceId? }` → `{ memory, outcome }` with
+  `outcome: created|revised|unchanged` (`201` on create, `200` otherwise).
+  **Idempotent by normalized title at the scope**, which is why the CLI mints no
+  ids and why the distill prompt insists on short, stable noun-phrase titles.
+
+`knowledge.namespace` travels as an `ns:<namespace>` tag on write (plus
+`repo:<product.repo>` when set); repo file provenance travels as a
+`src:<repo-relative-path>` tag, because `sources[]` is a platform-object
+reference (`refType: site|space|page|block`), not a repo path.
+
+> **Not implemented server-side:** the CLI sends a `namespace` field on recall
+> bodies as a soft ranking hint. The platform's recall schemas do not declare it,
+> so zod strips it and it has **no effect** today. It is harmless (no 400) but it
+> is not a contract — do not rely on namespace-boosted ranking.
+
+Everything is best-effort: the `memory` module being disabled is a normal
+`403 forbidden` ("The Nucleus module is not enabled.") that the existing skip path
+handles, and a failed recall returns the original agent kickoff unchanged. There is
+no `featureNucleus` flag.
+
+## Server-hosted prompts
+
+`GET /api/llm/v1/prompts/:name` → `{ name, text, version? }` for `release-notes`,
+`docs-gap`, `nucleus`, `docs-plan`, `docs-author`. The CLI fetches at the start of
+each agent command and **falls back to its baked-in default** on any error, so
+prompts can be tuned server-side without a CLI release.
+
+> **Operational coupling:** the hosted prompt wins over the baked-in one. A hosted
+> `docs-plan` that predates the unit inventory will produce plans with no units,
+> which the CLI reports as "the plan declared no units; skipping the inventory" and
+> which leaves coverage silently at zero. Hosted prompts must be updated in lockstep
+> with the inventory contract.
+
+## Resilience contract (server-side hardening the CLI still wants)
+
+The CLI survives a partial failure locally: `docs generate` persists the authored
+block set to `.gravity/generated/docs.json` **before** syncing and authors each
+target independently, so one page's `400` no longer discards the rest, and a saved
+run replays with `--from <file>` at no AI cost. These server changes would make the
+flow robust rather than merely recoverable:
 
 1. **Actionable validation errors.** `Invalid source binding: Invalid option:
    expected one …` truncates before listing the allowed values and omits which
    field failed. Return the field path and the accepted set (e.g.
    `sourceBinding.kind must be one of route|struct|endpoint|schema|config|cli`).
    The CLI surfaces `error.message` verbatim, so a precise message is self-service.
-2. **Validate the whole block set up front, report all offenders.** A page upsert
-   should 400 with *every* invalid block (index + reason), not just `Block 1`, so
-   one round-trip fixes the page instead of N.
-3. **Atomic or explicitly partial page upsert.** State whether a rejected upsert
-   leaves the page untouched (atomic) or half-applied. The CLI assumes atomic (a
-   failed page = no change); confirm it, or return which blocks landed.
-4. **Return block `key` on page reads** (gap #1) — without it, re-author
-   idempotency degrades to `sourceBinding` matching and keyless prose churns.
-5. **Idempotent proposals.** Re-syncing an unchanged page (e.g. on `--from`
-   replay after a partial failure) should reuse the open proposal, not mint a new
-   one — otherwise replay-to-recover creates duplicate change requests.
+   (The inventory route already does this — it prefixes the failing
+   `units.<i>.<field>` path.)
+2. **Validate the whole block set up front, report all offenders** — one
+   round-trip per page instead of N.
+3. **Atomic or explicitly partial page upsert.** The CLI assumes atomic (a failed
+   page = no change); confirm it, or return which blocks landed.
+4. **Idempotent proposals.** Re-syncing an unchanged page (e.g. a `--from` replay)
+   reuses the open proposal keyed `cli-upsert:<pageId>` — keep it that way, or
+   replay-to-recover mints duplicate change requests.
 
-## Runner / capture (`gravity capture`)
+## Open questions for the platform team
 
-- `POST /api/v1/sites/:site/captures` — launch a run. Body: `CaptureRequest`
-  (`{ spaceSlug, label, target:{url,paths,viewport,authSecretRef}, capture[],
-  scope, attach:{mode,releaseProposalId}, async }`). `authSecretRef` is a
-  platform-stored login recipe — never raw credentials in CI.
-- `GET /api/v1/sites/:site/captures/:runId` — poll status. Returns `CaptureRun`
-  (`{ runId, status(queued|running|succeeded|partial|failed), statusUrl, stats,
-  artifacts[], proposalId, reviewUrl, error }`).
-- Artifacts attach as `machine` `screenshot` blocks with
-  `sourceBinding{kind:"capture"}` as a draft + proposal (governance as above).
-- Open questions: app-auth model, how "new" UI is determined (explicit paths vs
-  baseline diff), run durability/retention, whether `releaseProposalId` can
-  append to an existing open proposal, and that launch returns promptly (queued)
-  rather than blocking past the client's 120s timeout.
-
-## Nucleus memory (`gravity nucleus`)
-
-- `POST /api/v1/knowledge/:namespace/atoms/query` — `{query,tags,site,space,
-  limit}` → `{atoms:[Atom]}`. Used best-effort to enrich agent kickoffs.
-- `POST /api/v1/knowledge/:namespace/atoms` — upsert one `Atom`
-  (`{id,content,links[],tags[],source,scope:{namespace,site,space}}`), idempotent
-  on `id` or `source.ref+hash`; carries `links`, so no separate link endpoint.
-- `namespace` is the product-level key shared by all of a product's repos;
-  `site`/`space` are query filters. Atom retrieval augments (does not replace) the
-  existing `{site,space}` gateway RAG; `MessagesContext.Namespace` lets the
-  gateway do nucleus-aware RAG server-side when ready.
-- Open questions: atom write governance (direct vs proposed), namespace authz for
-  a site-scoped token, retrieval semantics (vector/tag/graph-walk; link
-  expansion), and whether the gateway honors `MessagesContext.Namespace` vs the
-  CLI fetching+injecting.
+1. **`markdown` block type** — confirm the name/shape so `sync` can target it for
+   the verbatim branch instead of `prose`.
+2. **`check api` multi-spec scoping** — `…/api-blocks` is site-wide; a per-page or
+   per-spec scope is needed if one site documents several specs.
+3. **`agent-pages` block `key`** — the other three read endpoints project it; this
+   one does not (it has no `GET` handler today, so nothing depends on it yet).
+4. **Recall `namespace`** — accept it as a soft ranking hint, or tell the CLI to
+   stop sending it.

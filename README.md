@@ -7,9 +7,10 @@ code. In CI it:
 1. **generates release notes** from git history,
 2. **authors machine-owned, code-derived doc blocks** (`sync`) — API reference
    from OpenAPI, and Markdown documents — that change only when the code changes,
-3. **checks API-doc drift and docs completeness** against the code, and
-4. works hand-in-hand with Gravity to **capture the running app** (screenshots)
-   and feed the **nucleus** knowledge service (both preview).
+3. **checks API-doc drift and docs completeness** against the code, and reports
+   **documentation coverage** against the repo's own feature inventory,
+4. works hand-in-hand with Gravity to **trigger a Doc Agent run** against a
+   connected app and to feed the **nucleus** memory service.
 
 Product documentation itself — navigating and documenting a live app — is
 Gravity's own agent runner's job; this CLI is the CI companion that triggers it
@@ -101,7 +102,7 @@ silently honored.
 ```yaml
 version: 1
 site: docs
-apiUrl: https://gravity.dave-vermette-1.workers.dev
+apiUrl: https://app.gravitydocs.io
 product:
   slug: acme-platform   # a product can span several repos sharing one site
   repo: billing-api     # this repo's unique name within the product
@@ -154,7 +155,7 @@ Use `gravity spaces` to see the resulting hierarchy and what feeds it.
 
 ```yaml
 token: sk_live_xxx
-apiUrl: https://gravity.dave-vermette-1.workers.dev
+apiUrl: https://app.gravitydocs.io
 ```
 
 ## Commands
@@ -300,19 +301,31 @@ the code.
 ```bash
 gravity docs generate                      # plan + author all three audiences
 gravity docs generate --audiences public   # one audience
+gravity docs generate --since $LAST_SHA --ci   # CI: only what changed since <ref>
+gravity docs generate --units service,api  # only backend units
 gravity docs generate --page overview --dry-run
 gravity docs generate --output stdout      # preview the block payloads
 gravity docs generate --from .gravity/generated/docs.json  # replay a saved run
 ```
 
-It runs in two phases: a **plan** pass enumerates the product's **feature sets**
-from the code and proposes a page for each (no page cap — coverage is the goal),
-then a per-page **author** pass writes that page's blocks. The plan pass is given
-the site's **existing pages** and the repo's configured **spaces**, so a re-run
-reuses a page's slug when it still covers that feature — updating it in place
-rather than minting a near-synonym and forking the docs — and files each page in
-a space that actually exists. Pages the plan does not cover are left published
-and reported, never silently retired. Audience is a **per-block** attribute,
+It runs in two phases: a **plan** pass inventories the repo's documentable
+**units** — `feature`, `service`, `system`, `api`, `capability` — and proposes a
+page for each (no page cap — coverage is the goal), then a per-page **author**
+pass writes that page's blocks. The default unit kind comes from
+`product.role` (`api`/`service` → `service`, everything else → `feature`), so a
+backend of dozens of services is documented as services with API-first pages,
+not as marketing features. After a successful plan the unit inventory is
+published to the platform, which is what makes `gravity coverage` measurable;
+`--no-inventory` skips that.
+
+The plan pass is given the site's **existing pages** and the repo's configured
+**spaces**, so a re-run reuses a page's slug when it still covers that unit —
+updating it in place rather than minting a near-synonym and forking the docs —
+and files each page in a space that actually exists. A developers-only page is
+routed to the repo's dev/api space when it declares one. Pages the plan does not
+cover are left published and reported, never silently retired (a page attributed
+to a sibling repo is not reported — it is not this repo's to maintain).
+Audience is a **per-block** attribute,
 so one page can carry public, user, and developer blocks and the platform renders
 the ones matching the viewer. Existing pages are read first, so a re-run updates
 blocks in place (reusing keys) and proposes removing ones that are gone, rather
@@ -330,42 +343,92 @@ and server-hosted prompts. Until those ship it reports unavailability and
 **exits 0** (`--require` to fail). When block audiences aren't supported yet,
 blocks are authored without audience tags and render to everyone.
 
-Flags: `--audiences <list>` (default all three), `--page <slug>`, `--space`,
-`--site`, `--output proposal|stdout`, `--dry-run`, `--require`, `--ci`,
-`--save <file>`, `--from <file>` (replay a saved set with no AI cost).
+**`--since <ref>` is the CI mode.** It derives the changed file set from
+`<ref>..HEAD`, limits the survey to it, and re-authors only the pages whose units
+or bound sources changed — every other page is skipped at **zero** LLM cost. An
+empty change set prints `no changes since <ref>` and exits `0`, so a no-op run
+never fails a pipeline. Use the previous **successful** run's commit, never
+`HEAD~1`, or a failed run turns into a permanent documentation gap. `--since` and
+`--from` are mutually exclusive, and a `--since` run publishes its inventory as a
+merge (it only surveyed a slice of the repo, so it never deletes units it did not
+look at).
 
-### `gravity capture` (preview)
+Flags: `--audiences <list>` (default all three), `--since <ref>`,
+`--units <kinds>`, `--no-inventory`, `--page <slug>`, `--space`, `--site`,
+`--output proposal|stdout`, `--dry-run`, `--require`, `--ci`, `--save <file>`,
+`--from <file>` (replay a saved set with no AI cost).
 
-Trigger the Gravity platform's agent runner to navigate an app, capture
-pages/screenshots, and attach them to the docs site as a draft + proposal — e.g.
-after a release, to capture the new UI.
+### `gravity coverage`
 
-```bash
-gravity capture --url https://staging.app --label v1.4.0
-gravity capture --url https://staging.app --release-proposal prop_123   # attach to a release
-gravity capture status run_abc
-```
-
-The platform runner endpoint is not live yet. Until it ships, `capture` reports
-that the feature is unavailable and **exits 0** (so it is safe to add to release
-CI today); pass `--require` to make absence a hard error. When live, a partial
-run (navigation errors) exits `1`, a failed run exits `2`.
-
-### `gravity nucleus` (preview)
-
-Nucleus is the Gravity memory service: small "atoms" of knowledge that link to
-other atoms, so the AI can recall product context without re-reading whole docs.
-A product's repos share one `knowledge.namespace`, composing a single memory.
+Report how much of what this repo says it contains is actually documented.
+`docs generate` publishes a **feature inventory** — the units its plan pass found
+— and `coverage` compares that inventory against the pages the site publishes.
 
 ```bash
-gravity nucleus query "how do webhooks retry?"   # retrieve relevant atoms
-gravity nucleus sync                             # distill atoms from code changes and contribute them
+gravity coverage                      # this repo, text report
+gravity coverage --min 0.8 --ci       # fail CI below 80%
+gravity coverage --all --format json  # every repo publishing to the site
+gravity coverage --kind service       # only backend services
+gravity coverage --repo github.com/Acme/orbit-web   # a sibling repo
 ```
 
-The nucleus API is not live yet; these commands degrade gracefully (exit 0,
-`--require` to fail). Atom retrieval also augments `release-notes` and
-`check docs --ai` generation, strictly best-effort — it can never break those
-commands.
+Each unit is **documented** (a live page covers it), **stale** (documented, but
+the sources it is bound to changed since that page was written), or
+**undocumented** (nothing covers it). Stale units still count as documented — they
+never fail the bar; drift is `check docs`'s job. A repo that has declared no units
+reports 100% (it claims nothing, so nothing is missing). The report also lists
+**unclaimed pages**: pages this repo wrote that its inventory no longer mentions.
+
+By default only this repo is reported — a sibling repo publishing to the same
+site is its own problem. The bar comes from `coverage.min` in `.gravity.yaml`
+unless `--min` overrides it, and every slug in `coverage.require` must exist on
+the site. Below the bar is a warning finding, a missing required page is an error
+finding; both exit `1`. Exit `0` at or above the bar, `2` on auth/network/config.
+Gated on the platform's `coverage` capability: absent, it reports that and exits
+`0` (`--require` to fail).
+
+Flags: `--site <slug>`, `--repo <remoteKey>`, `--kind feature|service|system|api|capability`,
+`--min <0..1>`, `--all`, `--format text|json|github`, `--ci`, `--require`.
+
+### `gravity capture`
+
+Trigger the platform's **Doc Agent** to navigate a connected application and
+write what it finds back as a draft + open proposal — e.g. after a release, to
+refresh the documented UI. The target comes from the space's platform-stored
+connection and the run's brief; credentials never leave the platform.
+
+```bash
+gravity capture --connection staging --brief "Focus on the new billing screens."
+gravity capture --connection staging --brief-file docs/capture-brief.md --async
+gravity capture status dar_abc
+```
+
+Where the platform has no Doc Agent configured, `capture` reports it and
+**exits 0** (safe to add to release CI today); pass `--require` to make absence a
+hard error. A run that fails or is cancelled exits `1`.
+
+The flags of the never-built capture contract — `--url`, `--path`, `--capture`,
+`--max-pages`, `--auth-secret`, `--attach`, `--release-proposal` — are removed;
+passing one exits `2` naming its replacement. `--label` is deprecated and sent as
+`--connection`.
+
+### `gravity nucleus`
+
+Nucleus is the Gravity memory service: small titled facts the AI recalls without
+re-reading whole documents. A product's repos share one `knowledge.namespace`,
+composing a single memory; it travels as an `ns:<namespace>` tag on write and as
+a soft ranking hint on recall.
+
+```bash
+gravity nucleus query "how do webhooks retry?"   # recall the most relevant memories
+gravity nucleus sync                             # distill memories from code changes and contribute them
+```
+
+Memories are **idempotent by title** at their scope: contributing the same title
+revises that memory instead of creating a duplicate. Where the Nucleus module is
+disabled for the organization these commands degrade gracefully (exit 0,
+`--require` to fail). Recall also augments `release-notes` and `check docs --ai`
+generation, strictly best-effort — it can never break those commands.
 
 ### Other commands
 
@@ -396,18 +459,32 @@ commands.
   `/whoami` + `/llm/v1/config`. Exits `2` on a config, auth, or network failure.
 - `gravity ping` — send a one-shot setup handshake to `/api/v1/setup/ping` so the
   Gravity web app (after guiding you through install + `gravity init`) can confirm
-  the token works and surface this repo's resolved configuration: the CLI
-  version/platform, the `.gravity.yaml` connection config (API URL, site, space),
-  and the repo's name/remote/branch. Nothing is written — the server echoes back
-  your organization, the token's key hint, and default site. Add `--json` for the
-  full request + response. Exits `2` on an auth or network failure.
+  the token works, **and register this repo against the site it publishes to**. It
+  reports the CLI version/platform, the `.gravity.yaml` connection config (API
+  URL, site, space), the repo's name/remote/branch/commit, the fully-resolved
+  manifest and its raw text (neither can carry a token — `.gravity.yaml`
+  structurally cannot hold one), and a counts-only summary of what this repo
+  documents. No documentation is written; the server echoes back your
+  organization, the key hint, the default site, this repo's registration, the
+  sibling repos on the same site, and the platform's capability flags. Add
+  `--json` for the full request + response. Exits `2` on an auth or network
+  failure.
+- `gravity repos` — list the repos publishing to this site: this one (with its
+  registration id, first-seen date and branch) plus its **siblings** — the other
+  repos in the organization whose docs land on the same site, each with the spaces
+  it declares, the collections its pages are filed under, when it last pinged and
+  last wrote, and its CLI version. It runs the same handshake `ping` does, so it
+  also refreshes this repo's registration. `--json` for the machine shape. On a
+  platform that predates the repo registry — or in a checkout with no git remote
+  **and** no `product.slug`/`product.repo` — it says so and lists no siblings.
+  Exits `2` on an auth or network failure.
 
 ## Exit codes
 
 | Code | Meaning  |
 | ---- | -------- |
 | `0`  | success / no findings |
-| `1`  | findings (drift, gaps, stale bindings) |
+| `1`  | findings (drift, gaps, stale bindings, coverage below the bar) |
 | `2`  | error (auth, network, bad input) |
 
 ## CI

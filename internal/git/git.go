@@ -1,6 +1,4 @@
-// Package git wraps the system `git` binary (via os/exec). It deliberately
-// avoids a pure-Go git implementation so behavior matches whatever git CI
-// already has. All operations are read-only and run within a fixed repo root.
+// Package git wraps the system `git` binary.
 package git
 
 import (
@@ -18,8 +16,7 @@ type Repo struct {
 	Root string
 }
 
-// Open verifies that dir is inside a git work tree and returns a Repo rooted at
-// its top level.
+// Open verifies that dir is inside a git work tree.
 func Open(ctx context.Context, dir string) (*Repo, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -32,7 +29,6 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 	return &Repo{Root: strings.TrimSpace(out)}, nil
 }
 
-// run executes git in dir and returns stdout, wrapping failures with stderr.
 func run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
@@ -57,7 +53,6 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 func (r *Repo) LatestTag(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "describe", "--tags", "--abbrev=0")
 	if err != nil {
-		// No tags is not an error for our purposes.
 		if strings.Contains(err.Error(), "No names found") ||
 			strings.Contains(err.Error(), "cannot describe") ||
 			strings.Contains(err.Error(), "No tags can describe") {
@@ -78,12 +73,10 @@ func (r *Repo) FirstCommit(ctx context.Context) (string, error) {
 	if len(lines) == 0 {
 		return "", errors.New("repository has no commits")
 	}
-	// In the presence of multiple roots, take the last (oldest listed).
 	return lines[len(lines)-1], nil
 }
 
-// CurrentBranch returns the checked-out branch name, or "HEAD" when the repo is
-// in a detached-HEAD state (the value git itself reports).
+// CurrentBranch returns the checked-out branch name.
 func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
@@ -92,9 +85,7 @@ func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// RemoteURL returns the fetch URL of a remote, preferring "origin" and falling
-// back to the first configured remote. A repo with no remotes is not an error —
-// it returns "" — since ping/setup callers treat the remote as best-effort.
+// RemoteURL returns the fetch URL of a remote, preferring "origin".
 func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
 	list, err := r.git(ctx, "remote")
 	if err != nil {
@@ -132,7 +123,6 @@ func (rg Range) String() string {
 }
 
 // ResolveRange determines the effective range given optional from/to overrides.
-// Defaults: from = latest tag (or first commit if no tags), to = HEAD.
 func (r *Repo) ResolveRange(ctx context.Context, from, to string) (Range, error) {
 	rng := Range{From: from, To: to}
 	if rng.To == "" {
@@ -162,8 +152,7 @@ type Commit struct {
 	Subject string
 }
 
-// Log returns the commits in (from, to]. If from is empty the full history of
-// to is returned. maxCount <= 0 means no limit.
+// Log returns the commits in (from, to].
 func (r *Repo) Log(ctx context.Context, from, to string, maxCount int) ([]Commit, error) {
 	if to == "" {
 		to = "HEAD"
@@ -206,8 +195,7 @@ func (r *Repo) LogOneline(ctx context.Context, from, to string, maxCount int) (s
 	return r.git(ctx, args...)
 }
 
-// Diff returns the unified diff between from and to, optionally limited to a
-// path.
+// Diff returns the unified diff between from and to.
 func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) {
 	if to == "" {
 		to = "HEAD"
@@ -254,7 +242,6 @@ func (r *Repo) Grep(ctx context.Context, pattern, glob string) (string, error) {
 	}
 	out, err := r.git(ctx, args...)
 	if err != nil {
-		// git grep exits 1 when there are no matches; treat as empty.
 		if strings.TrimSpace(out) == "" {
 			return "", nil
 		}
@@ -263,9 +250,6 @@ func (r *Repo) Grep(ctx context.Context, pattern, glob string) (string, error) {
 	return out, nil
 }
 
-// rangeArg renders a log or diff range. An empty from means "all history up to
-// to" (for log) or "everything reachable from to" (for diff); a non-empty from
-// produces the from..to form, which git accepts for both log and diff.
 func rangeArg(from, to string) string {
 	if from == "" {
 		return to

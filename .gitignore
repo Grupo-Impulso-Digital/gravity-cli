@@ -1,6 +1,8 @@
 /bin/
 *.out
 *.test
-.gravity.yaml
+# .gravity.yaml is committed on purpose — CI reads it, and it structurally
+# cannot carry a token (LoadProject rejects a committed `token:`). Only the
+# generated cache below is ignored.
 .gravity/
 dist/

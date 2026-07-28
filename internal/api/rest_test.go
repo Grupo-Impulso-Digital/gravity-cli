@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
@@ -267,7 +268,6 @@ func TestEnsureSpaceRequestShape(t *testing.T) {
 		if err := json.Unmarshal(body, &captured); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		// The server wraps the space in an envelope: { space: {...} }.
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"space": map[string]any{"id": "sp_1", "slug": "cli", "name": "Gravity CLI"},
 		})
@@ -367,12 +367,10 @@ func TestUpsertPageRequestShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert page: %v", err)
 	}
-	// Response decodes into *ReleaseNotesResponse.
 	if resp.PageSlug != "command-reference" || resp.Status != "proposed" || resp.ProposalID != "prop_2" {
 		t.Errorf("unexpected response: %+v", resp)
 	}
 
-	// Top-level page fields.
 	if captured["spaceSlug"] != "cli" || captured["slug"] != "command-reference" || captured["title"] != "Command reference" {
 		t.Errorf("page envelope not shaped correctly: %+v", captured)
 	}
@@ -463,6 +461,297 @@ func TestUpsertPageError(t *testing.T) {
 	}
 	if apiErr.Code != "invalid_block" || apiErr.Message != "block 0 has invalid type" {
 		t.Errorf("envelope not parsed: code=%q msg=%q", apiErr.Code, apiErr.Message)
+	}
+}
+
+func TestSetupPingV2RoundTrip(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/setup/ping" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		_, _ = w.Write([]byte(`{
+			"ok": true, "organizationName": "Acme", "keyHint": "a1b2", "defaultSiteSlug": "orbit",
+			"repo": {"id": "cr_9f13", "firstSeenAt": "2026-05-02T11:04:19.220Z"},
+			"siblings": [{
+				"name": "orbit-web", "productSlug": "orbit", "remoteKey": "github.com/Acme/orbit-web",
+				"spaces": ["platform", "guides"], "collections": ["orbit-web"],
+				"lastPingAt": "2026-07-26T09:12:00.000Z", "lastWriteAt": "2026-07-26T09:14:31.881Z",
+				"cliVersion": "0.6.0"
+			}],
+			"serverFeatures": {"repos": true, "inventory": true, "page-languages": false}
+		}`))
+	}))
+	defer srv.Close()
+
+	resp, err := api.New(srv.URL, "tok").SetupPing(context.Background(), api.SetupPingRequest{
+		CLI:    api.PingCLI{Version: "0.6.0", OS: "darwin", Arch: "arm64"},
+		Config: api.PingConfig{APIURL: "https://docs.acme.com", Site: "orbit", Space: "platform"},
+		Repo: api.PingRepo{
+			Name: "orbit-api", Remote: "github.com/Acme/orbit-api", Branch: "live",
+			Commit: "9f2c1ab4e7d0", RemoteKeySource: api.RemoteKeySourceRemote,
+		},
+		ConfigFull: map[string]any{"version": 1, "site": "orbit"},
+		ConfigYAML: "version: 1\nsite: orbit\n",
+		DocSources: &api.PingDocSources{
+			Sources: 1, Documents: 1,
+			Spaces: []string{"platform", "changelog"}, Kinds: []string{"openapi"},
+			Languages: []string{"fr", "es"}, Units: "service",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SetupPing: %v", err)
+	}
+
+	repo, _ := captured["repo"].(map[string]any)
+	if repo["commit"] != "9f2c1ab4e7d0" || repo["remoteKeySource"] != "remote" {
+		t.Errorf("repo not shaped correctly: %+v", repo)
+	}
+	if captured["configYaml"] != "version: 1\nsite: orbit\n" {
+		t.Errorf("configYaml = %v", captured["configYaml"])
+	}
+	if _, ok := captured["configFull"].(map[string]any); !ok {
+		t.Errorf("configFull = %v", captured["configFull"])
+	}
+	docSources, _ := captured["docSources"].(map[string]any)
+	if docSources["units"] != "service" || docSources["sources"] != float64(1) {
+		t.Errorf("docSources = %+v", docSources)
+	}
+
+	if resp.Repo == nil || resp.Repo.ID != "cr_9f13" || resp.Repo.FirstSeenAt == "" {
+		t.Fatalf("repo registration = %+v", resp.Repo)
+	}
+	if len(resp.Siblings) != 1 {
+		t.Fatalf("siblings = %+v", resp.Siblings)
+	}
+	sib := resp.Siblings[0]
+	if sib.Name != "orbit-web" || sib.RemoteKey != "github.com/Acme/orbit-web" || sib.CLIVersion != "0.6.0" {
+		t.Errorf("sibling = %+v", sib)
+	}
+	if len(sib.Spaces) != 2 || len(sib.Collections) != 1 {
+		t.Errorf("sibling spaces/collections = %+v", sib)
+	}
+	if !resp.ServerFeatures["repos"] || resp.ServerFeatures["page-languages"] {
+		t.Errorf("serverFeatures = %+v", resp.ServerFeatures)
+	}
+}
+
+func TestSetupPingV1PlatformOmitsV2Fields(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		_, _ = w.Write([]byte(`{"ok":true,"organizationName":"Acme","keyHint":"a1b2","defaultSiteSlug":"orbit"}`))
+	}))
+	defer srv.Close()
+
+	resp, err := api.New(srv.URL, "tok").SetupPing(context.Background(), api.SetupPingRequest{
+		CLI:    api.PingCLI{Version: "0.6.0"},
+		Config: api.PingConfig{APIURL: "https://docs.acme.com"},
+		Repo:   api.PingRepo{Name: "orbit-api"},
+	})
+	if err != nil {
+		t.Fatalf("SetupPing: %v", err)
+	}
+	if resp.Repo != nil || resp.Siblings != nil || resp.ServerFeatures != nil {
+		t.Errorf("v1 response should decode with empty v2 fields: %+v", resp)
+	}
+	for _, key := range []string{"configFull", "configYaml", "docSources"} {
+		if _, present := captured[key]; present {
+			t.Errorf("%s should be omitted when unset; got %v", key, captured[key])
+		}
+	}
+	repo, _ := captured["repo"].(map[string]any)
+	for _, key := range []string{"commit", "remoteKeySource"} {
+		if _, present := repo[key]; present {
+			t.Errorf("repo.%s should be omitted when unset; got %v", key, repo[key])
+		}
+	}
+}
+
+func TestListPagesFilters(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		_, _ = w.Write([]byte(`{"pages":[{
+			"id": "p1", "slug": "orbit-api/invoicing", "title": "Invoicing", "spaceSlug": "platform",
+			"version": 2, "releasedAt": "2026-07-01", "blocks": [],
+			"repoId": "cr_9f13", "repoRemoteKey": "github.com/Acme/orbit-api",
+			"languages": [
+				{"language": "fr", "status": "live", "outdated": false, "updatedAt": "2026-07-20T00:00:00.000Z"},
+				{"language": "es", "status": "draft", "outdated": true, "updatedAt": "2026-06-02T00:00:00.000Z"}
+			]
+		}]}`))
+	}))
+	defer srv.Close()
+
+	pages, err := api.New(srv.URL, "tok").ListPages(context.Background(), "orbit", api.PageListOptions{
+		SpaceSlug: "platform",
+		Repo:      "github.com/Acme/orbit-api",
+		Languages: true,
+	})
+	if err != nil {
+		t.Fatalf("ListPages: %v", err)
+	}
+	if gotQuery.Get("space") != "platform" {
+		t.Errorf("space = %q", gotQuery.Get("space"))
+	}
+	if gotQuery.Get("repo") != "github.com/Acme/orbit-api" {
+		t.Errorf("repo = %q", gotQuery.Get("repo"))
+	}
+	if gotQuery.Get("languages") != "1" {
+		t.Errorf("languages = %q", gotQuery.Get("languages"))
+	}
+	if len(pages) != 1 {
+		t.Fatalf("pages = %+v", pages)
+	}
+	p := pages[0]
+	if p.RepoID == nil || *p.RepoID != "cr_9f13" {
+		t.Errorf("repoId = %v", p.RepoID)
+	}
+	if p.RepoRemoteKey == nil || *p.RepoRemoteKey != "github.com/Acme/orbit-api" {
+		t.Errorf("repoRemoteKey = %v", p.RepoRemoteKey)
+	}
+	if len(p.Languages) != 2 {
+		t.Fatalf("languages = %+v", p.Languages)
+	}
+	if p.Languages[0].Language != "fr" || p.Languages[0].Status != "live" || p.Languages[0].Outdated {
+		t.Errorf("languages[0] = %+v", p.Languages[0])
+	}
+	if !p.Languages[1].Outdated || p.Languages[1].Status != "draft" {
+		t.Errorf("languages[1] = %+v", p.Languages[1])
+	}
+}
+
+func TestPagesUnattributedStayNil(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"pages":[{"id":"p1","slug":"intro","title":"Intro","spaceSlug":"docs",
+			"version":1,"releasedAt":"","blocks":[],"repoId":null,"repoRemoteKey":null}]}`))
+	}))
+	defer srv.Close()
+
+	pages, err := api.New(srv.URL, "tok").Pages(context.Background(), "orbit", "")
+	if err != nil {
+		t.Fatalf("Pages: %v", err)
+	}
+	if pages[0].RepoID != nil || pages[0].RepoRemoteKey != nil {
+		t.Errorf("expected nil attribution, got %v / %v", pages[0].RepoID, pages[0].RepoRemoteKey)
+	}
+	if pages[0].Languages != nil {
+		t.Errorf("expected no languages projection, got %+v", pages[0].Languages)
+	}
+}
+
+func TestAPIBlocksKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"blocks":[
+			{"pageId":"p1","pageSlug":"users","spaceSlug":"api","blockId":"b1",
+			 "key":"api:GET:/v1/users","ownership":"machine",
+			 "content":{"method":"GET","path":"/v1/users","summary":"List users"}},
+			{"pageId":"p1","pageSlug":"users","spaceSlug":"api","blockId":"b2",
+			 "key":null,"ownership":"human",
+			 "content":{"method":"POST","path":"/v1/users","summary":"Create"}}
+		]}`))
+	}))
+	defer srv.Close()
+
+	blocks, err := api.New(srv.URL, "tok").APIBlocks(context.Background(), "orbit")
+	if err != nil {
+		t.Fatalf("APIBlocks: %v", err)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %+v", blocks)
+	}
+	if blocks[0].Key != "api:GET:/v1/users" {
+		t.Errorf("block key = %q", blocks[0].Key)
+	}
+	if blocks[1].Key != "" {
+		t.Errorf("null key should decode to empty, got %q", blocks[1].Key)
+	}
+}
+
+func TestUpsertPageRepoAndLanguages(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		_ = json.NewEncoder(w).Encode(map[string]any{"pageSlug": "invoicing", "status": "proposed"})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "tok")
+	_, err := c.UpsertPage(context.Background(), "orbit", api.PageUpsertRequest{
+		SpaceSlug: "platform", Slug: "invoicing", Title: "Invoicing",
+		Blocks:    []api.BlockInput{{Key: "a", Type: "prose", Ownership: "machine", Content: map[string]any{"text": "x"}}},
+		Repo:      &api.RepoRef{RemoteKey: "github.com/Acme/orbit-api", Name: "orbit-api"},
+		Languages: []string{"fr", "es"},
+	})
+	if err != nil {
+		t.Fatalf("upsert page: %v", err)
+	}
+	repo, ok := captured["repo"].(map[string]any)
+	if !ok || repo["remoteKey"] != "github.com/Acme/orbit-api" || repo["name"] != "orbit-api" {
+		t.Errorf("repo = %v", captured["repo"])
+	}
+	langs, ok := captured["languages"].([]any)
+	if !ok || len(langs) != 2 || langs[0] != "fr" {
+		t.Errorf("languages = %v", captured["languages"])
+	}
+}
+
+func TestUpsertPageOmitsRepoAndLanguagesWhenUnset(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		_ = json.NewEncoder(w).Encode(map[string]any{"pageSlug": "x", "status": "proposed"})
+	}))
+	defer srv.Close()
+
+	_, err := api.New(srv.URL, "tok").UpsertPage(context.Background(), "orbit", api.PageUpsertRequest{
+		SpaceSlug: "platform", Slug: "x", Title: "X",
+	})
+	if err != nil {
+		t.Fatalf("upsert page: %v", err)
+	}
+	for _, key := range []string{"repo", "languages"} {
+		if _, present := captured[key]; present {
+			t.Errorf("%s should be omitted when unset; got %v", key, captured[key])
+		}
+	}
+}
+
+func TestCreateReleaseNotesRepoAndLanguages(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		_ = json.NewEncoder(w).Encode(map[string]any{"pageSlug": "v1-1-0", "status": "proposed"})
+	}))
+	defer srv.Close()
+
+	_, err := api.New(srv.URL, "tok").CreateReleaseNotes(context.Background(), "orbit", api.ReleaseNotesRequest{
+		SpaceSlug: "changelog", Title: "v1.1.0",
+		Repo:      &api.RepoRef{RemoteKey: "github.com/Acme/orbit-api"},
+		Languages: []string{"fr"},
+	})
+	if err != nil {
+		t.Fatalf("create release notes: %v", err)
+	}
+	repo, ok := captured["repo"].(map[string]any)
+	if !ok || repo["remoteKey"] != "github.com/Acme/orbit-api" {
+		t.Errorf("repo = %v", captured["repo"])
+	}
+	if _, present := repo["name"]; present {
+		t.Errorf("repo.name should be omitted when unset; got %v", repo["name"])
+	}
+	langs, ok := captured["languages"].([]any)
+	if !ok || len(langs) != 1 {
+		t.Errorf("languages = %v", captured["languages"])
 	}
 }
 

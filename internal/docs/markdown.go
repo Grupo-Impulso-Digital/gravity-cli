@@ -14,20 +14,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
-// MarkdownPage decomposes a Markdown file into Gravity's native blocks:
-// headings, fenced/indented code, and tables map to their own block types;
-// everything else (paragraphs, lists, quotes, HTML) is preserved verbatim in a
-// prose block. (When the platform ships a `markdown` block type, the verbatim
-// branch can target it instead.) It returns the blocks and a sniffed title
-// (first H1, else the filename). The first H1 becomes the page title and is NOT
-// also emitted as a heading block — the platform renders the title as the
-// page's main H1, so emitting it would duplicate it at the top of the page.
-//
-// ownership is machine | hybrid | human (default human). A hand-authored
-// document is human by default so it stays editable in Gravity; pass machine
-// only for a verbatim/code mirror that should be drift-locked and not editable.
-// machine/hybrid blocks bind to the source file (whole-file sha256) so
-// `check docs` verifies them; human blocks are seeded once and carry no binding.
+// MarkdownPage decomposes a Markdown file into Gravity's native blocks.
 func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.BlockInput, title string, err error) {
 	data, err := readRepoFile(repoRoot, fileRef)
 	if err != nil {
@@ -85,9 +72,6 @@ func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.
 			section = uniq
 			intra = 0
 			if title == "" && node.Level == 1 {
-				// The first H1 IS the page title (rendered as the page's main H1);
-				// don't also emit it as a heading block. Section bookkeeping above
-				// still runs so content under it keeps stable keys.
 				title = txt
 				continue
 			}
@@ -114,9 +98,7 @@ func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.
 	return out, title, nil
 }
 
-// ReadVerbatim reads a Markdown file unchanged (for the release path, which
-// sends the whole document as bodyMarkdown) and sniffs a title from the first
-// H1, falling back to the filename.
+// ReadVerbatim reads a Markdown file unchanged.
 func ReadVerbatim(repoRoot, fileRef string) (content, title string, err error) {
 	data, err := readRepoFile(repoRoot, fileRef)
 	if err != nil {
@@ -136,7 +118,6 @@ func ReadVerbatim(repoRoot, fileRef string) (content, title string, err error) {
 	return string(data), title, nil
 }
 
-// inlineText concatenates the literal text of all inline Text descendants.
 func inlineText(n ast.Node, src []byte) string {
 	var b strings.Builder
 	_ = ast.Walk(n, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
@@ -153,7 +134,6 @@ func inlineText(n ast.Node, src []byte) string {
 	return strings.TrimSpace(b.String())
 }
 
-// codeText returns the literal content of a code block (fence lines excluded).
 func codeText(n ast.Node, src []byte) string {
 	var b strings.Builder
 	lines := n.Lines()
@@ -164,7 +144,6 @@ func codeText(n ast.Node, src []byte) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// tableRows extracts a GFM table's rows (header row first) as plain strings.
 func tableRows(tbl ast.Node, src []byte) [][]string {
 	var rows [][]string
 	for r := tbl.FirstChild(); r != nil; r = r.NextSibling() {
@@ -179,8 +158,6 @@ func tableRows(tbl ast.Node, src []byte) [][]string {
 	return rows
 }
 
-// rawSpan returns the verbatim source bytes spanning a top-level node,
-// expanded back to the start of the first line so list/quote markers survive.
 func rawSpan(n ast.Node, src []byte) string {
 	start, stop := -1, -1
 	consider := func(s, e int) {
@@ -198,7 +175,6 @@ func rawSpan(n ast.Node, src []byte) string {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		// Lines() panics on inline nodes, so only query block nodes for spans.
 		if node.Type() == ast.TypeBlock {
 			if ln := node.Lines(); ln != nil && ln.Len() > 0 {
 				consider(ln.At(0).Start, ln.At(ln.Len()-1).Stop)
@@ -218,12 +194,9 @@ func rawSpan(n ast.Node, src []byte) string {
 	return strings.TrimRight(string(src[start:stop]), "\n")
 }
 
-// Slug lowercases text and collapses non-alphanumerics into single dashes — the
-// same rule the Markdown decomposer uses for section ids. Exported so `sync`'s
-// reconcile can guess the slug a title would canonically produce.
+// Slug lowercases text and collapses non-alphanumerics into single dashes.
 func Slug(s string) string { return slug(s) }
 
-// slug lowercases text and collapses non-alphanumerics into single dashes.
 func slug(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder

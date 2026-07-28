@@ -1,0 +1,83 @@
+# Gravity docs config — read by gravity-cli in CI (.github/workflows/docs.yml:
+# checks on a PR, ping + sync + incremental `docs generate` on a push to main,
+# release-notes on a published release).
+# Committed on purpose. NEVER put a token here: GRAVITY_TOKEN is an org secret.
+#
+# This repo publishes into the "gravity" site, sharing the "guides" space with
+# its sibling repos (gravity, origin-plugin). Pages are filed under a "cli"
+# collection so the sidebar keeps one tidy group per repo.
+#
+# It also doubles as the worked example of the v2 manifest — every optional
+# section below is exercised here rather than only in ci/README.md.
+version: 1
+site: gravity
+apiUrl: https://app.gravitydocs.io
+
+product:
+  slug: gravity
+  repo: cli
+  # No `role:` — this is a CLI, not a frontend/api/service/docs surface. The
+  # unit kind is pinned explicitly under discovery instead.
+
+spaces:
+  default: guides
+  shared: [guides]
+
+# How `gravity docs generate` surveys this repo for documentable units.
+discovery:
+  units: feature
+  include:
+    - cmd/**
+    - internal/**
+    - ci/**
+  exclude:
+    - "**/*_test.go"
+    - bin/**
+    - dist/**
+    - .gravity/**
+  # Read first: the command tree and the exit-code/config contracts are how the
+  # planner orients itself in a cobra CLI.
+  entrypoints:
+    - cmd/gravity/main.go
+    - internal/cli/root.go
+    - README.md
+    - AGENTS.md
+  audiences:
+    default: [developers]
+
+# The bar this repo holds itself to. `require` names page slugs that must exist
+# in the default space; a missing one is a finding regardless of `min`. Ratchet
+# `min` up as the inventory fills in.
+coverage:
+  min: 0.6
+  require: [overview]
+
+# Translations are queued by the platform on the languages declared here.
+# Uncomment once the CLI docs are worth maintaining in more than one language.
+# i18n:
+#   languages: [fr]
+
+# Markdown authored here, pushed verbatim. `gravity docs generate` writes the
+# rest from the code as proposals — this list is only for files you maintain
+# by hand and want published as-is.
+documents:
+  - file: README.md
+    page: overview
+    title: Gravity — CLI
+    ownership: hybrid
+    as: page
+
+  # Also in this repo — uncomment the ones that are customer-facing:
+  # - file: docs/platform-authoring-api.md
+  #   page: platform-authoring-api
+  #   ownership: hybrid
+  #   as: page
+
+releaseNotes:
+  space: changelog
+
+# Nucleus memory is shared across the product's repos, so they compose one
+# picture rather than each remembering in isolation.
+knowledge:
+  namespace: gravity
+  scope: cli

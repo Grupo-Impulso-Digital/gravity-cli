@@ -1,5 +1,5 @@
 name: "Gravity CI"
-description: "Run gravity docs checks and release-notes generation in CI."
+description: "Run gravity docs checks, sync, incremental generation, and release-notes in CI."
 author: "impulso"
 
 inputs:
@@ -7,21 +7,29 @@ inputs:
     description: "Gravity API token (sk_live_...). Pass from a secret, e.g. secrets.GRAVITY_TOKEN."
     required: true
   api-url:
-    description: "Gravity API base URL. Defaults to the CLI's built-in default or .gravity.yaml."
+    description: "Gravity API base URL. Defaults to the hosted platform; override for self-hosted."
     required: false
-    default: "https://gravity.dave-vermette-1.workers.dev"
+    default: "https://app.gravitydocs.io"
   site:
     description: "Site slug to operate on. Optional when set in .gravity.yaml."
     required: false
     default: ""
   command:
-    description: "Which gravity command to run: 'check api', 'check docs', 'sync', or 'release-notes'."
+    description: "Which gravity command to run: 'ping', 'repos', 'check api', 'check docs', 'sync', 'docs generate', 'coverage', or 'release-notes'."
     required: true
     default: "check docs"
   args:
     description: "Extra arguments appended to the command (e.g. '--openapi openapi.yaml --format github')."
     required: false
     default: "--ci --format github"
+  since:
+    description: "Git ref appended as '--since <ref>' for an incremental 'docs generate'. Empty runs the full survey. Must be the previous SUCCESSFUL run's commit, never HEAD~1."
+    required: false
+    default: ""
+  continue-on-findings:
+    description: "Treat exit 1 (findings) as success. Exit 2 (auth/network/bad config) still fails the step. Use on push/release jobs so documentation drift never gates a deploy."
+    required: false
+    default: "false"
   version:
     description: "gravity CLI version/ref to build from (git ref of this repo)."
     required: false
@@ -37,8 +45,10 @@ runs:
 
     - name: Install gravity
       shell: bash
+      env:
+        GRAVITY_CLI_VERSION: ${{ inputs.version }}
       run: |
-        go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@${{ inputs.version }}
+        go install "github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@${GRAVITY_CLI_VERSION}"
 
     - name: Run gravity
       shell: bash
@@ -46,6 +56,24 @@ runs:
         GRAVITY_TOKEN: ${{ inputs.token }}
         GRAVITY_API_URL: ${{ inputs.api-url }}
         GRAVITY_SITE: ${{ inputs.site }}
+        # Caller-supplied values reach the script as environment variables, never
+        # as `${{ }}` interpolated into the script body, so a crafted input
+        # cannot become shell.
+        GRAVITY_COMMAND: ${{ inputs.command }}
+        GRAVITY_ARGS: ${{ inputs.args }}
+        GRAVITY_SINCE: ${{ inputs.since }}
+        GRAVITY_CONTINUE_ON_FINDINGS: ${{ inputs.continue-on-findings }}
       run: |
+        set -- $GRAVITY_COMMAND $GRAVITY_ARGS
+        if [ -n "$GRAVITY_SINCE" ]; then
+          set -- "$@" --since "$GRAVITY_SINCE"
+        fi
+
         # Exit codes: 0 pass, 1 findings, 2 error.
-        gravity ${{ inputs.command }} ${{ inputs.args }}
+        gravity "$@" && code=0 || code=$?
+
+        if [ "$code" -eq 1 ] && [ "$GRAVITY_CONTINUE_ON_FINDINGS" = "true" ]; then
+          echo "::notice::gravity reported findings (exit 1); not failing the step."
+          exit 0
+        fi
+        exit "$code"

@@ -1,7 +1,4 @@
-// Package agent implements the tool-using loop that runs against the Gravity
-// LLM gateway. The model is given read-only git tools plus a terminal "submit"
-// tool that ends the loop and returns its structured input. Every filesystem
-// path the model can reach is sandboxed to the repository root.
+// Package agent implements the tool-using loop that runs against the Gravity LLM gateway.
 package agent
 
 import (
@@ -16,7 +13,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
-// Caps on output sizes so a single tool result can't blow the context budget.
 const (
 	maxFileBytes  = 64 * 1024
 	maxDiffBytes  = 96 * 1024
@@ -26,24 +22,12 @@ const (
 
 // Tool is a tool the model can call during the loop.
 type Tool struct {
-	Def api.Tool
-	// Run executes the tool with the model-supplied input and returns the
-	// string result to feed back as a tool_result.
-	Run func(ctx context.Context, input json.RawMessage) (string, error)
-	// Terminal marks the submit tools that end the loop. Their parsed input is
-	// captured as the loop's result instead of being echoed back.
+	Def      api.Tool
+	Run      func(ctx context.Context, input json.RawMessage) (string, error)
 	Terminal bool
-	// Validate, if set on a terminal tool, checks the model-supplied input
-	// before the loop accepts it. A validation error does NOT end the loop: it
-	// is fed back as an error tool_result so the model can correct its own
-	// mistake (e.g. a JSON-encoded string where an array belongs) instead of
-	// sinking the whole run after the tokens are already spent.
 	Validate func(input json.RawMessage) error
 }
 
-// sandboxPath validates a model-supplied path stays within the repo root and
-// returns it cleaned and repo-relative. It rejects empty paths, absolute paths,
-// and any `..` escape.
 func sandboxPath(p string) (string, error) {
 	if p == "" {
 		return "", errors.New("path is required")
@@ -217,9 +201,6 @@ func GitTools(repo *git.Repo) []Tool {
 				if err != nil {
 					return "", err
 				}
-				// Returns the file as committed at HEAD, so uncommitted edits
-				// are not visible. In CI the working tree equals HEAD; for
-				// other refs the model should use git_show.
 				out, err := repo.Show(ctx, "HEAD", clean)
 				if err != nil {
 					return "", err

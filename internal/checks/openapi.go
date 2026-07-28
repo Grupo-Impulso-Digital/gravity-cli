@@ -1,6 +1,4 @@
-// Package checks holds the deterministic check logic: OpenAPI operation diff
-// for `check api --openapi`, and source-binding hash verification for the
-// no-spec api check and `check docs`.
+// Package checks holds the deterministic check logic.
 package checks
 
 import (
@@ -12,8 +10,6 @@ import (
 	"github.com/pb33f/libopenapi"
 )
 
-// errNoOpenAPIModel is returned when a document parses but neither the v3 nor
-// the v2 model can be built from it.
 var errNoOpenAPIModel = errors.New("unable to build an OpenAPI model from the document")
 
 // Operation is a normalised (method, path) pair plus its summary.
@@ -28,8 +24,7 @@ func (o Operation) Key() string {
 	return strings.ToUpper(o.Method) + " " + o.Path
 }
 
-// ParseOpenAPI parses an OpenAPI document (2.0 or 3.x) from raw bytes and
-// returns its operations keyed by method+path.
+// ParseOpenAPI parses an OpenAPI document (2.0 or 3.x) from raw bytes.
 func ParseOpenAPI(spec []byte) (map[string]Operation, error) {
 	doc, err := libopenapi.NewDocument(spec)
 	if err != nil {
@@ -38,7 +33,6 @@ func ParseOpenAPI(spec []byte) (map[string]Operation, error) {
 
 	ops := map[string]Operation{}
 
-	// Try v3 first, then fall back to v2.
 	if v3, err := doc.BuildV3Model(); err == nil && v3 != nil {
 		if v3.Model.Paths != nil {
 			for pair := v3.Model.Paths.PathItems.First(); pair != nil; pair = pair.Next() {
@@ -92,9 +86,7 @@ type ResponseDetail struct {
 	Description string `json:"description,omitempty"`
 }
 
-// OperationDetail is the full operation payload authored into a machine api
-// block. Summary is read from the same model field as ParseOpenAPI, so an
-// authored block satisfies `check api --openapi` by construction.
+// OperationDetail is the full operation payload authored into a machine api block.
 type OperationDetail struct {
 	Method    string           `json:"method"`
 	Path      string           `json:"path"`
@@ -103,9 +95,7 @@ type OperationDetail struct {
 	Responses []ResponseDetail `json:"responses"`
 }
 
-// ParseOpenAPIDetailed parses an OpenAPI document (2.0 or 3.x) and returns the
-// full operation detail for each (method, path), sorted by path then method for
-// deterministic, byte-stable authoring.
+// ParseOpenAPIDetailed parses an OpenAPI document (2.0 or 3.x) and returns the full operation detail for each (method, path).
 func ParseOpenAPIDetailed(spec []byte) ([]OperationDetail, error) {
 	doc, err := libopenapi.NewDocument(spec)
 	if err != nil {
@@ -216,7 +206,6 @@ func (d DocumentedOp) Key() string {
 
 // APIDiffFinding is a single drift finding from the operation diff.
 type APIDiffFinding struct {
-	// Kind is one of: undocumented, orphaned, changed.
 	Kind     string
 	Method   string
 	Path     string
@@ -225,11 +214,6 @@ type APIDiffFinding struct {
 }
 
 // DiffOperations compares the spec operations against the documented blocks.
-//   - undocumented: present in spec, absent from docs.
-//   - orphaned: present in docs, absent from spec.
-//   - changed: present in both but the summary differs.
-//
-// Results are returned sorted for deterministic output.
 func DiffOperations(spec map[string]Operation, docs []DocumentedOp) []APIDiffFinding {
 	docByKey := map[string]DocumentedOp{}
 	for _, d := range docs {
@@ -238,7 +222,6 @@ func DiffOperations(spec map[string]Operation, docs []DocumentedOp) []APIDiffFin
 
 	var findings []APIDiffFinding
 
-	// Undocumented + changed.
 	for key, op := range spec {
 		doc, ok := docByKey[key]
 		if !ok {
@@ -262,7 +245,6 @@ func DiffOperations(spec map[string]Operation, docs []DocumentedOp) []APIDiffFin
 		}
 	}
 
-	// Orphaned.
 	for key, doc := range docByKey {
 		if _, ok := spec[key]; !ok {
 			findings = append(findings, APIDiffFinding{

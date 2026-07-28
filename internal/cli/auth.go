@@ -37,11 +37,9 @@ func newAuthLoginCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			existing, _ := config.LoadUserCredentials() // best-effort; nil when absent
+			existing, _ := config.LoadUserCredentials()
 			interactive := isInteractive(cmd.InOrStdin())
 
-			// Confirm before clobbering an existing credential, but only when the
-			// user didn't already commit to a new token via flag/env.
 			if existing != nil && token == "" && os.Getenv(config.EnvToken) == "" && interactive {
 				replace := false
 				if err := huh.NewForm(huh.NewGroup(
@@ -77,8 +75,6 @@ func newAuthLoginCmd() *cobra.Command {
 				return Failf(CodeError, "--token is required (or set %s)", config.EnvToken)
 			}
 
-			// API URL: an explicit flag wins, else preserve a previously stored
-			// custom URL (so a token change doesn't reset it), else the default.
 			if apiURL == "" {
 				if existing != nil && existing.APIURL != "" {
 					apiURL = existing.APIURL
@@ -93,8 +89,6 @@ func newAuthLoginCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "Saved credentials to %s (mode 0600)\n", path)
 
-			// Verify best-effort: confirm the token works, but never fail the save —
-			// a stored token is still useful when /whoami is unreachable (e.g. CI).
 			who, verr := api.New(apiURL, token).WhoAmI(cmd.Context())
 			if verr != nil {
 				fmt.Fprintf(out, "warning: saved, but could not verify the token: %v\n", classifyAuthErr(verr))
@@ -126,7 +120,6 @@ func newAuthLogoutCmd() *cobra.Command {
 			} else {
 				fmt.Fprintf(out, "No stored credentials at %s — nothing to remove.\n", path)
 			}
-			// A file removal doesn't clear an env token, which still wins at runtime.
 			if os.Getenv(config.EnvToken) != "" {
 				fmt.Fprintf(out, "note: %s is still set in this environment and will be used until you unset it.\n", config.EnvToken)
 			}

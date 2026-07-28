@@ -7,8 +7,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
 )
 
-// apiContent is the JSON payload of a machine api block. It mirrors the read
-// side (api.APIBlockContent) so authored blocks round-trip through `check api`.
 type apiContent struct {
 	Method    string                  `json:"method"`
 	Path      string                  `json:"path"`
@@ -17,10 +15,7 @@ type apiContent struct {
 	Responses []checks.ResponseDetail `json:"responses"`
 }
 
-// APIBlocks builds machine-owned `api` blocks from the OpenAPI spec at specRef
-// (repo-relative). One block per operation, keyed by api:<METHOD>:<path> and
-// bound (whole-file sha256) to the spec, so re-authoring is stable across
-// reordering and the blocks satisfy `check api` immediately.
+// APIBlocks builds machine-owned `api` blocks from the OpenAPI spec at specRef.
 func APIBlocks(repoRoot, specRef, generator string) ([]api.BlockInput, error) {
 	data, err := readRepoFile(repoRoot, specRef)
 	if err != nil {

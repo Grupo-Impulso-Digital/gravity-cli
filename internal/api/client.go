@@ -1,7 +1,4 @@
-// Package api implements the HTTP client for the Gravity platform: the REST
-// surface (whoami, sites, pages, api-blocks, release-notes) and the LLM gateway
-// (/api/llm/v1/*). Every request carries a bearer token; errors decode the
-// platform's standard {"error":{"code","message"}} envelope.
+// Package api implements the HTTP client for the Gravity platform.
 package api
 
 import (
@@ -22,12 +19,10 @@ type Client struct {
 	BaseURL    string
 	Token      string
 	HTTPClient *http.Client
-	// UserAgent is sent with every request.
-	UserAgent string
+	UserAgent  string
 }
 
-// New constructs a Client. baseURL must be non-empty; token may be empty for
-// commands that do not require auth (none currently, but kept flexible).
+// New constructs a Client.
 func New(baseURL, token string) *Client {
 	return &Client{
 		BaseURL:   strings.TrimRight(baseURL, "/"),
@@ -61,8 +56,7 @@ func (e *APIError) IsAuth() bool {
 	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
 }
 
-// IsUnavailable reports that the platform does not (yet) implement this route —
-// so a greenfield feature can degrade gracefully until its endpoint ships.
+// IsUnavailable reports that the platform does not (yet) implement this route.
 func (e *APIError) IsUnavailable() bool {
 	switch e.StatusCode {
 	case http.StatusNotFound, http.StatusNotImplemented:
@@ -82,8 +76,6 @@ type errorEnvelope struct {
 	} `json:"error"`
 }
 
-// do performs an HTTP request and decodes the JSON response into out (which may
-// be nil). A non-2xx status is returned as *APIError.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	if c.BaseURL == "" {
 		return errors.New("no API URL configured (set --api-url, GRAVITY_API_URL, or run gravity auth login)")

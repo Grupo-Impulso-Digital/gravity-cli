@@ -61,8 +61,6 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 			}
 			path := filepath.Join(dir, config.ProjectFileName)
 
-			// Seed from the global --site/--api-url flags (and their hidden
-			// aliases), then env.
 			site := firstNonEmpty(siteAlias, gf.site, os.Getenv(config.EnvSite))
 			apiURL := firstNonEmpty(urlAlias, gf.apiURL, os.Getenv(config.EnvAPIURL))
 			sp := firstNonEmpty(space, os.Getenv(config.EnvSpace))
@@ -74,13 +72,9 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 			var sources []config.SourceMap
 			var documents []config.DocMap
 
-			// client is built best-effort for the interactive wizard so it can
-			// list the org's sites/spaces; it stays nil offline/unauthenticated.
 			var client *api.Client
 			interactive := false
 
-			// Refuse to clobber an existing config unless --force/--migrate is set.
-			// Done up front so the wizard never runs only to fail at write time.
 			if !confirm && !migrate {
 				if _, statErr := os.Stat(path); statErr == nil {
 					return Failf(CodeError, "%s already exists; pass --force to overwrite or --migrate to upgrade it", path)
@@ -107,19 +101,13 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 				if existing.Product.Repo != "" {
 					repo = existing.Product.Repo
 				}
-				// Preserve declared mappings — never silently drop them.
 				sources = existing.Sources
 				documents = existing.Documents
 
 			case nonInt || !isInteractive(cmd.InOrStdin()):
-				// Non-interactive: rely on flags/env, no detection.
 
 			default:
 				interactive = true
-				// Best-effort: resolve a token (env or the user-level config only —
-				// never the project file) plus the API URL so the wizard can list
-				// the org's sites/spaces. A resolve error leaves client nil and the
-				// wizard falls back to free-text entry.
 				if cfg, cerr := config.Resolve(config.Flags{Token: gf.token, APIURL: apiURL, Site: site, Space: sp}, dir); cerr == nil {
 					apiURL = firstNonEmpty(apiURL, cfg.APIURL)
 					if cfg.Token != "" && cfg.APIURL != "" {
@@ -170,8 +158,6 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 				Sources:     sources,
 				Documents:   documents,
 			}
-			// Validate the manifest we are about to write so init never produces a
-			// file that `sync`/`check` would later reject.
 			if err := projectFromScaffold(params).Validate(path); err != nil {
 				return Fail(CodeError, err)
 			}
@@ -182,9 +168,6 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s\n", path)
 
-			// On the interactive path, idempotently create the spaces the manifest
-			// references so they exist on the platform now (not only after the first
-			// `gravity sync`). Best-effort: never fails the command.
 			if interactive && client != nil && site != "" {
 				ensureDeclaredSpaces(cmd, client, site, params)
 			}
@@ -203,7 +186,6 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 	cmd.Flags().StringVar(&outDir, "dir", "", "directory to write .gravity.yaml in (default: cwd)")
 	cmd.Flags().BoolVar(&confirm, "force", false, "overwrite an existing .gravity.yaml")
 	cmd.Flags().BoolVar(&migrate, "migrate", false, "upgrade a legacy .gravity.yaml in place, preserving its values")
-	// Hidden back-compat aliases for the pre-rename flag names.
 	cmd.Flags().StringVar(&siteAlias, "site-slug", "", "")
 	cmd.Flags().StringVar(&urlAlias, "url", "", "")
 	_ = cmd.Flags().MarkHidden("site-slug")
@@ -211,7 +193,6 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 	return cmd
 }
 
-// initSeed carries the pre-filled defaults into the interactive wizard.
 type initSeed struct {
 	Site    string
 	APIURL  string
@@ -221,14 +202,13 @@ type initSeed struct {
 	ScanDir string
 }
 
-// wizardResult is the manifest assembled from the wizard answers.
 type wizardResult struct {
 	Site        string
 	APIURL      string
 	Space       string
-	Parent      string // default space nests under this top-level space
-	Home        string // page slug pinned as the default space's home page
-	Shared      bool   // sibling repos also publish into the default space
+	Parent      string
+	Home        string
+	Shared      bool
 	Role        string
 	Repo        string
 	ProductSlug string
@@ -236,11 +216,6 @@ type wizardResult struct {
 	Documents   []config.DocMap
 }
 
-// runInitWizard drives the huh forms, detecting candidate specs/docs in ScanDir
-// and offering to map them. When client is non-nil it lists the org's sites and
-// the chosen site's spaces so the user selects rather than types them; offline
-// it falls back to free-text inputs. The second return is the user's final
-// write/abort choice.
 func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizardResult, bool, error) {
 	ctx := cmd.Context()
 	in := cmd.InOrStdin()
@@ -253,8 +228,6 @@ func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizar
 	repo := seed.Repo
 	apiSpace := "api"
 
-	// --- Form 1: pick (or type) the target site. Sites are fetched up front so
-	// the picker has real options; errors degrade to a free-text input. ---
 	siteFld := siteField(ctx, client, errOut, &site, seed.Site)
 	form1 := huh.NewForm(huh.NewGroup(siteFld)).WithInput(in).WithOutput(errOut)
 	if err := form1.Run(); err != nil {
@@ -267,13 +240,12 @@ func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizar
 		}
 	}
 	site = strings.TrimSpace(site)
-	productSlug := site // default the product id to the chosen site; editable below
+	productSlug := site
 
-	// With the site known, fetch its spaces so the space picker is real too.
 	spaces := fetchSpaces(ctx, client, site, errOut)
 
 	specs, mds := detectDocSources(seed.ScanDir)
-	selectedSpecs := append([]string(nil), specs...) // preselect all detected
+	selectedSpecs := append([]string(nil), specs...)
 	selectedDocs := append([]string(nil), mds...)
 
 	groups := []*huh.Group{
@@ -324,7 +296,6 @@ func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizar
 		return wizardResult{}, false, err
 	}
 
-	// Resolve "new space…" choices into a typed slug.
 	if defaultSpace == spaceNewSentinel {
 		defaultSpace = seed.Space
 		if err := runInput(cmd, "New space slug", "Where this repo's pages live.", &defaultSpace, requiredField); err != nil {
@@ -360,25 +331,19 @@ func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizar
 	}
 	for _, m := range selectedDocs {
 		res.Documents = append(res.Documents, config.DocMap{
-			File: m,
-			Page: slugFromPath(m),
-			// Hand-authored docs are editable in Gravity (seeded once from the repo,
-			// then human-owned). Use machine only for a verbatim/code mirror.
+			File:      m,
+			Page:      slugFromPath(m),
 			Ownership: "human",
 			As:        "page",
 		})
 	}
 
-	// --- Hierarchy: parent space, multi-repo sharing, home page. Only offered
-	// when the platform supports the space hierarchy; older platforms would
-	// reject the fields, so the wizard stays flat there. ---
 	if hierarchySupported(ctx, client) {
 		if err := runHierarchySteps(cmd, spaces, &res); err != nil {
 			return wizardResult{}, false, err
 		}
 	}
 
-	// Preview, then a final write confirmation.
 	out := cmd.OutOrStdout()
 	var sharedList []string
 	if res.Shared && res.Space != "" {
@@ -408,17 +373,11 @@ func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizar
 	return res, write, nil
 }
 
-// Sentinel option values for the site/space pickers. They can't collide with a
-// real slug (slugs are ^[a-z0-9-]+$), so a selected sentinel unambiguously means
-// "let me type one instead".
 const (
 	siteManualSentinel = "\x00manual-site"
 	spaceNewSentinel   = "\x00new-space"
 )
 
-// hierarchySupported reports whether the platform advertises the space
-// hierarchy (subspaces / home pages / collections). Offline or on error the
-// wizard simply skips the hierarchy questions.
 func hierarchySupported(ctx context.Context, client *api.Client) bool {
 	if client == nil {
 		return false
@@ -427,11 +386,7 @@ func hierarchySupported(ctx context.Context, client *api.Client) bool {
 	return err == nil && who.Features[featureSpaceHierarchy]
 }
 
-// runHierarchySteps asks the space-hierarchy questions — parent space,
-// multi-repo sharing, home page — and fills res in place.
 func runHierarchySteps(cmd *cobra.Command, spaces []api.Space, res *wizardResult) error {
-	// Parent: a Select over the site's top-level spaces (a subspace can't be a
-	// parent — nesting is one level), or free text when none are known.
 	var parentOpts []huh.Option[string]
 	parentOpts = append(parentOpts, huh.NewOption("(none — top-level space)", ""))
 	seedParent := ""
@@ -441,7 +396,6 @@ func runHierarchySteps(cmd *cobra.Command, spaces []api.Space, res *wizardResult
 		}
 		parentOpts = append(parentOpts, huh.NewOption(spaceLabel(s), s.Slug))
 	}
-	// Preselect the space's current parent so re-running the wizard converges.
 	if cur := findSpace(spaces, res.Space); cur != nil && cur.ParentSpaceID != nil {
 		for _, s := range spaces {
 			if s.ID == *cur.ParentSpaceID {
@@ -462,7 +416,6 @@ func runHierarchySteps(cmd *cobra.Command, spaces []api.Space, res *wizardResult
 			Value(&shared),
 	}
 
-	// Home page: offer the best candidate page among the mapped documents.
 	home := false
 	homeSlug := homeCandidate(res.Documents)
 	if homeSlug != "" {
@@ -491,9 +444,6 @@ func runHierarchySteps(cmd *cobra.Command, spaces []api.Space, res *wizardResult
 	return nil
 }
 
-// homeCandidate picks the page to offer as the space home: the conventional
-// "overview" page (a README mapping) when present, else a single mapped doc's
-// page, else nothing.
 func homeCandidate(docs []config.DocMap) string {
 	for _, d := range docs {
 		if d.Page == "overview" {
@@ -506,7 +456,6 @@ func homeCandidate(docs []config.DocMap) string {
 	return ""
 }
 
-// findSpace returns the space with the given slug, or nil.
 func findSpace(spaces []api.Space, slug string) *api.Space {
 	for i := range spaces {
 		if spaces[i].Slug == slug {
@@ -516,9 +465,6 @@ func findSpace(spaces []api.Space, slug string) *api.Space {
 	return nil
 }
 
-// siteField returns the site picker: a Select over the org's sites (plus a
-// manual-entry sentinel) when they can be listed, otherwise a free-text Input.
-// It binds the chosen value into *binding and seeds the default selection.
 func siteField(ctx context.Context, client *api.Client, notice io.Writer, binding *string, seed string) huh.Field {
 	sites, ok := fetchSites(ctx, client, notice)
 	if !ok {
@@ -540,11 +486,6 @@ func siteField(ctx context.Context, client *api.Client, notice io.Writer, bindin
 		Options(opts...).Value(binding)
 }
 
-// spaceField returns a space picker: a Select over the site's existing spaces
-// (plus a "new space" sentinel) when spaces are known, otherwise a free-text
-// Input. Spaces render hierarchically — each top-level space followed by its
-// indented subspaces — so picking a module subspace is natural. seed
-// preselects/prefills the default.
 func spaceField(title, desc string, spaces []api.Space, binding *string, seed string) huh.Field {
 	if len(spaces) == 0 {
 		if *binding == "" {
@@ -569,9 +510,6 @@ func spaceField(title, desc string, spaces []api.Space, binding *string, seed st
 	return huh.NewSelect[string]().Title(title).Description(desc).Options(opts...).Value(binding)
 }
 
-// orderSpacesForPicker groups spaces hierarchically: each top-level space
-// followed by its subspaces, then any orphans (a parent the key can't see)
-// flat at the end.
 func orderSpacesForPicker(spaces []api.Space) []api.Space {
 	out := make([]api.Space, 0, len(spaces))
 	emitted := make(map[string]bool, len(spaces))
@@ -596,17 +534,12 @@ func orderSpacesForPicker(spaces []api.Space) []api.Space {
 	return out
 }
 
-// runInput runs a one-field form to collect a single value (used to resolve the
-// manual-site / new-space sentinels).
 func runInput(cmd *cobra.Command, title, desc string, binding *string, validate func(string) error) error {
 	return huh.NewForm(huh.NewGroup(
 		huh.NewInput().Title(title).Description(desc).Value(binding).Validate(validate),
 	)).WithInput(cmd.InOrStdin()).WithOutput(cmd.ErrOrStderr()).Run()
 }
 
-// fetchSites lists the org's sites best-effort. It returns ok=false (after a
-// one-line notice) when there's no client, the call fails, or the org has no
-// sites — so the caller falls back to free-text entry.
 func fetchSites(ctx context.Context, client *api.Client, notice io.Writer) ([]api.SiteSummary, bool) {
 	if client == nil {
 		fmt.Fprintln(notice, "Not signed in — type values manually. Run `gravity auth login` to pick from your sites.")
@@ -623,8 +556,6 @@ func fetchSites(ctx context.Context, client *api.Client, notice io.Writer) ([]ap
 	return sites, true
 }
 
-// fetchSpaces lists a site's spaces best-effort; any failure yields nil so the
-// caller falls back to free-text space entry.
 func fetchSpaces(ctx context.Context, client *api.Client, site string, notice io.Writer) []api.Space {
 	if client == nil || site == "" {
 		return nil
@@ -637,16 +568,8 @@ func fetchSpaces(ctx context.Context, client *api.Client, site string, notice io
 	return tree.Spaces
 }
 
-// ensureDeclaredSpaces idempotently creates (or confirms) every space the new
-// manifest references — the declared parent space first, then the default space
-// nested under it — so a freshly-`init`'d repo's spaces exist on the platform
-// immediately rather than only after the first `gravity sync`. Best-effort: a
-// permission (403) or not-yet-available failure is reported and skipped, never
-// fatal — the written file is the command's real output.
 func ensureDeclaredSpaces(cmd *cobra.Command, client *api.Client, site string, p scaffoldParams) {
 	out := cmd.OutOrStdout()
-	// The hierarchy fields only go to platforms that understand them (older
-	// servers reject unknown request fields).
 	withParent := p.Parent != "" && hierarchySupported(cmd.Context(), client)
 
 	type ensure struct{ slug, parent string }
@@ -703,8 +626,6 @@ func spaceLabel(s api.Space) string {
 	return s.Slug
 }
 
-// pickDefaultSite chooses the initially-selected site: the seed when it is a
-// listed site, otherwise the first site.
 func pickDefaultSite(sites []api.SiteSummary, seed string) string {
 	for _, s := range sites {
 		if s.Slug == seed {
@@ -717,7 +638,6 @@ func pickDefaultSite(sites []api.SiteSummary, seed string) string {
 	return seed
 }
 
-// slugInSpaces reports whether slug names one of the spaces.
 func slugInSpaces(slug string, spaces []api.Space) bool {
 	if slug == "" {
 		return false
@@ -740,7 +660,7 @@ func requiredField(s string) error {
 func optionalURL(s string) error {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return nil // defaulted later
+		return nil
 	}
 	if u, err := url.Parse(s); err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") {
 		return errors.New("must be an absolute http(s) URL")
@@ -756,8 +676,6 @@ func toOptions(vals []string) []huh.Option[string] {
 	return opts
 }
 
-// isInteractive reports whether r is a terminal we can drive a form on. In CI
-// or piped input it returns false so init falls back to flags/env.
 func isInteractive(r io.Reader) bool {
 	f, ok := r.(*os.File)
 	if !ok {
@@ -775,12 +693,10 @@ var skipScanDir = map[string]bool{
 	"build": true, "target": true, "out": true, "testdata": true,
 }
 
-// detectDocSources walks dir (bounded) for OpenAPI specs and Markdown files
-// worth offering as doc mappings. Hidden, vendored, and build dirs are skipped.
 func detectDocSources(dir string) (specs, mds []string) {
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil //nolint:nilerr // unreadable entries are skipped, not fatal
+			return nil //nolint:nilerr // skip unreadable entries
 		}
 		if d.IsDir() {
 			if path == dir {
@@ -794,7 +710,7 @@ func detectDocSources(dir string) (specs, mds []string) {
 		}
 		rel, e := filepath.Rel(dir, path)
 		if e != nil {
-			return nil //nolint:nilerr // skip paths we can't relativize
+			return nil //nolint:nilerr // skip unrelativizable paths
 		}
 		rel = filepath.ToSlash(rel)
 		name := strings.ToLower(d.Name())
@@ -831,7 +747,6 @@ func walkDepth(root, path string) int {
 	return strings.Count(rel, string(os.PathSeparator)) + 1
 }
 
-// slugFromPath derives a stable page slug from a file path.
 func slugFromPath(p string) string {
 	base := strings.ToLower(filepath.Base(p))
 	base = strings.TrimSuffix(base, filepath.Ext(base))
@@ -856,7 +771,6 @@ func slugFromPath(p string) string {
 	return s
 }
 
-// specPageSlug maps a spec path to a conventional api page slug.
 func specPageSlug(p string) string {
 	s := slugFromPath(p)
 	if strings.Contains(s, "openapi") || strings.Contains(s, "swagger") || s == "api" {
@@ -869,9 +783,9 @@ type scaffoldParams struct {
 	Site        string
 	APIURL      string
 	Space       string
-	Parent      string   // default space nests under this top-level space
-	Home        string   // page slug pinned as the default space's home page
-	Shared      []string // spaces co-owned with sibling repos
+	Parent      string
+	Home        string
+	Shared      []string
 	Role        string
 	Repo        string
 	ProductSlug string
@@ -879,8 +793,6 @@ type scaffoldParams struct {
 	Documents   []config.DocMap
 }
 
-// projectFromScaffold builds a typed Project mirroring what renderScaffold emits,
-// so the result can be validated before it is written to disk.
 func projectFromScaffold(p scaffoldParams) *config.Project {
 	return &config.Project{
 		Version: config.SchemaVersion,
@@ -913,9 +825,6 @@ const commentedDocumentsExample = `# documents:
 #                                    # hybrid: repo stays source, machine fields refreshed
 #     as: page                       # page | release`
 
-// renderScaffold produces a rich, commented .gravity.yaml. Connection/identity
-// sections are filled from params; sources/documents are rendered as active YAML
-// when present, or as commented examples when the user declared none.
 func renderScaffold(p scaffoldParams) string {
 	productSlug := firstNonEmpty(p.ProductSlug, p.Site)
 	defaultSpace := firstNonEmpty(p.Space, p.Repo)
@@ -925,7 +834,8 @@ func renderScaffold(p scaffoldParams) string {
 		roleLine = "  role: " + p.Role
 	}
 
-	return fmt.Sprintf(`# .gravity.yaml — committed, non-secret CI config for the Gravity docs platform.
+	return fmt.Sprintf(
+		`# .gravity.yaml — committed, non-secret CI config for the Gravity docs platform.
 # NEVER put a token here. Use the %s env var (CI) or `+"`gravity auth login`"+` (local).
 version: %d
 
@@ -971,8 +881,6 @@ knowledge:
 	)
 }
 
-// renderSpacesBlock emits the spaces section: declared hierarchy keys as live
-// YAML, undeclared ones as commented examples so the file teaches its own schema.
 func renderSpacesBlock(defaultSpace, parent, home string, shared []string) string {
 	var b strings.Builder
 	b.WriteString("spaces:\n")
@@ -1048,7 +956,6 @@ func renderDocumentsBlock(documents []config.DocMap) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// yamlScalar renders s as a safely-quoted YAML scalar (plain when possible).
 func yamlScalar(s string) string {
 	out, err := yaml.Marshal(s)
 	if err != nil {

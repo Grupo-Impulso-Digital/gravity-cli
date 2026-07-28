@@ -14,8 +14,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
-// scriptedServer returns canned /api/llm/v1/messages responses in sequence and
-// records the requests it received.
 type scriptedServer struct {
 	responses []api.MessagesResponse
 	requests  []api.MessagesRequest
@@ -55,7 +53,6 @@ func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
 
 	script := &scriptedServer{
 		responses: []api.MessagesResponse{
-			// Turn 1: model calls a (non-terminal) tool.
 			{
 				Type:       "message",
 				Role:       "assistant",
@@ -65,7 +62,6 @@ func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
 					{Type: api.PartToolUse, ID: "tu_1", Name: "fake_log", Input: rawInput},
 				},
 			},
-			// Turn 2: model calls the terminal submit tool.
 			{
 				Type:       "message",
 				Role:       "assistant",
@@ -86,7 +82,6 @@ func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
 		Def: api.Tool{Name: "fake_log", Description: "fake", InputSchema: map[string]any{"type": "object"}},
 		Run: func(_ context.Context, input json.RawMessage) (string, error) {
 			toolRan = true
-			// Assert the model's input reached the tool.
 			var in struct {
 				From string `json:"from"`
 				To   string `json:"to"`
@@ -138,12 +133,10 @@ func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
 		t.Errorf("unexpected sections: %+v", notes.Sections)
 	}
 
-	// The second request must echo the assistant turn AND the tool_result.
 	if len(script.requests) != 2 {
 		t.Fatalf("expected 2 requests to the gateway, got %d", len(script.requests))
 	}
 	second := script.requests[1]
-	// messages: [user kickoff, assistant tool_use, user tool_result]
 	if len(second.Messages) != 3 {
 		t.Fatalf("expected 3 messages in second request, got %d", len(second.Messages))
 	}
@@ -159,10 +152,6 @@ func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
 	}
 }
 
-// TestRunner_RejectsInvalidTerminalInput guards the run-sinking failure: a
-// terminal submission that fails validation must be bounced back to the model
-// as an error tool_result (one lost turn) instead of ending the loop with
-// unusable input.
 func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
 	badInput := json.RawMessage(`{"title":"Overview","blocks":"totally not an array"}`)
 	goodInput := json.RawMessage(`{"title":"Overview","blocks":[{"key":"h1","type":"heading","content":{"text":"Overview"}}]}`)
@@ -208,7 +197,6 @@ func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
 		t.Errorf("unexpected accepted page: %+v", page)
 	}
 
-	// The second request must carry the rejection back as an error tool_result.
 	if len(script.requests) != 2 {
 		t.Fatalf("expected 2 requests, got %d", len(script.requests))
 	}
@@ -255,10 +243,6 @@ func TestRunner_EndTurnStopsLoop(t *testing.T) {
 	}
 }
 
-// TestRunner_StripsEmptyTextBlocks guards the intermittent mid-run 400: a model
-// turn that carries an empty text part alongside tool_use must NOT be echoed back
-// verbatim (an empty text block draws a provider 400), and a tool returning "" must
-// still produce a non-empty tool_result.
 func TestRunner_StripsEmptyTextBlocks(t *testing.T) {
 	script := &scriptedServer{
 		responses: []api.MessagesResponse{
@@ -267,8 +251,8 @@ func TestRunner_StripsEmptyTextBlocks(t *testing.T) {
 				Role:       "assistant",
 				StopReason: api.StopToolUse,
 				Content: []api.ContentPart{
-					{Type: api.PartText, Text: "   "},                       // empty/whitespace text the provider would reject
-					{Type: api.PartToolUse, ID: "tu_1", Name: "empty_tool"}, // no input → must default to {}
+					{Type: api.PartText, Text: "   "},
+					{Type: api.PartToolUse, ID: "tu_1", Name: "empty_tool"},
 				},
 			},
 			{
@@ -286,14 +270,13 @@ func TestRunner_StripsEmptyTextBlocks(t *testing.T) {
 		Client: api.New(srv.URL, "test-token"),
 		Tools: []agent.Tool{{
 			Def: api.Tool{Name: "empty_tool", InputSchema: map[string]any{"type": "object"}},
-			Run: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil }, // empty output
+			Run: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
 		}},
 	}
 	if _, err := runner.Run(context.Background(), "go"); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
-	// The second request echoes the assistant turn (index 1) and the tool_result (index 2).
 	if len(script.requests) != 2 {
 		t.Fatalf("expected 2 gateway requests, got %d", len(script.requests))
 	}
@@ -315,8 +298,6 @@ func TestRunner_StripsEmptyTextBlocks(t *testing.T) {
 	}
 }
 
-// TestRunner_RetriesTransientGatewayError guards resilience to the flaky LLM
-// gateway: a 502 (provider_error) is retried rather than aborting the run.
 func TestRunner_RetriesTransientGatewayError(t *testing.T) {
 	old := agent.RetryBackoff
 	agent.RetryBackoff = time.Millisecond
@@ -325,7 +306,7 @@ func TestRunner_RetriesTransientGatewayError(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
-		if calls < 3 { // first two attempts flake with a transient gateway 502
+		if calls < 3 {
 			w.WriteHeader(http.StatusBadGateway)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"error": map[string]string{"code": "provider_error", "message": "flaky"},
@@ -353,8 +334,6 @@ func TestRunner_RetriesTransientGatewayError(t *testing.T) {
 }
 
 func TestRunner_IterationCap(t *testing.T) {
-	// Always return a tool_use for the same fake tool so the loop never
-	// terminates on its own; assert the cap kicks in.
 	toolUse := api.MessagesResponse{
 		Type:       "message",
 		Role:       "assistant",
