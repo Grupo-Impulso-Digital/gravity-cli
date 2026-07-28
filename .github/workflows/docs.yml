@@ -36,12 +36,27 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    env:
+      GRAVITY_TOKEN: ${{ secrets.GRAVITY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # check docs --ai and release-notes resolve git ranges
 
+      # The repo secret is not configured yet on this public repository —
+      # skip with a notice instead of failing every run on an auth error.
+      - name: Gate on token
+        id: gate
+        run: |
+          if [ -n "$GRAVITY_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::GRAVITY_TOKEN secret is not set - docs pipeline skipped."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check docs
+        if: steps.gate.outputs.ready == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
@@ -52,6 +67,7 @@ jobs:
           continue-on-findings: "true"
 
       - name: Check api
+        if: steps.gate.outputs.ready == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
@@ -73,12 +89,27 @@ jobs:
     permissions:
       contents: read
       actions: read # gh run list, to resolve the incremental base
+    env:
+      GRAVITY_TOKEN: ${{ secrets.GRAVITY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # The repo secret is not configured yet on this public repository —
+      # skip with a notice instead of failing every run on an auth error.
+      - name: Gate on token
+        id: gate
+        run: |
+          if [ -n "$GRAVITY_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::GRAVITY_TOKEN secret is not set - docs pipeline skipped."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Register this repo
+        if: steps.gate.outputs.ready == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
@@ -88,6 +119,7 @@ jobs:
           args: ""
 
       - name: Sync declared mappings
+        if: steps.gate.outputs.ready == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
@@ -99,6 +131,7 @@ jobs:
 
       - name: Resolve incremental base
         id: base
+        if: steps.gate.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -121,6 +154,7 @@ jobs:
           echo "ref=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Generate docs from code
+        if: steps.gate.outputs.ready == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
@@ -135,12 +169,27 @@ jobs:
     name: release notes
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    env:
+      GRAVITY_TOKEN: ${{ secrets.GRAVITY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # The repo secret is not configured yet on this public repository —
+      # skip with a notice instead of failing every run on an auth error.
+      - name: Gate on token
+        id: gate
+        run: |
+          if [ -n "$GRAVITY_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::GRAVITY_TOKEN secret is not set - docs pipeline skipped."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Release notes
+        if: steps.gate.outputs.ready == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
