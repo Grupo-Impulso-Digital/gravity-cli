@@ -12,6 +12,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
@@ -122,11 +123,10 @@ audiences, and the platform renders the blocks matching the viewer.`,
 			planPrompt := resolvePrompt(cmd.Context(), e.client, prompts.NameDocsPlan, logw)
 			authorPrompt := resolvePrompt(cmd.Context(), e.client, prompts.NameDocsAuthor, logw)
 
-			plan, err := runDocsPlan(cmd.Context(), e.client, repo, planPrompt, audiences, logw, mctx)
-			if err != nil {
-				return Fail(CodeError, err)
-			}
-
+			// Fetched BEFORE planning, not after: the planner has to see what
+			// already exists or a re-run invents a fresh slug for a feature that
+			// is already documented, orphaning the old page instead of updating
+			// it. The author phase uses the same fetch for per-page blocks.
 			existing, err := e.client.Pages(cmd.Context(), siteSlug, "")
 			if err != nil {
 				return Fail(CodeError, fmt.Errorf("fetch pages: %w", err))
@@ -135,6 +135,12 @@ audiences, and the platform renders the blocks matching the viewer.`,
 			for _, p := range existing {
 				byPage[p.SpaceSlug+"\x00"+p.Slug] = p.Blocks
 			}
+
+			plan, err := runDocsPlan(cmd.Context(), e.client, repo, planPrompt, audiences, existing, e.proj, logw, mctx)
+			if err != nil {
+				return Fail(CodeError, err)
+			}
+			reportOrphans(existing, plan, logw)
 
 			generator := "gravity docs generate v" + version
 			var targets []syncTarget
@@ -279,7 +285,7 @@ func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarge
 }
 
 // runDocsPlan runs phase A: survey the repo and propose the page list.
-func runDocsPlan(ctx context.Context, client *api.Client, repo *git.Repo, system string, audiences []string, logw io.Writer, mctx *api.MessagesContext) (agent.DocPlanInput, error) {
+func runDocsPlan(ctx context.Context, client *api.Client, repo *git.Repo, system string, audiences []string, existing []api.Page, proj *config.Project, logw io.Writer, mctx *api.MessagesContext) (agent.DocPlanInput, error) {
 	tools := append(agent.GitTools(repo), agent.SubmitDocPlanTool())
 	runner := &agent.Runner{
 		Client:        client,
@@ -290,9 +296,13 @@ func runDocsPlan(ctx context.Context, client *api.Client, repo *git.Repo, system
 		MaxIterations: agent.DefaultAuthorMaxIterations,
 	}
 	kickoff := fmt.Sprintf(
-		"Survey this repository and propose documentation pages covering these audiences: %s. "+
-			"Start with list_files and read the README and main entrypoints, then call submit_doc_plan.",
+		"Survey this repository and propose documentation pages covering these audiences: %s.\n\n"+
+			"%s%s"+
+			"Start with list_files, read the README and the main entrypoints, then enumerate the "+
+			"product's feature sets before calling submit_doc_plan.",
 		strings.Join(audiences, ", "),
+		spacesDigest(proj),
+		existingPagesDigest(existing),
 	)
 	res, err := runner.Run(ctx, kickoff)
 	if err != nil {
@@ -410,4 +420,66 @@ func intersect(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// spacesDigest tells the planner which spaces this repo publishes into, so it
+// files customer pages and developer pages in the right places instead of
+// guessing a space name that does not exist.
+func spacesDigest(proj *config.Project) string {
+	if proj == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Spaces available to this repo:\n")
+	fmt.Fprintf(&b, "- %s (default)\n", proj.Spaces.Default)
+	if proj.Spaces.Parent != "" {
+		fmt.Fprintf(&b, "  nested under %q\n", proj.Spaces.Parent)
+	}
+	seen := map[string]bool{proj.Spaces.Default: true}
+	for _, d := range proj.Documents {
+		if d.Space != "" && !seen[d.Space] {
+			seen[d.Space] = true
+			fmt.Fprintf(&b, "- %s\n", d.Space)
+		}
+	}
+	b.WriteString("Target one of these exactly. Do not invent a space slug.\n\n")
+	return b.String()
+}
+
+// existingPagesDigest lists the pages already published for the site so the
+// planner reuses a page's slug when it covers that feature rather than minting
+// a near-synonym and forking the docs. Without this the plan phase is blind to
+// its own previous runs.
+func existingPagesDigest(existing []api.Page) string {
+	if len(existing) == 0 {
+		return "No pages exist yet for this site — this is the first pass.\n\n"
+	}
+	var b strings.Builder
+	b.WriteString("Pages that already exist (REUSE these slugs when your page covers the same feature):\n")
+	for _, p := range existing {
+		fmt.Fprintf(&b, "- %s/%s — %s\n", p.SpaceSlug, p.Slug, p.Title)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// reportOrphans names existing pages the plan did not cover. They are left
+// published and untouched — a plan that simply failed to mention a page must
+// never silently retire documentation — but staying quiet would hide a feature
+// whose docs have stopped being maintained.
+func reportOrphans(existing []api.Page, plan agent.DocPlanInput, logw io.Writer) {
+	planned := make(map[string]bool, len(plan.Pages))
+	for _, pg := range plan.Pages {
+		planned[pg.Space+"\x00"+pg.Slug] = true
+	}
+	var orphans []string
+	for _, p := range existing {
+		if !planned[p.SpaceSlug+"\x00"+p.Slug] {
+			orphans = append(orphans, p.SpaceSlug+"/"+p.Slug)
+		}
+	}
+	if len(orphans) > 0 {
+		fmt.Fprintf(logw, "note: %d existing page(s) not covered by this plan, left unchanged: %s\n",
+			len(orphans), strings.Join(orphans, ", "))
+	}
 }

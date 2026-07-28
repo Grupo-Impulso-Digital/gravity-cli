@@ -305,8 +305,14 @@ gravity docs generate --output stdout      # preview the block payloads
 gravity docs generate --from .gravity/generated/docs.json  # replay a saved run
 ```
 
-It runs in two phases: a **plan** pass proposes the page set, then a per-page
-**author** pass writes that page's blocks. Audience is a **per-block** attribute,
+It runs in two phases: a **plan** pass enumerates the product's **feature sets**
+from the code and proposes a page for each (no page cap — coverage is the goal),
+then a per-page **author** pass writes that page's blocks. The plan pass is given
+the site's **existing pages** and the repo's configured **spaces**, so a re-run
+reuses a page's slug when it still covers that feature — updating it in place
+rather than minting a near-synonym and forking the docs — and files each page in
+a space that actually exists. Pages the plan does not cover are left published
+and reported, never silently retired. Audience is a **per-block** attribute,
 so one page can carry public, user, and developer blocks and the platform renders
 the ones matching the viewer. Existing pages are read first, so a re-run updates
 blocks in place (reusing keys) and proposes removing ones that are gone, rather
