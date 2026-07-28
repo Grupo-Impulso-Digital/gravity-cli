@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
 // BindingCheck is the outcome of verifying one block's source binding.
@@ -29,6 +29,26 @@ type BindingCheck struct {
 	// Want / Got are the recorded and recomputed hashes.
 	Want string
 	Got  string
+}
+
+// HashRepoFile computes the lowercase hex sha256 of a repo-relative file inside
+// repoRoot, applying the SAME sandbox rules (resolveRepoPath) and digest
+// (hashFile) that VerifyBinding uses. Authoring producers call this so an
+// authored block's recorded hash provably matches what the drift checker later
+// recomputes for the same file.
+func HashRepoFile(repoRoot, ref string) (string, error) {
+	clean, err := resolveRepoPath(repoRoot, ref)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", errors.New("ref is a directory")
+	}
+	return hashFile(clean)
 }
 
 // hashFile computes the sha256 of the file at path.
@@ -94,17 +114,14 @@ func VerifyBinding(repoRoot string, b *api.SourceBinding) BindingCheck {
 // resolveRepoPath validates ref is a repo-relative path inside repoRoot and
 // returns the absolute path.
 func resolveRepoPath(repoRoot, ref string) (string, error) {
-	if filepath.IsAbs(ref) {
+	abs, err := pathsafe.Resolve(repoRoot, ref)
+	switch {
+	case errors.Is(err, pathsafe.ErrAbsolute):
 		return "", errors.New("ref is an absolute path; not a repo file")
-	}
-	clean := filepath.Clean(ref)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	case errors.Is(err, pathsafe.ErrEscape):
 		return "", errors.New("ref escapes repository root")
-	}
-	abs := filepath.Join(repoRoot, clean)
-	rel, err := filepath.Rel(repoRoot, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", errors.New("ref escapes repository root")
+	case err != nil:
+		return "", err
 	}
 	return abs, nil
 }

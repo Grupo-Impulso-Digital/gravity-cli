@@ -9,11 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
 // Caps on output sizes so a single tool result can't blow the context budget.
@@ -33,36 +33,38 @@ type Tool struct {
 	// Terminal marks the submit tools that end the loop. Their parsed input is
 	// captured as the loop's result instead of being echoed back.
 	Terminal bool
+	// Validate, if set on a terminal tool, checks the model-supplied input
+	// before the loop accepts it. A validation error does NOT end the loop: it
+	// is fed back as an error tool_result so the model can correct its own
+	// mistake (e.g. a JSON-encoded string where an array belongs) instead of
+	// sinking the whole run after the tokens are already spent.
+	Validate func(input json.RawMessage) error
 }
 
 // sandboxPath validates a model-supplied path stays within the repo root and
-// returns it cleaned and repo-relative. It rejects absolute paths and any `..`
-// escape.
-func sandboxPath(root, p string) (string, error) {
+// returns it cleaned and repo-relative. It rejects empty paths, absolute paths,
+// and any `..` escape.
+func sandboxPath(p string) (string, error) {
 	if p == "" {
 		return "", errors.New("path is required")
 	}
-	if filepath.IsAbs(p) {
+	clean, err := pathsafe.Rel(p)
+	switch {
+	case errors.Is(err, pathsafe.ErrAbsolute):
 		return "", fmt.Errorf("absolute paths are not allowed: %q", p)
-	}
-	clean := filepath.Clean(p)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	case errors.Is(err, pathsafe.ErrEscape):
 		return "", fmt.Errorf("path escapes repository root: %q", p)
-	}
-	// Defensive: resolve against root and ensure it stays inside.
-	abs := filepath.Join(root, clean)
-	rel, err := filepath.Rel(root, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes repository root: %q", p)
+	case err != nil:
+		return "", err
 	}
 	return clean, nil
 }
 
-func truncate(s string, max int, label string) string {
-	if len(s) <= max {
+func truncate(s string, limit int, label string) string {
+	if len(s) <= limit {
 		return s
 	}
-	return s[:max] + fmt.Sprintf("\n\n... [truncated %d of %d bytes of %s] ...", len(s)-max, len(s), label)
+	return s[:limit] + fmt.Sprintf("\n\n... [truncated %d of %d bytes of %s] ...", len(s)-limit, len(s), label)
 }
 
 // GitTools returns the read-only git tool set bound to repo.
@@ -122,13 +124,13 @@ func GitTools(repo *git.Repo) []Tool {
 				}
 				_ = json.Unmarshal(input, &in)
 				if in.Path != "" {
-					if clean, err := sandboxPath(repo.Root, in.Path); err != nil {
+					clean, err := sandboxPath(in.Path)
+					if err != nil {
 						return "", err
-					} else {
-						in.Path = clean
 					}
+					in.Path = clean
 				}
-				out, err := repo.Diff(ctx, in.From, in.To, in.Path, false)
+				out, err := repo.Diff(ctx, in.From, in.To, in.Path)
 				if err != nil {
 					return "", err
 				}
@@ -157,7 +159,7 @@ func GitTools(repo *git.Repo) []Tool {
 					Path string `json:"path"`
 				}
 				_ = json.Unmarshal(input, &in)
-				clean, err := sandboxPath(repo.Root, in.Path)
+				clean, err := sandboxPath(in.Path)
 				if err != nil {
 					return "", err
 				}
@@ -197,7 +199,7 @@ func GitTools(repo *git.Repo) []Tool {
 		{
 			Def: api.Tool{
 				Name:        "read_file",
-				Description: "Read the current contents of a tracked file (size-capped).",
+				Description: "Read the contents of a tracked file at HEAD (size-capped). Use git_show for other refs.",
 				InputSchema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -211,13 +213,13 @@ func GitTools(repo *git.Repo) []Tool {
 					Path string `json:"path"`
 				}
 				_ = json.Unmarshal(input, &in)
-				clean, err := sandboxPath(repo.Root, in.Path)
+				clean, err := sandboxPath(in.Path)
 				if err != nil {
 					return "", err
 				}
-				// Read from the working tree via git show of the index/HEAD is
-				// not ideal for uncommitted files, so read the file directly
-				// but keep it sandboxed.
+				// Returns the file as committed at HEAD, so uncommitted edits
+				// are not visible. In CI the working tree equals HEAD; for
+				// other refs the model should use git_show.
 				out, err := repo.Show(ctx, "HEAD", clean)
 				if err != nil {
 					return "", err

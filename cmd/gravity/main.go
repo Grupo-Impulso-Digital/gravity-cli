@@ -14,10 +14,14 @@ import (
 var version = "0.1.0-dev"
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	cli.SetVersion(version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	os.Exit(cli.Execute(ctx))
+	return cli.Execute(ctx)
 }

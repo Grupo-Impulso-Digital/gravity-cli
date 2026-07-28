@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
@@ -157,6 +159,72 @@ func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
 	}
 }
 
+// TestRunner_RejectsInvalidTerminalInput guards the run-sinking failure: a
+// terminal submission that fails validation must be bounced back to the model
+// as an error tool_result (one lost turn) instead of ending the loop with
+// unusable input.
+func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
+	badInput := json.RawMessage(`{"title":"Overview","blocks":"totally not an array"}`)
+	goodInput := json.RawMessage(`{"title":"Overview","blocks":[{"key":"h1","type":"heading","content":{"text":"Overview"}}]}`)
+
+	script := &scriptedServer{
+		responses: []api.MessagesResponse{
+			{
+				Type:       "message",
+				Role:       "assistant",
+				StopReason: api.StopToolUse,
+				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_1", Name: agent.ToolSubmitPageDoc, Input: badInput}},
+			},
+			{
+				Type:       "message",
+				Role:       "assistant",
+				StopReason: api.StopToolUse,
+				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_2", Name: agent.ToolSubmitPageDoc, Input: goodInput}},
+			},
+		},
+	}
+	srv := newMessagesServer(t, script)
+	defer srv.Close()
+
+	runner := &agent.Runner{
+		Client: api.New(srv.URL, "test-token"),
+		Tools:  []agent.Tool{agent.SubmitPageDocTool()},
+	}
+	res, err := runner.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.TerminalTool != agent.ToolSubmitPageDoc {
+		t.Fatalf("expected terminal tool after correction, got %q (stopped=%v %s)", res.TerminalTool, res.Stopped, res.StopReason)
+	}
+	if res.Iterations != 2 {
+		t.Errorf("expected 2 iterations (reject + accept), got %d", res.Iterations)
+	}
+	page, err := agent.ParsePageDoc(res.TerminalInput)
+	if err != nil {
+		t.Fatalf("parse accepted input: %v", err)
+	}
+	if len(page.Blocks) != 1 || page.Blocks[0].Key != "h1" {
+		t.Errorf("unexpected accepted page: %+v", page)
+	}
+
+	// The second request must carry the rejection back as an error tool_result.
+	if len(script.requests) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(script.requests))
+	}
+	msgs := script.requests[1].Messages
+	last := msgs[len(msgs)-1]
+	if last.Role != api.RoleUser || len(last.Content) != 1 || last.Content[0].Type != api.PartToolResult {
+		t.Fatalf("expected trailing user tool_result, got %+v", last)
+	}
+	if !last.Content[0].IsError || last.Content[0].ToolUseID != "tu_1" {
+		t.Errorf("expected error tool_result for tu_1, got %+v", last.Content[0])
+	}
+	if !strings.Contains(last.Content[0].Content, "blocks") {
+		t.Errorf("rejection should explain the blocks problem, got %q", last.Content[0].Content)
+	}
+}
+
 func TestRunner_EndTurnStopsLoop(t *testing.T) {
 	script := &scriptedServer{
 		responses: []api.MessagesResponse{
@@ -184,6 +252,103 @@ func TestRunner_EndTurnStopsLoop(t *testing.T) {
 	}
 	if res.FinalText == "" {
 		t.Error("expected final text to be captured")
+	}
+}
+
+// TestRunner_StripsEmptyTextBlocks guards the intermittent mid-run 400: a model
+// turn that carries an empty text part alongside tool_use must NOT be echoed back
+// verbatim (an empty text block draws a provider 400), and a tool returning "" must
+// still produce a non-empty tool_result.
+func TestRunner_StripsEmptyTextBlocks(t *testing.T) {
+	script := &scriptedServer{
+		responses: []api.MessagesResponse{
+			{
+				Type:       "message",
+				Role:       "assistant",
+				StopReason: api.StopToolUse,
+				Content: []api.ContentPart{
+					{Type: api.PartText, Text: "   "},                       // empty/whitespace text the provider would reject
+					{Type: api.PartToolUse, ID: "tu_1", Name: "empty_tool"}, // no input → must default to {}
+				},
+			},
+			{
+				Type:       "message",
+				Role:       "assistant",
+				StopReason: api.StopEndTurn,
+				Content:    []api.ContentPart{{Type: api.PartText, Text: "done"}},
+			},
+		},
+	}
+	srv := newMessagesServer(t, script)
+	defer srv.Close()
+
+	runner := &agent.Runner{
+		Client: api.New(srv.URL, "test-token"),
+		Tools: []agent.Tool{{
+			Def: api.Tool{Name: "empty_tool", InputSchema: map[string]any{"type": "object"}},
+			Run: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil }, // empty output
+		}},
+	}
+	if _, err := runner.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// The second request echoes the assistant turn (index 1) and the tool_result (index 2).
+	if len(script.requests) != 2 {
+		t.Fatalf("expected 2 gateway requests, got %d", len(script.requests))
+	}
+	assistant := script.requests[1].Messages[1]
+	for _, p := range assistant.Content {
+		if p.Type == api.PartText && strings.TrimSpace(p.Text) == "" {
+			t.Errorf("empty text block was echoed back to the provider: %+v", assistant.Content)
+		}
+	}
+	if len(assistant.Content) != 1 || assistant.Content[0].Type != api.PartToolUse {
+		t.Errorf("expected only the tool_use to survive sanitization, got %+v", assistant.Content)
+	}
+	if got := strings.TrimSpace(string(assistant.Content[0].Input)); got != "{}" {
+		t.Errorf("empty tool_use input must default to {}, got %q", got)
+	}
+	toolResult := script.requests[1].Messages[2]
+	if c := toolResult.Content[0].Content; strings.TrimSpace(c) == "" {
+		t.Errorf("empty tool output must be replaced with a placeholder, got %q", c)
+	}
+}
+
+// TestRunner_RetriesTransientGatewayError guards resilience to the flaky LLM
+// gateway: a 502 (provider_error) is retried rather than aborting the run.
+func TestRunner_RetriesTransientGatewayError(t *testing.T) {
+	old := agent.RetryBackoff
+	agent.RetryBackoff = time.Millisecond
+	defer func() { agent.RetryBackoff = old }()
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls < 3 { // first two attempts flake with a transient gateway 502
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"code": "provider_error", "message": "flaky"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.MessagesResponse{
+			Type: "message", Role: "assistant", StopReason: api.StopEndTurn,
+			Content: []api.ContentPart{{Type: api.PartText, Text: "ok"}},
+		})
+	}))
+	defer srv.Close()
+
+	runner := &agent.Runner{Client: api.New(srv.URL, "test-token"), Tools: []agent.Tool{agent.ReportFindingsTool()}}
+	res, err := runner.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("run should succeed after retries: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 attempts (2 transient failures + success), got %d", calls)
+	}
+	if res.FinalText != "ok" {
+		t.Errorf("expected final text from the successful retry, got %q", res.FinalText)
 	}
 }
 

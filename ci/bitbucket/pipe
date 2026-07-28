@@ -17,7 +17,7 @@ definitions:
         script:
           - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
           - export PATH="$PATH:$(go env GOPATH)/bin"
-          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravity.dev}"
+          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://gravity.dave-vermette-1.workers.dev}"
           - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
           # GRAVITY_TOKEN is injected from the secured repository variable.
           - gravity check docs --ci --format text

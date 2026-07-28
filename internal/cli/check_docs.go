@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -75,7 +77,7 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 				if err != nil {
 					return Fail(CodeError, fmt.Errorf("resolve range: %w", err))
 				}
-				aiFindings, err := runDocsGapAgent(cmd.Context(), e.client, repo, rng, pages, logWriter(cmd, ci), &api.MessagesContext{Site: siteSlug, Space: e.cfg.Space})
+				aiFindings, err := runDocsGapAgent(cmd.Context(), e.client, repo, rng, pages, logWriter(cmd, ci), &api.MessagesContext{Site: siteSlug, Space: e.cfg.Space, Namespace: e.cfg.Namespace})
 				if err != nil {
 					return Fail(CodeError, err)
 				}
@@ -137,7 +139,7 @@ func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rn
 	tools := append(agent.GitTools(repo), agent.ReportFindingsTool())
 	runner := &agent.Runner{
 		Client:  client,
-		System:  prompts.DocsGap,
+		System:  resolvePrompt(ctx, client, prompts.NameDocsGap, logw),
 		Tools:   tools,
 		Context: mctx,
 		Log:     logw,
@@ -150,6 +152,9 @@ func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rn
 			"Identify genuine gaps where code changed but docs did not. Call report_findings when done.",
 		rng.From, rng.To, rng.From, rng.To, digest,
 	)
+	if mctx != nil {
+		kickoff = enrichKickoff(ctx, client, mctx.Namespace, "docs gaps "+rng.String(), kickoff, mctx)
+	}
 	res, err := runner.Run(ctx, kickoff)
 	if err != nil {
 		return nil, err
@@ -158,7 +163,7 @@ func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rn
 		if res.Stopped {
 			return nil, fmt.Errorf("AI docs-gap pass did not finish: %s", res.StopReason)
 		}
-		return nil, fmt.Errorf("AI docs-gap pass ended without calling report_findings")
+		return nil, errors.New("AI docs-gap pass ended without calling report_findings")
 	}
 	parsed, err := agent.ParseFindings(res.TerminalInput)
 	if err != nil {
@@ -190,9 +195,14 @@ func docsDigest(pages []api.Page) string {
 			types[blk.Type]++
 		}
 		if len(types) > 0 {
-			parts := make([]string, 0, len(types))
-			for t, n := range types {
-				parts = append(parts, fmt.Sprintf("%s×%d", t, n))
+			names := make([]string, 0, len(types))
+			for t := range types {
+				names = append(names, t)
+			}
+			sort.Strings(names)
+			parts := make([]string, 0, len(names))
+			for _, t := range names {
+				parts = append(parts, fmt.Sprintf("%s×%d", t, types[t]))
 			}
 			fmt.Fprintf(&b, "    blocks: %s\n", strings.Join(parts, ", "))
 		}

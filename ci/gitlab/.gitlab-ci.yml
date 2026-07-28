@@ -8,7 +8,7 @@
 # `allow_failure` to true if you want findings to be advisory.
 
 variables:
-  GRAVITY_API_URL: "https://app.gravity.dev"
+  GRAVITY_API_URL: "https://gravity.dave-vermette-1.workers.dev"
   GRAVITY_SITE: "docs"
 
 .gravity_base:

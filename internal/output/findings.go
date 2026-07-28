@@ -53,7 +53,7 @@ const (
 	FormatGitHub = "github"
 )
 
-// ValidFormat reports whether f is a recognised output format.
+// ValidFormat reports whether f is a recognized output format.
 func ValidFormat(f string) bool {
 	switch f {
 	case FormatText, FormatJSON, FormatGitHub:

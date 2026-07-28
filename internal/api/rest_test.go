@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -61,6 +62,64 @@ func TestWhoAmINullDefaultSite(t *testing.T) {
 	}
 }
 
+func TestSites(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/sites" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer sk_live_abc" {
+			t.Errorf("missing bearer token: %q", r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sites": []map[string]any{
+				{"id": "s1", "slug": "docs", "name": "Docs", "description": "Public docs", "visibility": "public"},
+				{"id": "s2", "slug": "internal", "name": "Internal", "visibility": "private"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "sk_live_abc")
+	sites, err := c.Sites(context.Background())
+	if err != nil {
+		t.Fatalf("sites: %v", err)
+	}
+	if len(sites) != 2 {
+		t.Fatalf("expected 2 sites, got %d", len(sites))
+	}
+	if sites[0].Slug != "docs" || sites[0].Name != "Docs" || sites[0].Description != "Public docs" {
+		t.Errorf("site[0] = %+v", sites[0])
+	}
+	if sites[1].Slug != "internal" || sites[1].Visibility != "private" {
+		t.Errorf("site[1] = %+v", sites[1])
+	}
+}
+
+func TestDeletePage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("method = %s, want DELETE", r.Method)
+		}
+		if r.URL.Path != "/api/v1/sites/docs/spaces/cli/pages/agents-md-ed44" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"pageId": "p2", "pageSlug": "agents-md-ed44",
+			"proposalId": "prop_9", "status": "proposed", "reviewUrl": "/app/proposals?id=prop_9",
+		})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "t")
+	resp, err := c.DeletePage(context.Background(), "docs", "cli", "agents-md-ed44")
+	if err != nil {
+		t.Fatalf("delete page: %v", err)
+	}
+	if resp.Status != "proposed" || resp.ProposalID != "prop_9" {
+		t.Errorf("response = %+v", resp)
+	}
+}
+
 func TestPagesQueryParam(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/sites/docs/pages" {
@@ -75,8 +134,10 @@ func TestPagesQueryParam(t *testing.T) {
 					"id": "p1", "slug": "intro", "title": "Intro", "spaceSlug": "changelog",
 					"version": 3, "releasedAt": "2024-01-01",
 					"blocks": []map[string]any{
-						{"id": "b1", "type": "api", "ownership": "machine", "content": map[string]any{}, "position": 0,
-							"sourceBinding": map[string]any{"kind": "file", "ref": "openapi.yaml", "hash": "deadbeef", "generator": "x"}},
+						{
+							"id": "b1", "type": "api", "ownership": "machine", "content": map[string]any{}, "position": 0,
+							"sourceBinding": map[string]any{"kind": "file", "ref": "openapi.yaml", "hash": "deadbeef", "generator": "x"},
+						},
 					},
 				},
 			},
@@ -206,8 +267,9 @@ func TestEnsureSpaceRequestShape(t *testing.T) {
 		if err := json.Unmarshal(body, &captured); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
+		// The server wraps the space in an envelope: { space: {...} }.
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "sp_1", "slug": "cli", "name": "Gravity CLI",
+			"space": map[string]any{"id": "sp_1", "slug": "cli", "name": "Gravity CLI"},
 		})
 	}))
 	defer srv.Close()
@@ -246,8 +308,8 @@ func TestEnsureSpaceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	apiErr, ok := err.(*api.APIError)
-	if !ok {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *api.APIError, got %T: %v", err, err)
 	}
 	if apiErr.Code != "forbidden" || apiErr.Message != "not authorized for site" {
@@ -341,6 +403,41 @@ func TestUpsertPageRequestShape(t *testing.T) {
 	}
 }
 
+func TestUpsertPageAudiences(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		_ = json.NewEncoder(w).Encode(map[string]any{"pageSlug": "x", "status": "proposed"})
+	}))
+	defer srv.Close()
+
+	c := api.New(srv.URL, "t")
+	_, err := c.UpsertPage(context.Background(), "docs", api.PageUpsertRequest{
+		SpaceSlug: "docs", Slug: "x", Title: "X",
+		Blocks: []api.BlockInput{
+			{Key: "a", Type: "prose", Ownership: "hybrid", Audiences: []string{"developers"}, Content: map[string]any{"text": "dev only"}},
+			{Key: "b", Type: "prose", Ownership: "hybrid", Content: map[string]any{"text": "everyone"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	blocks, ok := captured["blocks"].([]any)
+	if !ok || len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %v", captured["blocks"])
+	}
+	first, _ := blocks[0].(map[string]any)
+	aud, ok := first["audiences"].([]any)
+	if !ok || len(aud) != 1 || aud[0] != "developers" {
+		t.Errorf("block a audiences = %v, want [developers]", first["audiences"])
+	}
+	second, _ := blocks[1].(map[string]any)
+	if _, present := second["audiences"]; present {
+		t.Errorf("block b should omit audiences when empty, got %v", second["audiences"])
+	}
+}
+
 func TestUpsertPageError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
@@ -357,8 +454,8 @@ func TestUpsertPageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	apiErr, ok := err.(*api.APIError)
-	if !ok {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *api.APIError, got %T: %v", err, err)
 	}
 	if apiErr.StatusCode != http.StatusUnprocessableEntity {
@@ -383,8 +480,8 @@ func TestErrorEnvelope(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	apiErr, ok := err.(*api.APIError)
-	if !ok {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected *api.APIError, got %T: %v", err, err)
 	}
 	if apiErr.StatusCode != http.StatusUnauthorized {

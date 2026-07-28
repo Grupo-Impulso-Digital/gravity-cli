@@ -140,7 +140,55 @@ func TestResolveRangeNoTags(t *testing.T) {
 	}
 }
 
-func TestLogAndChangedFiles(t *testing.T) {
+func TestCurrentBranchAndRemoteURL(t *testing.T) {
+	dir := testRepo(t)
+	ctx := context.Background()
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// No remote configured yet -> empty, not an error.
+	remote, err := repo.RemoteURL(ctx)
+	if err != nil {
+		t.Fatalf("remote url (none): %v", err)
+	}
+	if remote != "" {
+		t.Errorf("expected no remote, got %q", remote)
+	}
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, e := cmd.CombinedOutput(); e != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), e, out)
+		}
+	}
+	// Force a deterministic branch name regardless of the host's init.defaultBranch.
+	run("branch", "-M", "main")
+	run("remote", "add", "upstream", "https://example.com/upstream.git")
+	run("remote", "add", "origin", "git@github.com:acme/api.git")
+
+	branch, err := repo.CurrentBranch(ctx)
+	if err != nil {
+		t.Fatalf("current branch: %v", err)
+	}
+	if branch != "main" {
+		t.Errorf("expected branch main, got %q", branch)
+	}
+
+	// origin is preferred over the first-added remote.
+	remote, err = repo.RemoteURL(ctx)
+	if err != nil {
+		t.Fatalf("remote url: %v", err)
+	}
+	if remote != "git@github.com:acme/api.git" {
+		t.Errorf("expected origin remote, got %q", remote)
+	}
+}
+
+func TestLog(t *testing.T) {
 	dir := testRepo(t)
 	ctx := context.Background()
 	repo, err := git.Open(ctx, dir)
@@ -158,22 +206,6 @@ func TestLogAndChangedFiles(t *testing.T) {
 	if !strings.Contains(commits[0].Subject, "add beta") {
 		t.Errorf("unexpected commit subject: %q", commits[0].Subject)
 	}
-
-	files, err := repo.ChangedFiles(ctx, "v1.0.0", "HEAD")
-	if err != nil {
-		t.Fatalf("changed files: %v", err)
-	}
-	want := map[string]bool{"a.txt": false, "b.txt": false}
-	for _, f := range files {
-		if _, ok := want[f]; ok {
-			want[f] = true
-		}
-	}
-	for f, seen := range want {
-		if !seen {
-			t.Errorf("expected %s in changed files, got %v", f, files)
-		}
-	}
 }
 
 func TestDiffAndShow(t *testing.T) {
@@ -184,7 +216,7 @@ func TestDiffAndShow(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	diff, err := repo.Diff(ctx, "v1.0.0", "HEAD", "", false)
+	diff, err := repo.Diff(ctx, "v1.0.0", "HEAD", "")
 	if err != nil {
 		t.Fatalf("diff: %v", err)
 	}

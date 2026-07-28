@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,6 +61,20 @@ func (e *APIError) IsAuth() bool {
 	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
 }
 
+// IsUnavailable reports that the platform does not (yet) implement this route —
+// so a greenfield feature can degrade gracefully until its endpoint ships.
+func (e *APIError) IsUnavailable() bool {
+	switch e.StatusCode {
+	case http.StatusNotFound, http.StatusNotImplemented:
+		return true
+	}
+	switch e.Code {
+	case "not_implemented", "feature_disabled", "unknown_route":
+		return true
+	}
+	return false
+}
+
 type errorEnvelope struct {
 	Error struct {
 		Code    string `json:"code"`
@@ -71,7 +86,7 @@ type errorEnvelope struct {
 // be nil). A non-2xx status is returned as *APIError.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	if c.BaseURL == "" {
-		return fmt.Errorf("no API URL configured (set --api-url, GRAVITY_API_URL, or run gravity auth login)")
+		return errors.New("no API URL configured (set --api-url, GRAVITY_API_URL, or run gravity auth login)")
 	}
 	u := c.BaseURL + path
 	if len(query) > 0 {
@@ -142,4 +157,14 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values, out any
 // Post issues a POST request with a JSON body.
 func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPost, path, nil, body, out)
+}
+
+// Patch issues a PATCH request with a JSON body.
+func (c *Client) Patch(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPatch, path, nil, body, out)
+}
+
+// Delete issues a DELETE request.
+func (c *Client) Delete(ctx context.Context, path string, out any) error {
+	return c.do(ctx, http.MethodDelete, path, nil, nil, out)
 }

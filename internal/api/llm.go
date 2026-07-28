@@ -21,16 +21,13 @@ const (
 
 // Stop reasons.
 const (
-	StopEndTurn   = "end_turn"
-	StopToolUse   = "tool_use"
-	StopMaxTokens = "max_tokens"
+	StopEndTurn = "end_turn"
+	StopToolUse = "tool_use"
 )
 
 // Tool-choice types.
 const (
 	ToolChoiceAuto = "auto"
-	ToolChoiceAny  = "any"
-	ToolChoiceTool = "tool"
 )
 
 // ContentPart is a single piece of message content. It supports the request
@@ -55,7 +52,7 @@ type ContentPart struct {
 	IsError bool   `json:"is_error,omitempty"`
 }
 
-// Message is one turn in the conversation. Content is always serialised as an
+// Message is one turn in the conversation. Content is always serialized as an
 // array of parts in requests for consistency.
 type Message struct {
 	Role    string        `json:"role"`
@@ -118,6 +115,9 @@ type ToolChoice struct {
 type MessagesContext struct {
 	Site  string `json:"site,omitempty"`
 	Space string `json:"space,omitempty"`
+	// Namespace is the product-level nucleus knowledge namespace. Additive and
+	// ignored by gateways that don't yet support nucleus-aware RAG.
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // MessagesRequest is the request body of POST /api/llm/v1/messages.

@@ -1,5 +1,5 @@
 // Package git wraps the system `git` binary (via os/exec). It deliberately
-// avoids a pure-Go git implementation so behaviour matches whatever git CI
+// avoids a pure-Go git implementation so behavior matches whatever git CI
 // already has. All operations are read-only and run within a fixed repo root.
 package git
 
@@ -80,6 +80,44 @@ func (r *Repo) FirstCommit(ctx context.Context) (string, error) {
 	}
 	// In the presence of multiple roots, take the last (oldest listed).
 	return lines[len(lines)-1], nil
+}
+
+// CurrentBranch returns the checked-out branch name, or "HEAD" when the repo is
+// in a detached-HEAD state (the value git itself reports).
+func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
+	out, err := r.git(ctx, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// RemoteURL returns the fetch URL of a remote, preferring "origin" and falling
+// back to the first configured remote. A repo with no remotes is not an error —
+// it returns "" — since ping/setup callers treat the remote as best-effort.
+func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
+	list, err := r.git(ctx, "remote")
+	if err != nil {
+		//nolint:nilerr // a remote lookup failure degrades to "no remote", never fatal
+		return "", nil
+	}
+	remotes := strings.Fields(list)
+	if len(remotes) == 0 {
+		return "", nil
+	}
+	name := remotes[0]
+	for _, rem := range remotes {
+		if rem == "origin" {
+			name = "origin"
+			break
+		}
+	}
+	out, err := r.git(ctx, "remote", "get-url", name)
+	if err != nil {
+		//nolint:nilerr // best-effort: an unreadable remote URL is reported as absent
+		return "", nil
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // Range describes the commit range release notes / diffs are computed over.
@@ -168,36 +206,13 @@ func (r *Repo) LogOneline(ctx context.Context, from, to string, maxCount int) (s
 	return r.git(ctx, args...)
 }
 
-// ChangedFiles returns the files changed between from and to.
-func (r *Repo) ChangedFiles(ctx context.Context, from, to string) ([]string, error) {
-	if to == "" {
-		to = "HEAD"
-	}
-	args := []string{"diff", "--name-only", diffRange(from, to)}
-	out, err := r.git(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-	return files, nil
-}
-
 // Diff returns the unified diff between from and to, optionally limited to a
-// path. nameOnly toggles `--name-only`.
-func (r *Repo) Diff(ctx context.Context, from, to, path string, nameOnly bool) (string, error) {
+// path.
+func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) {
 	if to == "" {
 		to = "HEAD"
 	}
-	args := []string{"diff", "--no-color"}
-	if nameOnly {
-		args = append(args, "--name-only")
-	}
-	args = append(args, diffRange(from, to))
+	args := []string{"diff", "--no-color", rangeArg(from, to)}
 	if path != "" {
 		args = append(args, "--", path)
 	}
@@ -248,18 +263,10 @@ func (r *Repo) Grep(ctx context.Context, pattern, glob string) (string, error) {
 	return out, nil
 }
 
-// rangeArg renders a log range. Empty from means "all history of to".
+// rangeArg renders a log or diff range. An empty from means "all history up to
+// to" (for log) or "everything reachable from to" (for diff); a non-empty from
+// produces the from..to form, which git accepts for both log and diff.
 func rangeArg(from, to string) string {
-	if from == "" {
-		return to
-	}
-	return from + ".." + to
-}
-
-// diffRange renders a diff range. Empty from diffs against the empty tree by
-// comparing to itself (so a single ref diffs working state); we instead use the
-// from..to form which git accepts for diff as well.
-func diffRange(from, to string) string {
 	if from == "" {
 		return to
 	}

@@ -4,12 +4,17 @@
 package checks
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/pb33f/libopenapi"
 )
+
+// errNoOpenAPIModel is returned when a document parses but neither the v3 nor
+// the v2 model can be built from it.
+var errNoOpenAPIModel = errors.New("unable to build an OpenAPI model from the document")
 
 // Operation is a normalised (method, path) pair plus its summary.
 type Operation struct {
@@ -70,7 +75,129 @@ func ParseOpenAPI(spec []byte) (map[string]Operation, error) {
 		return ops, nil
 	}
 
-	return nil, fmt.Errorf("unable to build an OpenAPI model from the document")
+	return nil, errNoOpenAPIModel
+}
+
+// ParamDetail is one operation parameter captured for an authored api block.
+type ParamDetail struct {
+	Name        string `json:"name"`
+	In          string `json:"in"`
+	Required    bool   `json:"required"`
+	Description string `json:"description,omitempty"`
+}
+
+// ResponseDetail is one documented response code captured for an api block.
+type ResponseDetail struct {
+	Code        string `json:"code"`
+	Description string `json:"description,omitempty"`
+}
+
+// OperationDetail is the full operation payload authored into a machine api
+// block. Summary is read from the same model field as ParseOpenAPI, so an
+// authored block satisfies `check api --openapi` by construction.
+type OperationDetail struct {
+	Method    string           `json:"method"`
+	Path      string           `json:"path"`
+	Summary   string           `json:"summary"`
+	Params    []ParamDetail    `json:"params"`
+	Responses []ResponseDetail `json:"responses"`
+}
+
+// ParseOpenAPIDetailed parses an OpenAPI document (2.0 or 3.x) and returns the
+// full operation detail for each (method, path), sorted by path then method for
+// deterministic, byte-stable authoring.
+func ParseOpenAPIDetailed(spec []byte) ([]OperationDetail, error) {
+	doc, err := libopenapi.NewDocument(spec)
+	if err != nil {
+		return nil, fmt.Errorf("parse openapi document: %w", err)
+	}
+
+	var out []OperationDetail
+
+	if v3, err := doc.BuildV3Model(); err == nil && v3 != nil {
+		if v3.Model.Paths != nil {
+			for pair := v3.Model.Paths.PathItems.First(); pair != nil; pair = pair.Next() {
+				path := pair.Key()
+				item := pair.Value()
+				for method, op := range item.GetOperations().FromOldest() {
+					d := OperationDetail{Method: strings.ToUpper(method), Path: path}
+					if op != nil {
+						d.Summary = op.Summary
+						for _, p := range op.Parameters {
+							if p == nil {
+								continue
+							}
+							req := false
+							if p.Required != nil {
+								req = *p.Required
+							}
+							d.Params = append(d.Params, ParamDetail{Name: p.Name, In: p.In, Required: req, Description: p.Description})
+						}
+						if op.Responses != nil && op.Responses.Codes != nil {
+							for c := op.Responses.Codes.First(); c != nil; c = c.Next() {
+								desc := ""
+								if c.Value() != nil {
+									desc = c.Value().Description
+								}
+								d.Responses = append(d.Responses, ResponseDetail{Code: c.Key(), Description: desc})
+							}
+						}
+					}
+					out = append(out, d)
+				}
+			}
+		}
+		sortOperationDetails(out)
+		return out, nil
+	}
+
+	if v2, err := doc.BuildV2Model(); err == nil && v2 != nil {
+		if v2.Model.Paths != nil {
+			for pair := v2.Model.Paths.PathItems.First(); pair != nil; pair = pair.Next() {
+				path := pair.Key()
+				item := pair.Value()
+				for method, op := range item.GetOperations().FromOldest() {
+					d := OperationDetail{Method: strings.ToUpper(method), Path: path}
+					if op != nil {
+						d.Summary = op.Summary
+						for _, p := range op.Parameters {
+							if p == nil {
+								continue
+							}
+							req := false
+							if p.Required != nil {
+								req = *p.Required
+							}
+							d.Params = append(d.Params, ParamDetail{Name: p.Name, In: p.In, Required: req, Description: p.Description})
+						}
+						if op.Responses != nil && op.Responses.Codes != nil {
+							for c := op.Responses.Codes.First(); c != nil; c = c.Next() {
+								desc := ""
+								if c.Value() != nil {
+									desc = c.Value().Description
+								}
+								d.Responses = append(d.Responses, ResponseDetail{Code: c.Key(), Description: desc})
+							}
+						}
+					}
+					out = append(out, d)
+				}
+			}
+		}
+		sortOperationDetails(out)
+		return out, nil
+	}
+
+	return nil, errNoOpenAPIModel
+}
+
+func sortOperationDetails(ops []OperationDetail) {
+	sort.SliceStable(ops, func(i, j int) bool {
+		if ops[i].Path != ops[j].Path {
+			return ops[i].Path < ops[j].Path
+		}
+		return ops[i].Method < ops[j].Method
+	})
 }
 
 // DocumentedOp is one operation as captured in a Gravity api block.

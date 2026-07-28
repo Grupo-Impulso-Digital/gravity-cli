@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -57,7 +58,7 @@ Output modes:
 			}
 			// Resolve the target space with the documented precedence
 			// (flag > env > config); the flag default is empty so GRAVITY_SPACE /
-			// .gravity.yaml are honoured. The command default applies only when
+			// .gravity.yaml are honored. The command default applies only when
 			// nothing else is set.
 			sp := e.cfg.Space
 			if sp == "" {
@@ -90,7 +91,7 @@ Output modes:
 			}
 			fmt.Fprintf(logw, "release-notes: %d commit(s) in range\n", len(commits))
 
-			notes, err := runReleaseNotesAgent(cmd.Context(), e.client, repo, rng, logw, &api.MessagesContext{Site: e.cfg.Site, Space: sp})
+			notes, err := runReleaseNotesAgent(cmd.Context(), e.client, repo, rng, logw, &api.MessagesContext{Site: e.cfg.Site, Space: sp, Namespace: e.cfg.Namespace})
 			if err != nil {
 				return Fail(CodeError, err)
 			}
@@ -136,7 +137,7 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 	tools := append(agent.GitTools(repo), agent.SubmitReleaseNotesTool())
 	runner := &agent.Runner{
 		Client:  client,
-		System:  prompts.ReleaseNotes,
+		System:  resolvePrompt(ctx, client, prompts.NameReleaseNotes, logw),
 		Tools:   tools,
 		Context: mctx,
 		Log:     logw,
@@ -147,6 +148,9 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 			"When finished, call submit_release_notes.",
 		rng.From, rng.To, rng.From, rng.To,
 	)
+	if mctx != nil {
+		kickoff = enrichKickoff(ctx, client, mctx.Namespace, "release notes "+rng.String(), kickoff, mctx)
+	}
 	res, err := runner.Run(ctx, kickoff)
 	if err != nil {
 		return nil, err
@@ -155,7 +159,7 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 		if res.Stopped {
 			return nil, fmt.Errorf("agent did not submit release notes: %s", res.StopReason)
 		}
-		return nil, fmt.Errorf("agent ended without calling submit_release_notes")
+		return nil, errors.New("agent ended without calling submit_release_notes")
 	}
 	notes, err := agent.ParseReleaseNotes(res.TerminalInput)
 	if err != nil {
