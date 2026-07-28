@@ -13,8 +13,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
-// hierarchyServer mocks the platform for runSync hierarchy tests, recording
-// space ensures (in order), page upserts, and space PATCHes.
 type hierarchyServer struct {
 	features     map[string]bool
 	spaceEnsures []map[string]any
@@ -61,9 +59,6 @@ func (h *hierarchyServer) handler(t *testing.T) http.HandlerFunc {
 	}
 }
 
-// On a hierarchy-capable platform: the parent space is ensured first, the
-// default space is nested under it, page upserts carry their collection, and
-// the declared home page is pinned via a space PATCH.
 func TestRunSyncHierarchyCapable(t *testing.T) {
 	h := &hierarchyServer{features: map[string]bool{featureSpaceHierarchy: true}}
 	srv := httptest.NewServer(h.handler(t))
@@ -115,9 +110,6 @@ func TestRunSyncHierarchyCapable(t *testing.T) {
 	}
 }
 
-// On a platform without the feature: collections are stripped from upserts, no
-// parent is sent on space ensures, no home PATCH happens, and one notice says
-// the hierarchy declarations are inert.
 func TestRunSyncHierarchyFallback(t *testing.T) {
 	h := &hierarchyServer{features: map[string]bool{}}
 	srv := httptest.NewServer(h.handler(t))

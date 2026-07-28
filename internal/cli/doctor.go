@@ -41,9 +41,12 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 			} else {
 				fmt.Fprintln(out, "Default site: (none)")
 			}
-			fmt.Fprintf(out, "Runner (capture): %s\n", featureState(who.Features[featureCaptures]))
-			fmt.Fprintf(out, "Nucleus (memory): %s\n", featureState(who.Features[featureNucleus]))
 			fmt.Fprintf(out, "Space hierarchy (subspaces/home pages/collections): %s\n", featureState(who.Features[featureSpaceHierarchy]))
+			fmt.Fprintf(out, "Connected repos (registration + write attribution): %s\n", featureState(who.Features[featureRepos]))
+			fmt.Fprintf(out, "Feature inventory: %s\n", featureState(who.Features[featureInventory]))
+			fmt.Fprintf(out, "Coverage reporting: %s\n", featureState(who.Features[featureCoverage]))
+			fmt.Fprintf(out, "Doc Agent runs (CLI-triggered): %s\n", featureState(who.Features[featureDocAgentRuns]))
+			fmt.Fprintf(out, "Page languages (i18n translation requests): %s\n", featureState(who.Features[featurePageLanguages]))
 
 			cfg, err := e.client.LLMConfig(cmd.Context())
 			if err != nil {
@@ -66,8 +69,6 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// printConfigSummary reports the resolved configuration and where each value
-// came from, plus a summary of the project manifest.
 func printConfigSummary(out io.Writer, gf *globalFlags, e *env) {
 	var projSite, projAPIURL, projSpace string
 	if e.proj != nil {
@@ -107,8 +108,6 @@ func printConfigSummary(out io.Writer, gf *globalFlags, e *env) {
 	}
 }
 
-// fieldSource attributes a resolved value to flag > env > project, returning ""
-// when none of those provided it.
 func fieldSource(flagVal, envName, projVal string) string {
 	if flagVal != "" {
 		return "flag"
@@ -165,7 +164,6 @@ func featureState(available bool) string {
 	return "not yet available"
 }
 
-// classifyAuthErr keeps auth errors readable for the doctor output.
 func classifyAuthErr(err error) error {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) && apiErr.IsAuth() {

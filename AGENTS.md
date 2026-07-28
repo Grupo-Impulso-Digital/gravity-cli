@@ -167,4 +167,6 @@ the same symbol the Makefile sets.
 - [docs/platform-authoring-api.md](docs/platform-authoring-api.md) — the platform
   authoring API contract.
 - [ci/](ci/) — composite Action / pipeline snippets for *downstream consumers*
-  of the CLI. **Not** this repo's own CI (that's `.github/workflows/ci.yml`).
+  of the CLI, plus the CI cadence contract ([ci/README.md](ci/README.md)). **Not**
+  this repo's own build CI (that's `.github/workflows/ci.yml`);
+  `.github/workflows/docs.yml` does dogfood the composite action from `ci/github`.

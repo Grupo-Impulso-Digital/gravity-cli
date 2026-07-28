@@ -6,20 +6,14 @@ import (
 	"os"
 )
 
-// Exit codes used across the CLI. The contract is:
-//
-//	0 = success / no findings
-//	1 = findings were produced (drift, gaps, stale bindings, ...)
-//	2 = an operational error (auth, network, bad input, ...)
+// CodeOK, CodeFindings, and CodeError are the exit codes used across the CLI.
 const (
 	CodeOK       = 0
 	CodeFindings = 1
 	CodeError    = 2
 )
 
-// ExitError carries an explicit process exit code alongside an error. Commands
-// return it (wrapped) so the root runner can translate it into os.Exit without
-// every command reaching for os.Exit directly.
+// ExitError carries an explicit process exit code alongside an error.
 type ExitError struct {
 	Code int
 	Err  error
@@ -44,8 +38,7 @@ func Failf(code int, format string, args ...any) *ExitError {
 	return &ExitError{Code: code, Err: fmt.Errorf(format, args...)}
 }
 
-// CodeFor extracts the intended exit code from an error chain, defaulting to
-// CodeError for any non-nil error and CodeOK for nil.
+// CodeFor extracts the intended exit code from an error chain.
 func CodeFor(err error) int {
 	if err == nil {
 		return CodeOK

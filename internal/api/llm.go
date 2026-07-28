@@ -30,30 +30,22 @@ const (
 	ToolChoiceAuto = "auto"
 )
 
-// ContentPart is a single piece of message content. It supports the request
-// parts (text, tool_result) and response parts (text, tool_use). Custom JSON
-// handling lets `content` of a message be either a plain string or an array.
+// ContentPart is a single piece of message content.
 type ContentPart struct {
 	Type string `json:"type"`
 
-	// text
 	Text string `json:"text,omitempty"`
 
-	// tool_use (response)
 	ID    string          `json:"id,omitempty"`
 	Name  string          `json:"name,omitempty"`
 	Input json.RawMessage `json:"input,omitempty"`
 
-	// tool_result (request)
 	ToolUseID string `json:"tool_use_id,omitempty"`
-	// Content holds the tool result text. The Anthropic API also accepts a
-	// content-part array here, but a string is sufficient for this contract.
-	Content string `json:"content,omitempty"`
-	IsError bool   `json:"is_error,omitempty"`
+	Content   string `json:"content,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
 }
 
-// Message is one turn in the conversation. Content is always serialized as an
-// array of parts in requests for consistency.
+// Message is one turn in the conversation.
 type Message struct {
 	Role    string        `json:"role"`
 	Content []ContentPart `json:"content"`
@@ -73,7 +65,6 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		m.Content = nil
 		return nil
 	}
-	// Try string form first.
 	var s string
 	if err := json.Unmarshal(raw.Content, &s); err == nil {
 		m.Content = []ContentPart{{Type: PartText, Text: s}}
@@ -110,13 +101,10 @@ type ToolChoice struct {
 	Name string `json:"name,omitempty"`
 }
 
-// MessagesContext lets the caller scope the platform gateway's RAG to a
-// specific site/space. Absent context is treated as org/default-site scope.
+// MessagesContext lets the caller scope the platform gateway's RAG to a specific site/space.
 type MessagesContext struct {
-	Site  string `json:"site,omitempty"`
-	Space string `json:"space,omitempty"`
-	// Namespace is the product-level nucleus knowledge namespace. Additive and
-	// ignored by gateways that don't yet support nucleus-aware RAG.
+	Site      string `json:"site,omitempty"`
+	Space     string `json:"space,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
 }
 

@@ -5,74 +5,98 @@ import (
 	"net/url"
 )
 
-// --- Nucleus memory service — GREENFIELD contract. ---
-// Nucleus stores small "atoms" of memory that link to other atoms, forming a
-// graph the AI can traverse instead of reading whole documents. The service
-// exists but its API/MCP is not ready; the CLI integrates as a thin, best-effort
-// client that degrades gracefully (see IsUnavailable) until it ships.
+// Memory scope types.
+const (
+	MemoryScopeOrg   = "org"
+	MemoryScopeSite  = "site"
+	MemoryScopeSpace = "space"
+)
 
-// AtomSource ties a code-distilled atom back to its source (reusing the doc
-// SourceBinding shape so atoms are drift-traceable like blocks).
-type AtomSource struct {
-	Kind      string `json:"kind,omitempty"`
-	Ref       string `json:"ref,omitempty"`
-	Hash      string `json:"hash,omitempty"`
-	Generator string `json:"generator,omitempty"`
+// MemoryRef is a reference to a platform object.
+type MemoryRef struct {
+	RefType string `json:"refType"`
+	RefID   string `json:"refId"`
 }
 
-// AtomScope keys an atom to a product namespace and (optionally) a site/space.
-type AtomScope struct {
-	Namespace string `json:"namespace,omitempty"`
-	Site      string `json:"site,omitempty"`
-	Space     string `json:"space,omitempty"`
+// MemoryScope identifies where an atom lives.
+type MemoryScope struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
 }
 
-// Atom is one unit of memory. Links are atom-id edges to related atoms.
-type Atom struct {
-	ID        string      `json:"id,omitempty"`
-	Content   string      `json:"content"`
-	Links     []string    `json:"links,omitempty"`
-	Tags      []string    `json:"tags,omitempty"`
-	Source    *AtomSource `json:"source,omitempty"`
-	Scope     *AtomScope  `json:"scope,omitempty"`
-	Score     float64     `json:"score,omitempty"`
-	UpdatedAt string      `json:"updatedAt,omitempty"`
+// Memory is one nucleus atom as the platform serializes it.
+type Memory struct {
+	ID         string      `json:"id"`
+	Scope      MemoryScope `json:"scope"`
+	Kind       string      `json:"kind"`
+	Status     string      `json:"status"`
+	Title      string      `json:"title"`
+	Body       string      `json:"body"`
+	Tags       []string    `json:"tags,omitempty"`
+	Confidence float64     `json:"confidence,omitempty"`
+	Sources    []MemoryRef `json:"sources,omitempty"`
 }
 
-// AtomQuery retrieves relevant atoms for a context.
-type AtomQuery struct {
-	Query string   `json:"query,omitempty"`
-	Tags  []string `json:"tags,omitempty"`
-	Site  string   `json:"site,omitempty"`
-	Space string   `json:"space,omitempty"`
-	Limit int      `json:"limit,omitempty"`
+// RecallHit is a Memory plus its ranking.
+type RecallHit struct {
+	Memory
+	Score     float64  `json:"score"`
+	MatchedBy []string `json:"matchedBy"`
 }
 
-type atomQueryResponse struct {
-	Atoms []Atom `json:"atoms"`
+// RecallRequest is the body of both recall endpoints.
+type RecallRequest struct {
+	Query         string   `json:"query"`
+	Limit         int      `json:"limit,omitempty"`
+	SpaceID       string   `json:"spaceId,omitempty"`
+	Kinds         []string `json:"kinds,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	MinConfidence float64  `json:"minConfidence,omitempty"`
+	Namespace     string   `json:"namespace,omitempty"`
 }
 
-// AtomUpsertResponse is the response of upserting an atom.
-type AtomUpsertResponse struct {
-	Atom    Atom `json:"atom"`
-	Created bool `json:"created"`
+// RecallResponse is the response of both recall endpoints.
+type RecallResponse struct {
+	Scope MemoryScope `json:"scope"`
+	Hits  []RecallHit `json:"hits"`
 }
 
-// QueryAtoms calls POST /api/v1/knowledge/:namespace/atoms/query.
-func (c *Client) QueryAtoms(ctx context.Context, namespace string, q AtomQuery) ([]Atom, error) {
-	var out atomQueryResponse
-	if err := c.Post(ctx, "/api/v1/knowledge/"+url.PathEscape(namespace)+"/atoms/query", q, &out); err != nil {
+// MemoryUpsertRequest is the body of POST /api/v1/nucleus/memories.
+type MemoryUpsertRequest struct {
+	Title      string      `json:"title"`
+	Body       string      `json:"body"`
+	Kind       string      `json:"kind,omitempty"`
+	Tags       []string    `json:"tags,omitempty"`
+	Confidence float64     `json:"confidence,omitempty"`
+	Sources    []MemoryRef `json:"sources,omitempty"`
+	Scope      string      `json:"scope,omitempty"`
+	SiteSlug   string      `json:"siteSlug,omitempty"`
+	SpaceID    string      `json:"spaceId,omitempty"`
+}
+
+// MemoryUpsertResponse is the response of POST /api/v1/nucleus/memories.
+type MemoryUpsertResponse struct {
+	Memory  Memory `json:"memory"`
+	Outcome string `json:"outcome"`
+}
+
+// Recall calls POST /api/v1/sites/:siteSlug/nucleus/recall.
+func (c *Client) Recall(ctx context.Context, siteSlug string, req RecallRequest) (*RecallResponse, error) {
+	path := "/api/v1/nucleus/recall"
+	if siteSlug != "" {
+		path = "/api/v1/sites/" + url.PathEscape(siteSlug) + "/nucleus/recall"
+	}
+	var out RecallResponse
+	if err := c.Post(ctx, path, req, &out); err != nil {
 		return nil, err
 	}
-	return out.Atoms, nil
+	return &out, nil
 }
 
-// UpsertAtom calls POST /api/v1/knowledge/:namespace/atoms (idempotent on id, or
-// on source ref+hash). The atom carries its links, so no separate link endpoint
-// is needed.
-func (c *Client) UpsertAtom(ctx context.Context, namespace string, a Atom) (*AtomUpsertResponse, error) {
-	var out AtomUpsertResponse
-	if err := c.Post(ctx, "/api/v1/knowledge/"+url.PathEscape(namespace)+"/atoms", a, &out); err != nil {
+// UpsertMemory calls POST /api/v1/nucleus/memories.
+func (c *Client) UpsertMemory(ctx context.Context, req MemoryUpsertRequest) (*MemoryUpsertResponse, error) {
+	var out MemoryUpsertResponse
+	if err := c.Post(ctx, "/api/v1/nucleus/memories", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

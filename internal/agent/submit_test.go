@@ -48,8 +48,6 @@ func TestParsePageDoc(t *testing.T) {
 }
 
 func TestParsePageDoc_StringEncodedBlocks(t *testing.T) {
-	// The failure that sank a full authoring run: the model passed blocks as a
-	// JSON-encoded string instead of an array.
 	inner := `[{"key":"h1","type":"heading","content":{"text":"Overview","level":2}}]`
 	raw, err := json.Marshal(map[string]any{"title": "Overview", "blocks": inner})
 	if err != nil {
@@ -148,5 +146,95 @@ func TestDocToolsAreTerminal(t *testing.T) {
 		if tc.tool.Def.InputSchema["type"] != "object" {
 			t.Errorf("%s schema type = %v", tc.name, tc.tool.Def.InputSchema["type"])
 		}
+	}
+}
+
+func TestParseDocPlanUnits(t *testing.T) {
+	raw := json.RawMessage(`{
+		"units":[{"key":"svc.billing.invoicing","kind":"service","title":"Invoicing service",
+			"summary":"Numbers and dispatches invoices.","sourceRefs":["src/billing/invoice.ts"],
+			"audiences":["developers"],"pageSlugs":["invoicing"],"changed":true}],
+		"pages":[{"slug":"invoicing","title":"Invoicing","audiences":["developers"],
+			"units":["svc.billing.invoicing"],"kind":"service"}]
+	}`)
+	plan, err := agent.ParseDocPlan(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(plan.Units) != 1 {
+		t.Fatalf("units = %d, want 1", len(plan.Units))
+	}
+	u := plan.Units[0]
+	if u.Key != "svc.billing.invoicing" || u.Kind != "service" || !u.Changed {
+		t.Errorf("unit = %+v", u)
+	}
+	if u.SourceRefs[0] != "src/billing/invoice.ts" || u.PageSlugs[0] != "invoicing" {
+		t.Errorf("unit refs = %+v", u)
+	}
+	if plan.Pages[0].Kind != "service" || plan.Pages[0].Units[0] != "svc.billing.invoicing" {
+		t.Errorf("page = %+v", plan.Pages[0])
+	}
+}
+
+func TestParseDocPlan_StringEncodedUnits(t *testing.T) {
+	inner := `[{"key":"sys.auth","kind":"system","title":"Auth"}]`
+	raw, err := json.Marshal(map[string]any{
+		"pages": []any{map[string]any{"slug": "auth", "title": "Auth", "audiences": []any{"developers"}}},
+		"units": inner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := agent.ParseDocPlan(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(plan.Units) != 1 || plan.Units[0].Key != "sys.auth" {
+		t.Fatalf("units = %+v", plan.Units)
+	}
+}
+
+func TestValidateDocPlanUnits(t *testing.T) {
+	page := `{"slug":"invoicing","title":"Invoicing","audiences":["developers"],"units":["svc.invoicing"]}`
+	for _, tc := range []struct {
+		name    string
+		raw     string
+		wantErr bool
+	}{
+		{"valid", `{"units":[{"key":"svc.invoicing","kind":"service","title":"Invoicing"}],"pages":[` + page + `]}`, false},
+		{"bad key", `{"units":[{"key":"Svc Invoicing","kind":"service","title":"Invoicing"}],"pages":[` + page + `]}`, true},
+		{"duplicate key", `{"units":[{"key":"svc.invoicing","kind":"service","title":"A"},{"key":"svc.invoicing","kind":"api","title":"B"}],"pages":[` + page + `]}`, true},
+		{"bad kind", `{"units":[{"key":"svc.invoicing","kind":"microservice","title":"Invoicing"}],"pages":[` + page + `]}`, true},
+		{"missing title", `{"units":[{"key":"svc.invoicing","kind":"service","title":" "}],"pages":[` + page + `]}`, true},
+		{"dangling page unit", `{"units":[{"key":"svc.other","kind":"service","title":"Other"}],"pages":[` + page + `]}`, true},
+		{"bad page kind", `{"units":[{"key":"svc.invoicing","kind":"service","title":"Invoicing"}],"pages":[{"slug":"a","title":"A","audiences":["public"],"kind":"marketing"}]}`, true},
+		{"no units at all stays valid", `{"pages":[{"slug":"a","title":"A","audiences":["public"]}]}`, false},
+	} {
+		err := agent.ValidateDocPlan(json.RawMessage(tc.raw))
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s: err = %v, wantErr = %v", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func TestSubmitAtomsToolAsksForTitleAndBody(t *testing.T) {
+	schema := agent.SubmitAtomsTool().Def.InputSchema
+	items := schema["properties"].(map[string]any)["atoms"].(map[string]any)["items"].(map[string]any)
+	props := items["properties"].(map[string]any)
+	for _, want := range []string{"title", "body"} {
+		if _, ok := props[want]; !ok {
+			t.Errorf("submit_atoms items missing %q: %v", want, props)
+		}
+	}
+	if _, ok := props["content"]; ok {
+		t.Error("submit_atoms still offers the retired content field")
+	}
+	raw := json.RawMessage(`{"atoms":[{"title":"Invoice numbering","body":"Per-org sequence.","kind":"procedure","tags":["billing"]}]}`)
+	in, err := agent.ParseAtoms(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if in.Atoms[0].Title != "Invoice numbering" || in.Atoms[0].Kind != "procedure" {
+		t.Errorf("atom = %+v", in.Atoms[0])
 	}
 }

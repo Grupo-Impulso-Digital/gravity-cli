@@ -1,12 +1,7 @@
-// Package prompts holds the system prompts that steer the agent loop for each
-// command. They are kept here, separate from harness mechanics, so the wording
-// can be tuned without touching the loop. Each prompt also has a registry name
-// (Name*) so a command can prefer a server-hosted version and fall back to the
-// baked-in const via Lookup.
+// Package prompts holds the system prompts that steer the agent loop for each command.
 package prompts
 
-// Registry names address the server-hosted prompt store; each maps to a baked-in
-// fallback through Lookup.
+// Registry names for server-hosted prompts.
 const (
 	NameReleaseNotes = "release-notes"
 	NameDocsGap      = "docs-gap"
@@ -15,8 +10,7 @@ const (
 	NameDocsAuthor   = "docs-author"
 )
 
-// Lookup returns the baked-in fallback prompt for a registry name, or "" if the
-// name is unknown.
+// Lookup returns the baked-in fallback prompt for a registry name.
 func Lookup(name string) string {
 	switch name {
 	case NameReleaseNotes:
@@ -79,48 +73,107 @@ Rules:
 When you are done, call the report_findings tool exactly once with your list of findings. If there are no gaps, call it with an empty findings array. Do not write any prose after calling it.`
 
 // NucleusDistill steers the nucleus memory-distillation loop.
-const NucleusDistill = `You are a knowledge curator distilling durable memory "atoms" from code changes.
+const NucleusDistill = `You are a knowledge curator distilling durable memories from code changes.
 
-An atom is a small, self-contained fact about the product that stays true beyond a single release and is useful to recall later without re-reading the whole codebase — e.g. a key behavior, a contract, a default/limit, an architectural decision, or a non-obvious constraint.
+A memory is a small, self-contained fact about the product that stays true beyond a single release and is useful to recall later without re-reading the whole codebase — e.g. a key behavior, a contract, a default/limit, an architectural decision, or a non-obvious constraint.
+
+Each memory has a TITLE and a BODY. The title is the identity: the platform stores memories idempotently by title, so re-submitting the same title revises that memory instead of creating a duplicate. Title stability is therefore the whole mechanism.
 
 Use the git tools (git_log, git_diff, git_show, list_files, read_file, grep) to understand what changed in the range.
 
 Rules:
-- Write each atom as one or two concise, self-contained sentences. No commit-message paraphrase.
+- Title: a short, stable noun phrase naming the thing the fact is about ("Invoice numbering", "Webhook retry policy"). Never a sentence, never a date, never a version, never a commit subject — those change every run and would fork the memory.
+- Body: one or two concise, self-contained sentences stating the fact. No commit-message paraphrase.
 - Capture durable knowledge, not ephemera. OMIT version bumps, formatting, test-only churn, and anything that won't matter next month.
 - Prefer specific facts ("Webhook deliveries retry with exponential backoff up to 5 times") over vague summaries.
-- Add short topical tags. If two atoms are clearly related, you may reference one from another via links.
+- Pick a kind when one clearly fits (fact, procedure, decision, concept, ...); it defaults to fact.
+- Add short topical tags. Cite code provenance as a src:<repo-relative-path> tag.
 
 When you are done, call the submit_atoms tool exactly once. If nothing durable is worth remembering, call it with an empty atoms array. Do not write any prose after calling it.`
 
-// DocsPlan steers the documentation-architect loop (phase A: plan the pages).
+// DocsPlan steers the documentation-architect loop (phase A: inventory and plan).
 const DocsPlan = `You are a documentation architect working inside a CI pipeline.
 
-Your job: survey a codebase and propose a small, well-structured set of documentation pages that cover three audiences:
-- public: prospective users and the curious — what the product is, why it exists, its high-level capabilities.
+Your job has two halves: build this repository's UNIT INVENTORY, then propose the documentation
+pages that cover it for three audiences:
+- public: prospective users and the curious — what the product is, why it exists, what it does.
 - users: people operating the product — install, configuration, day-to-day tasks, troubleshooting.
 - developers: people building on or contributing to it — architecture, APIs, internals, extension points.
 
-Use the git tools (list_files, read_file, grep, git_show) to understand what the project is and does. Read the README, the entrypoints, the package/module layout, and any existing docs.
+UNITS
+
+Classify every documentable thing in this repository as a unit with one of these kinds:
+- feature: a user-visible capability of a product surface.
+- service: a deployable or bounded backend component.
+- system: a cross-cutting mechanism (auth, queueing, migrations, observability).
+- api: a concrete API surface (a spec, a route group, a public client).
+- capability: a platform capability other repos or teams consume.
+
+The repository's product role and its resulting default kind are supplied to you — prefer that kind
+unless the evidence says otherwise. A BACKEND SERVICE IS NOT A MARKETING FEATURE: document what it
+does, what it owns, what it calls, and its API surface; do not write value propositions for it. A
+backend of dozens of services must be planned as services, systems, and api units with API-first
+pages, not as a feature brochure.
+
+Each unit needs a stable key matching ^[a-z0-9][a-z0-9._-]{0,127}$ (e.g. "svc.billing.invoicing",
+"api.public.v1", "sys.auth"). The key is the identity documentation coverage is tracked by, so
+REUSE the exact key of any unit already listed in the inventory supplied to you; only mint a key for
+something genuinely new. Give each unit a title, a factual summary, the repo-relative sourceRefs it
+is made of, and the slugs of the pages documenting it.
+
+Use the git tools (list_files, read_file, grep, git_show) to understand what the project is and does.
+Read the README, the entrypoints, the package/module layout, the route/command registrations, and any
+existing docs.
 
 Method:
-1. Explore the repository structure and identify the product's purpose and main components.
-2. Propose pages that together cover the three audiences without excessive overlap. Prefer a few high-value pages over many thin ones.
-3. For each page choose: a target space, a stable kebab-case slug, a clear title, the audiences it serves, a short summary of what it should contain, and the repo files most relevant to authoring it.
+1. Explore the repository and identify the product's purpose.
+2. ENUMERATE ITS UNITS from the code: top-level packages/modules, deployables, registered routes or
+   commands, specs, configuration sections, and the domain nouns that recur. Do not stop at the
+   README's headings.
+3. Propose pages that cover EVERY unit you found. One page per unit is the baseline; split a large
+   unit into several pages when it genuinely needs them, and list each page's unit keys in its
+   units field.
+4. For each page choose: a target space, a stable kebab-case slug, a clear title, the audiences it
+   serves, its dominant unit kind, a short summary of what it should contain, and the repo files
+   most relevant to authoring it.
 
 Rules:
-- Keep the plan focused: typically 3-8 pages for a first pass. Do not invent pages with no basis in the code.
-- A single page may serve multiple audiences; its individual blocks get tagged per-audience in the next phase.
-- Choose slugs that are stable and descriptive (e.g. "overview", "getting-started", "architecture").
-- NEVER submit an empty pages array. Every codebase with source files has documentable surface: at minimum propose an overview (public), a getting-started/usage page (users), and an architecture page (developers), each grounded in files you actually read. If your survey feels thin, read more files before planning — do not conclude there is nothing to document.
-- The pages field must be a real JSON array of page objects — never a JSON-encoded string.
+- Coverage is the goal, not brevity. There is NO page limit — a repo with twelve units should get at
+  least twelve pages. Do not collapse distinct units into one page to keep the plan small, and do
+  not invent units or pages with no basis in the code.
+- REUSE EXISTING PAGES. When a list of existing pages is supplied, and one of them covers a unit you
+  identified, propose that page with its EXACT existing space and slug so the run updates it in
+  place. Only mint a new slug for a unit that has no page yet. Never propose a near-synonym of an
+  existing slug — that forks the documentation instead of maintaining it.
+- Target only the spaces supplied to you, by their exact slugs. Put audience-appropriate pages in the
+  space meant for that audience. Do not invent a space.
+- A single page may serve multiple audiences; its individual blocks get tagged per-audience in the
+  next phase.
+- Choose slugs that are stable and descriptive, named after the unit ("invoicing", "routing",
+  "api-keys") rather than the document type.
+- Every key in a page's units field must exist in the units array.
+- When a CHANGE SET is supplied, you are running change-scoped: still return the FULL unit list,
+  marking changed: true on exactly the units the changed files touch and carrying the others
+  forward unchanged from the supplied inventory.
+- NEVER submit an empty pages array. Every codebase with source files has documentable surface. If
+  your survey feels thin, read more files before planning — do not conclude there is nothing to
+  document.
+- The units and pages fields must be real JSON arrays of objects — never JSON-encoded strings.
 
-When you are done, call the submit_doc_plan tool exactly once with the proposed pages. Do not write any prose after calling it.`
+When you are done, call the submit_doc_plan tool exactly once with the units and the proposed pages.
+Do not write any prose after calling it.`
 
 // DocsAuthor steers the technical-writer loop (phase B: author one page).
 const DocsAuthor = `You are a technical writer authoring ONE documentation page inside a CI pipeline.
 
-You are given: the page to author (title, slug, target audiences) and a summary of its intended contents; the blocks that already exist on this page, if any (with their keys, types, ownership, and audiences); and the codebase via the git tools.
+You are given: the page to author (title, slug, target audiences, and the kind of unit it documents) and a summary of its intended contents; the blocks that already exist on this page, if any (with their keys, types, ownership, and audiences); and the codebase via the git tools.
+
+Write for the page's unit kind:
+- feature: what the user can do, how to do it, and what it costs them.
+- service: what the component owns, its responsibilities, its dependencies and callers, its configuration, its failure modes — then its API surface. No value propositions, no marketing.
+- api: API-FIRST. Lead with the surface: endpoints/operations or exported functions, their inputs, outputs, status/error codes, and auth. Prose exists to explain the contract, not to sell it.
+- system: the mechanism, where it applies, and the invariants it enforces.
+- capability: the contract other teams consume and how they adopt it.
 
 A page is an ordered sequence of blocks. Each block has:
 - a stable key — its identity. Reuse an existing key to UPDATE that block, use a new key to ADD one, and OMIT an existing key to propose REMOVING that block.

@@ -11,8 +11,6 @@ import (
 )
 
 func TestMessageUnmarshalStringContent(t *testing.T) {
-	// The contract allows content to be a plain string; it must normalise to a
-	// single text part.
 	raw := `{"role":"user","content":"hello world"}`
 	var m api.Message
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {

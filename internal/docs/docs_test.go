@@ -54,8 +54,6 @@ func TestAPIBlocks_SatisfyCheckAPI(t *testing.T) {
 		t.Fatalf("want 2 api blocks, got %d", len(blocks))
 	}
 
-	// Each block is a machine api block with an identity key and a verifiable
-	// binding to the spec file.
 	for _, b := range blocks {
 		if b.Type != "api" || b.Ownership != "machine" {
 			t.Errorf("block %s: type/ownership = %s/%s", b.Key, b.Type, b.Ownership)
@@ -69,13 +67,10 @@ func TestAPIBlocks_SatisfyCheckAPI(t *testing.T) {
 		}
 	}
 
-	// Authoring agrees with `check api --openapi`: zero drift findings.
 	spec, err := checks.ParseOpenAPI([]byte(specV3))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Rebuild documented ops from the spec summaries the producer used (identical
-	// source), which is exactly what the checker compares.
 	var documented []checks.DocumentedOp
 	for key, op := range spec {
 		documented = append(documented, checks.DocumentedOp{
@@ -127,7 +122,6 @@ func TestMarkdownPage_NativeBlocks(t *testing.T) {
 			}
 		}
 	}
-	// Only "## Usage" is a heading block; the H1 "My Doc" became the page title.
 	if types["heading"] != 1 {
 		t.Errorf("want exactly 1 heading block (title H1 not duplicated), got %d", types["heading"])
 	}
@@ -137,7 +131,6 @@ func TestMarkdownPage_NativeBlocks(t *testing.T) {
 	if types["code"] != 1 {
 		t.Errorf("want 1 code block, got %d", types["code"])
 	}
-	// The list is preserved verbatim (markers intact) in a prose block.
 	foundList := false
 	for _, p := range proseTexts {
 		if strings.Contains(p, "- a list item") {
@@ -148,7 +141,6 @@ func TestMarkdownPage_NativeBlocks(t *testing.T) {
 		t.Errorf("list markers not preserved verbatim in prose; got prose blocks: %v", proseTexts)
 	}
 
-	// Machine doc blocks are verifiable by `check docs`.
 	chk := checks.VerifyBinding(dir, blocks[0].SourceBinding)
 	if !chk.Verified || chk.Stale {
 		t.Errorf("doc binding not verified/fresh: %+v", chk)
@@ -160,7 +152,6 @@ func TestMarkdownPage_DefaultsToHumanAndDropsTitleBlock(t *testing.T) {
 	md := "# Overview\n\nWelcome.\n\n## Details\n\nMore text.\n"
 	writeFile(t, dir, "guide.md", md)
 
-	// Empty ownership => human default: editable in Gravity, no drift binding.
 	blocks, title, err := docs.MarkdownPage(dir, "guide.md", "", "test")
 	if err != nil {
 		t.Fatalf("MarkdownPage: %v", err)
@@ -181,7 +172,6 @@ func TestMarkdownPage_DefaultsToHumanAndDropsTitleBlock(t *testing.T) {
 			}
 		}
 	}
-	// "## Details" survives as a heading; "# Overview" is the title, not a block.
 	headings := 0
 	for _, b := range blocks {
 		if b.Type == "heading" {

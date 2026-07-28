@@ -11,13 +11,12 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
-// testRepo creates a temp git repo with deterministic author/committer env so
-// commits work in CI, then returns its path.
 func testRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	env := append(os.Environ(),
+	env := append(
+		os.Environ(),
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
 		"GIT_AUTHOR_DATE=2024-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2024-01-01T00:00:00Z",
@@ -79,7 +78,6 @@ func TestOpenAndResolveRange(t *testing.T) {
 		t.Errorf("expected latest tag v1.0.0, got %q", tag)
 	}
 
-	// Default range: latest tag -> HEAD.
 	rng, err := repo.ResolveRange(ctx, "", "")
 	if err != nil {
 		t.Fatalf("resolve range: %v", err)
@@ -88,7 +86,6 @@ func TestOpenAndResolveRange(t *testing.T) {
 		t.Errorf("expected v1.0.0..HEAD, got %s..%s", rng.From, rng.To)
 	}
 
-	// Explicit overrides win.
 	rng2, err := repo.ResolveRange(ctx, "HEAD~1", "HEAD")
 	if err != nil {
 		t.Fatalf("resolve range override: %v", err)
@@ -100,7 +97,8 @@ func TestOpenAndResolveRange(t *testing.T) {
 
 func TestResolveRangeNoTags(t *testing.T) {
 	dir := t.TempDir()
-	env := append(os.Environ(),
+	env := append(
+		os.Environ(),
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
 	)
@@ -148,7 +146,6 @@ func TestCurrentBranchAndRemoteURL(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	// No remote configured yet -> empty, not an error.
 	remote, err := repo.RemoteURL(ctx)
 	if err != nil {
 		t.Fatalf("remote url (none): %v", err)
@@ -165,7 +162,6 @@ func TestCurrentBranchAndRemoteURL(t *testing.T) {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), e, out)
 		}
 	}
-	// Force a deterministic branch name regardless of the host's init.defaultBranch.
 	run("branch", "-M", "main")
 	run("remote", "add", "upstream", "https://example.com/upstream.git")
 	run("remote", "add", "origin", "git@github.com:acme/api.git")
@@ -178,7 +174,6 @@ func TestCurrentBranchAndRemoteURL(t *testing.T) {
 		t.Errorf("expected branch main, got %q", branch)
 	}
 
-	// origin is preferred over the first-added remote.
 	remote, err = repo.RemoteURL(ctx)
 	if err != nil {
 		t.Fatalf("remote url: %v", err)

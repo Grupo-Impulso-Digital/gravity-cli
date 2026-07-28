@@ -18,28 +18,21 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
-// syncTarget is one resolved authoring action: either a page upsert or a
-// release-notes upsert.
 type syncTarget struct {
-	kind    string // "page" | "release"
+	kind    string
 	space   string
 	label   string
-	home    bool // pin this page as its space's home page after authoring
+	home    bool
 	page    api.PageUpsertRequest
 	release api.ReleaseNotesRequest
 }
 
-// hierarchySpec carries the manifest's space-hierarchy declarations into
-// runSync: the parent space to nest the default space under, and the page to
-// pin as the default space's home. All fields optional; a nil spec (or a
-// platform without the space-hierarchy feature) syncs exactly as before.
 type hierarchySpec struct {
 	defaultSpace string
-	parent       string // spaces.parent — makes defaultSpace a subspace of it
-	home         string // spaces.home — page slug pinned as defaultSpace's home
+	parent       string
+	home         string
 }
 
-// hierarchyFromProject extracts the sync-relevant hierarchy declarations.
 func hierarchyFromProject(proj *config.Project) *hierarchySpec {
 	if proj == nil {
 		return nil
@@ -104,7 +97,7 @@ Use --only to author just one kind, and --page to target a single mapping.`,
 			}
 			generator := "gravity sync v" + version
 
-			targets, err := buildSyncTargets(e.proj, repo.Root, generator, only, page)
+			targets, err := buildSyncTargets(e.proj, repo.Root, generator, only, page, localRepoRef(cmd.Context(), e.proj))
 			if err != nil {
 				return Fail(CodeError, err)
 			}
@@ -142,9 +135,9 @@ Use --only to author just one kind, and --page to target a single mapping.`,
 	return cmd
 }
 
-// buildSyncTargets turns the manifest mappings into concrete authoring actions.
-func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilter string) ([]syncTarget, error) {
+func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilter string, repo *api.RepoRef) ([]syncTarget, error) {
 	var targets []syncTarget
+	languages := proj.I18n.Languages
 
 	if only == "" || only == "api" {
 		for _, s := range proj.Sources {
@@ -162,7 +155,10 @@ func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilte
 				space: sp,
 				label: fmt.Sprintf("api %s -> %s/%s", s.Source, sp, slug),
 				home:  proj.Spaces.Home != "" && sp == proj.Spaces.Default && slug == proj.Spaces.Home,
-				page:  api.PageUpsertRequest{SpaceSlug: sp, Slug: slug, Title: title, Collection: col, Blocks: blocks},
+				page: api.PageUpsertRequest{
+					SpaceSlug: sp, Slug: slug, Title: title, Collection: col, Blocks: blocks,
+					Repo: repo, Languages: languages,
+				},
 			})
 		}
 	}
@@ -183,10 +179,13 @@ func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilte
 					sp = proj.ReleaseNotes.Space
 				}
 				targets = append(targets, syncTarget{
-					kind:    "release",
-					space:   sp,
-					label:   fmt.Sprintf("release %s -> %s", d.File, sp),
-					release: api.ReleaseNotesRequest{SpaceSlug: sp, Title: title, BodyMarkdown: body},
+					kind:  "release",
+					space: sp,
+					label: fmt.Sprintf("release %s -> %s", d.File, sp),
+					release: api.ReleaseNotesRequest{
+						SpaceSlug: sp, Title: title, BodyMarkdown: body,
+						Repo: repo, Languages: languages,
+					},
 				})
 				continue
 			}
@@ -201,14 +200,14 @@ func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilte
 				space: sp,
 				label: fmt.Sprintf("doc %s -> %s/%s", d.File, sp, slug),
 				home:  proj.Spaces.Home != "" && sp == proj.Spaces.Default && slug == proj.Spaces.Home,
-				page:  api.PageUpsertRequest{SpaceSlug: sp, Slug: slug, Title: title, Collection: col, Blocks: blocks},
+				page: api.PageUpsertRequest{
+					SpaceSlug: sp, Slug: slug, Title: title, Collection: col, Blocks: blocks,
+					Repo: repo, Languages: languages,
+				},
 			})
 		}
 	}
 
-	// Guard: two page targets must not collide on (space, slug) — they would
-	// silently clobber each other on the platform. Surface it as a config error
-	// (runs offline, so it fires in --dry-run / --output stdout too).
 	seen := map[string]string{}
 	for _, t := range targets {
 		if t.kind != "page" {
@@ -224,44 +223,33 @@ func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilte
 	return targets, nil
 }
 
-// reconcileResult is the reconcile decision for one page target.
 type reconcileResult struct {
-	index         int // index into targets
+	index         int
 	space         string
-	configSlug    string // the slug from .gravity.yaml
-	effectiveSlug string // the slug to actually send (an existing page's slug on update)
-	update        bool   // true => updates an existing page; false => creates a new one
+	configSlug    string
+	effectiveSlug string
+	update        bool
 }
 
-// orphanPage is an existing page that duplicates a managed page (same space +
-// title) but was not the one chosen to keep. ofSlug is the kept page's slug.
 type orphanPage struct {
 	page   api.Page
 	ofSlug string
 }
 
-// duplicate reports whether the orphan is a server-minted collision duplicate of
-// the kept page — its slug is the kept slug plus a suffix (e.g. `agents-md` →
-// `agents-md-ed44`). Only these are safe to prune automatically; a same-title
-// page with an unrelated slug is left for manual review.
 func (o orphanPage) duplicate() bool {
 	return strings.HasPrefix(o.page.Slug, o.ofSlug+"-")
 }
 
-// reconcilePageTargets matches each page target to the existing page that already
-// represents it, so the server's (space, slug) upsert updates in place instead of
-// minting a duplicate. Matching is by exact slug, then by title within the space
-// (the server slugs new pages from the title, so a re-sync's configured slug may
-// not match what was stored). Orphans are managed-space pages whose title matches
-// a managed target but were not picked (the suffixed duplicates), each tagged
-// with the slug of the page kept in its place.
-func reconcilePageTargets(existing []api.Page, targets []syncTarget) (plan []reconcileResult, orphans []orphanPage) {
+func reconcilePageTargets(existing []api.Page, targets []syncTarget, myRemoteKey string) (plan []reconcileResult, orphans []orphanPage) {
 	bySpace := map[string][]api.Page{}
 	for _, p := range existing {
+		if !ownedByRepo(p, myRemoteKey) {
+			continue
+		}
 		bySpace[p.SpaceSlug] = append(bySpace[p.SpaceSlug], p)
 	}
 	pickedID := map[string]bool{}
-	keptForTitle := map[string]string{} // space\x00title -> kept slug
+	keptForTitle := map[string]string{}
 
 	for i, t := range targets {
 		if t.kind != "page" {
@@ -285,11 +273,80 @@ func reconcilePageTargets(existing []api.Page, targets []syncTarget) (plan []rec
 	}
 
 	for _, p := range existing {
+		if !ownedByRepo(p, myRemoteKey) {
+			continue
+		}
 		if kept, ok := keptForTitle[p.SpaceSlug+"\x00"+p.Title]; ok && !pickedID[p.ID] {
 			orphans = append(orphans, orphanPage{page: p, ofSlug: kept})
 		}
 	}
 	return plan, orphans
+}
+
+func ownedByRepo(p api.Page, myRemoteKey string) bool {
+	if myRemoteKey == "" {
+		return true
+	}
+	if p.RepoRemoteKey == nil || *p.RepoRemoteKey == "" {
+		return true
+	}
+	return *p.RepoRemoteKey == myRemoteKey
+}
+
+func writtenByRepo(p api.Page, myRemoteKey string) bool {
+	return myRemoteKey != "" && p.RepoRemoteKey != nil && *p.RepoRemoteKey == myRemoteKey
+}
+
+func prunableDuplicate(o orphanPage, myRemoteKey string) bool {
+	if !o.duplicate() {
+		return false
+	}
+	if myRemoteKey == "" {
+		return true
+	}
+	return writtenByRepo(o.page, myRemoteKey)
+}
+
+func stripRepoRefs(targets []syncTarget) bool {
+	stripped := false
+	for i := range targets {
+		if targets[i].page.Repo != nil {
+			targets[i].page.Repo = nil
+			stripped = true
+		}
+		if targets[i].release.Repo != nil {
+			targets[i].release.Repo = nil
+			stripped = true
+		}
+	}
+	return stripped
+}
+
+func stripLanguages(targets []syncTarget) bool {
+	stripped := false
+	for i := range targets {
+		if len(targets[i].page.Languages) > 0 {
+			targets[i].page.Languages = nil
+			stripped = true
+		}
+		if len(targets[i].release.Languages) > 0 {
+			targets[i].release.Languages = nil
+			stripped = true
+		}
+	}
+	return stripped
+}
+
+func targetsRemoteKey(targets []syncTarget) string {
+	for _, t := range targets {
+		if t.page.Repo != nil && t.page.Repo.RemoteKey != "" {
+			return t.page.Repo.RemoteKey
+		}
+		if t.release.Repo != nil && t.release.Repo.RemoteKey != "" {
+			return t.release.Repo.RemoteKey
+		}
+	}
+	return ""
 }
 
 func exactSlugMatch(cands []api.Page, slug string) *api.Page {
@@ -301,11 +358,6 @@ func exactSlugMatch(cands []api.Page, slug string) *api.Page {
 	return nil
 }
 
-// bestTitleMatch returns the existing page that best represents a title. Among
-// same-title pages it prefers one whose slug equals the configured slug, then one
-// whose slug equals the title's canonical slug, then the shortest slug, then the
-// lexicographically first — a deterministic choice so re-syncs converge on the
-// same page and the suffixed duplicates fall out as orphans.
 func bestTitleMatch(cands []api.Page, title, cfgSlug string) *api.Page {
 	canonical := docs.Slug(title)
 	var best *api.Page
@@ -344,21 +396,14 @@ func bestTitleMatch(cands []api.Page, title, cfgSlug string) *api.Page {
 	return best
 }
 
-// runSync reconciles against existing pages, ensures each unique space (nesting
-// the default space under its declared parent), performs every upsert, pins the
-// declared home page, then (when pruneDuplicates) proposes removal of the
-// duplicate pages it converged off of. hier may be nil.
 func runSync(ctx context.Context, client *api.Client, site string, targets []syncTarget, pruneDuplicates bool, hier *hierarchySpec, logw, out io.Writer) error {
-	// One capability probe decides whether the hierarchy fields (space parent,
-	// home page, page collections) may be sent. Older platforms reject unknown
-	// request fields, so on a probe failure we degrade to the flat shape — the
-	// prefixed shared-space slugs keep multi-repo pages apart either way.
-	hierarchyOK := false
+	features := map[string]bool{}
 	if who, err := client.WhoAmI(ctx); err == nil {
-		hierarchyOK = who.Features[featureSpaceHierarchy]
+		features = who.Features
 	} else {
 		fmt.Fprintf(out, "warning: could not probe platform features (%v); syncing without hierarchy fields\n", err)
 	}
+	hierarchyOK := features[featureSpaceHierarchy]
 	if !hierarchyOK {
 		stripped := false
 		for i := range targets {
@@ -373,15 +418,22 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 		hier = nil
 	}
 
-	// Read existing pages and reconcile so a re-sync updates the same page instead
-	// of duplicating it. Non-fatal: if the read fails we author with the
-	// configured slugs and say reconciliation was skipped.
+	myRemoteKey := ""
+	if features[featureRepos] {
+		myRemoteKey = targetsRemoteKey(targets)
+	} else if stripRepoRefs(targets) {
+		fmt.Fprintln(out, "note: this platform does not attribute pages to repos yet — syncing unattributed; a sibling repo's pages are indistinguishable from this repo's until it does")
+	}
+	if !features[featurePageLanguages] && stripLanguages(targets) {
+		fmt.Fprintln(out, "note: this platform does not accept per-page translation requests yet — i18n.languages takes effect once it does")
+	}
+
 	var orphans []orphanPage
 	if existing, err := client.Pages(ctx, site, ""); err != nil {
 		fmt.Fprintf(out, "warning: could not read existing pages to reconcile (%v); authoring with configured slugs\n", err)
 	} else {
 		var plan []reconcileResult
-		plan, orphans = reconcilePageTargets(existing, targets)
+		plan, orphans = reconcilePageTargets(existing, targets, myRemoteKey)
 		for _, r := range plan {
 			verb := "CREATE"
 			if r.update {
@@ -396,20 +448,18 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 		}
 		for _, o := range orphans {
 			switch {
-			case o.duplicate() && pruneDuplicates:
+			case prunableDuplicate(o, myRemoteKey) && pruneDuplicates:
 				fmt.Fprintf(out, "plan: DELETE %s/%s (duplicate of %q; proposing removal)\n", o.page.SpaceSlug, o.page.Slug, o.ofSlug)
-			case o.duplicate():
+			case prunableDuplicate(o, myRemoteKey):
 				fmt.Fprintf(out, "plan: ORPHAN %s/%s (duplicate of %q; kept via --keep-duplicates)\n", o.page.SpaceSlug, o.page.Slug, o.ofSlug)
+			case o.duplicate():
+				fmt.Fprintf(out, "note: %s/%s predates repo attribution; re-run after this repo has synced once, or delete it in-app\n", o.page.SpaceSlug, o.page.Slug)
 			default:
 				fmt.Fprintf(out, "plan: ORPHAN %s/%s (same title as %q but unrelated slug; left for manual review)\n", o.page.SpaceSlug, o.page.Slug, o.ofSlug)
 			}
 		}
 	}
 
-	// Ensure spaces in dependency order: the declared parent space first (it
-	// must exist before anything can nest under it), then every target space.
-	// The default space carries `parent` so it is created as — or reparented
-	// into — a subspace, converging on the manifest.
 	ensured := map[string]bool{}
 	if hier != nil && hier.parent != "" {
 		if _, err := client.EnsureSpace(ctx, site, api.SpaceUpsertRequest{Slug: hier.parent}); err != nil {
@@ -434,11 +484,6 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 		ensured[t.space] = true
 	}
 
-	// Author every target independently. A single bad target (e.g. a block the
-	// server rejects with a 400) must not discard the siblings that authored
-	// cleanly — those are real proposals the user keeps. Record failures and press
-	// on; the only fail-fast is a systemic auth error, which every remaining
-	// target would hit identically.
 	var failures []string
 	proposed := 0
 	homeSpace, homeSlug := "", ""
@@ -462,8 +507,6 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 			continue
 		}
 		if t.home && t.kind == "page" && hier != nil {
-			// The upsert's response slug is the page's real identity (the
-			// server may have honored an existing page), so pin that one.
 			homeSpace, homeSlug = t.space, firstNonEmpty(resp.PageSlug, t.page.Slug)
 		}
 		proposed++
@@ -473,9 +516,6 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 		}
 	}
 
-	// Pin the declared home page onto its space. Best-effort: the pages above
-	// are already proposed, so a failed pin is a note (re-run to retry), not a
-	// failed sync.
 	if homeSlug != "" {
 		if _, err := client.UpdateSpace(ctx, site, homeSpace, api.SpacePatchRequest{HomePage: &homeSlug}); err != nil {
 			fmt.Fprintf(out, "note: could not pin %q as the home page of space %q (%v); re-run `gravity sync` to retry\n", homeSlug, homeSpace, err)
@@ -484,14 +524,9 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 		}
 	}
 
-	// Propose removal of the server-minted duplicate pages we converged off of.
-	// Deletion is a governed change request (a `delete` proposal a reviewer
-	// approves), so this never hard-deletes; failures are reported, not fatal.
-	// The first error is treated as endpoint-level (e.g. the delete route not yet
-	// deployed): report it once and stop, leaving the rest for a later re-run.
 	if pruneDuplicates {
 		for _, o := range orphans {
-			if !o.duplicate() {
+			if !prunableDuplicate(o, myRemoteKey) {
 				continue
 			}
 			resp, err := client.DeletePage(ctx, site, o.page.SpaceSlug, o.page.Slug)
@@ -513,15 +548,11 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 	return nil
 }
 
-// savedDoc is the on-disk form of an authored target set, so an expensive `docs
-// generate` run can be replayed through runSync without re-invoking the AI (the
-// sync is the only step that can fail late, after all the tokens are spent).
 type savedDoc struct {
 	Version int           `json:"version"`
 	Targets []savedTarget `json:"targets"`
 }
 
-// savedTarget mirrors a syncTarget with exported fields so it round-trips JSON.
 type savedTarget struct {
 	Kind    string                   `json:"kind"`
 	Space   string                   `json:"space"`
@@ -531,7 +562,6 @@ type savedTarget struct {
 	Release *api.ReleaseNotesRequest `json:"release,omitempty"`
 }
 
-// saveTargets persists targets to path as JSON, creating parent dirs.
 func saveTargets(path string, targets []syncTarget) error {
 	doc := savedDoc{Version: 1}
 	for _, t := range targets {
@@ -557,7 +587,6 @@ func saveTargets(path string, targets []syncTarget) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// loadTargets reads a target set previously written by saveTargets.
 func loadTargets(path string) ([]syncTarget, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -572,12 +601,6 @@ func loadTargets(path string) ([]syncTarget, error) {
 		t := syncTarget{kind: st.Kind, space: st.Space, label: st.Label, home: st.Home}
 		if st.Page != nil {
 			t.page = *st.Page
-			// Re-canonicalize replayed blocks: an artifact saved by an earlier
-			// CLI may carry shapes the server has since rejected (the legacy
-			// array-header table) or machine-owned narrative blocks. Sanitizing
-			// here means a saved run stays replayable after the contract fix
-			// instead of failing with the same 400 forever. Best-effort — a
-			// block we can't fix is sent as-is so the server reports it.
 			for i := range t.page.Blocks {
 				_ = docs.SanitizeBlock(&t.page.Blocks[i])
 			}
@@ -618,8 +641,6 @@ func printSyncDryRun(out io.Writer, targets []syncTarget) error {
 	return nil
 }
 
-// deleteErrHint reduces a page-deletion error to a short phrase for the
-// single-line "deletion unavailable" notice (the full envelope is noise here).
 func deleteErrHint(err error) string {
 	var ae *api.APIError
 	if errors.As(err, &ae) {
@@ -628,7 +649,6 @@ func deleteErrHint(err error) string {
 	return err.Error()
 }
 
-// syncAPIError surfaces a helpful auth hint for *api.APIError.
 func syncAPIError(err error, what string) error {
 	var ae *api.APIError
 	if errors.As(err, &ae) && ae.IsAuth() {

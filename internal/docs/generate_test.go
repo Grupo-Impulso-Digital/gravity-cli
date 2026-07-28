@@ -33,7 +33,6 @@ func TestAssembleBlocksValid(t *testing.T) {
 	if len(blocks) != 3 {
 		t.Fatalf("blocks = %d, want 3", len(blocks))
 	}
-	// Ownership defaults to hybrid; positions are sequential.
 	for i, b := range blocks {
 		if b.Position != i {
 			t.Errorf("block %d position = %d", i, b.Position)
@@ -47,9 +46,6 @@ func TestAssembleBlocksValid(t *testing.T) {
 	}
 }
 
-// Tables are canonicalized to the server contract: an array `header` (the
-// natural authoring shape models emit) folds into rows[0] with header=true,
-// and non-string cells become their JSON text.
 func TestAssembleBlocksTableCanonicalized(t *testing.T) {
 	in := []docs.AuthoredBlock{
 		{Key: "t", Type: "table", Content: raw(t, map[string]any{
@@ -85,10 +81,6 @@ func TestAssembleBlocksTableCanonicalized(t *testing.T) {
 	}
 }
 
-// Machine ownership is honored only for code blocks. A narrative block the
-// model marks machine — even with a resolvable single source — is downgraded
-// to hybrid and left unbound, so the docs team keeps editing rights over all
-// text (including table cells).
 func TestAssembleBlocksMachineNarrativeDowngraded(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "root.go"), []byte("package cli"), 0o644); err != nil {
@@ -126,8 +118,6 @@ func TestAssembleBlocksMachineNarrativeDowngraded(t *testing.T) {
 	}
 }
 
-// SanitizeBlock upgrades a block from a saved artifact in place: legacy table
-// shape canonicalized, machine narrative downgraded, binding dropped.
 func TestSanitizeBlockReplay(t *testing.T) {
 	b := api.BlockInput{
 		Key: "t", Type: "table", Ownership: "machine",
@@ -172,9 +162,6 @@ func TestAssembleBlocksRejects(t *testing.T) {
 	}
 }
 
-// The CLI binds CODE only: AI narrative prose is authored hybrid/human and must
-// NOT be bound, whatever source it names — so the team can freely edit the text
-// without it drift-locking. (A bound prose block is also what the server 400s.)
 func TestAssembleBlocksNarrativeUnbound(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
@@ -194,8 +181,6 @@ func TestAssembleBlocksNarrativeUnbound(t *testing.T) {
 	}
 }
 
-// A machine block whose named source doesn't resolve authors unbound — best-effort,
-// so a model's guessed/renamed path never fails the page.
 func TestAssembleBlocksUnresolvableMachineSourceDropsBinding(t *testing.T) {
 	in := []docs.AuthoredBlock{
 		{Key: "c", Type: "code", Ownership: "machine", Sources: []string{"does/not/exist.go"}, Content: raw(t, map[string]any{"text": "x", "language": "go"})},
@@ -209,7 +194,6 @@ func TestAssembleBlocksUnresolvableMachineSourceDropsBinding(t *testing.T) {
 	}
 }
 
-// A single-source machine block gets a real, verifiable sha256 binding.
 func TestAssembleBlocksMachineBindingVerifies(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte("hello"), 0o644); err != nil {

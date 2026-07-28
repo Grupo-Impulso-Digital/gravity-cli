@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -16,8 +17,8 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
-// knowledgeNamespace resolves the nucleus namespace: the resolved config value,
-// falling back to the site so single-repo setups work with zero extra config.
+const maxMemoryTags = 32
+
 func (e *env) knowledgeNamespace() string {
 	if e.cfg.Namespace != "" {
 		return e.cfg.Namespace
@@ -25,26 +26,19 @@ func (e *env) knowledgeNamespace() string {
 	return e.cfg.Site
 }
 
-// enrichKickoff prepends relevant nucleus atoms to an agent kickoff. It is
-// strictly best-effort: any error (including the feature being unavailable) or
-// an empty result returns the original kickoff, so it can never regress an
-// existing command.
 func enrichKickoff(ctx context.Context, client *api.Client, namespace, query, kickoff string, mctx *api.MessagesContext) string {
-	if namespace == "" {
-		return kickoff
-	}
-	site, space := "", ""
+	site := ""
 	if mctx != nil {
-		site, space = mctx.Site, mctx.Space
+		site = mctx.Site
 	}
-	atoms, err := client.QueryAtoms(ctx, namespace, api.AtomQuery{Query: query, Site: site, Space: space, Limit: 8})
-	if err != nil || len(atoms) == 0 {
+	res, err := client.Recall(ctx, site, api.RecallRequest{Query: query, Limit: 8, Namespace: namespace})
+	if err != nil || res == nil || len(res.Hits) == 0 {
 		return kickoff
 	}
 	var b strings.Builder
-	b.WriteString("Relevant project memory (atoms; use as context, do not invent beyond them):\n")
-	for _, a := range atoms {
-		fmt.Fprintf(&b, "- %s\n", a.Content)
+	b.WriteString("Relevant project memory (use as context, do not invent beyond it):\n")
+	for _, h := range res.Hits {
+		fmt.Fprintf(&b, "- %s: %s\n", h.Title, h.Body)
 	}
 	b.WriteString("\n")
 	return b.String() + kickoff
@@ -53,13 +47,16 @@ func enrichKickoff(ctx context.Context, client *api.Client, namespace, query, ki
 func newNucleusCmd(gf *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "nucleus",
-		Short: "Query and contribute nucleus memory atoms (preview)",
-		Long: `Nucleus is the Gravity memory service: small "atoms" of knowledge that link to
-other atoms, so the AI can recall product context without re-reading whole docs.
+		Short: "Recall and contribute Nucleus memories",
+		Long: `Nucleus is the Gravity memory service: small, titled facts the AI recalls
+without re-reading whole documents.
 
-This is a preview: the nucleus API is not live yet. Until it ships, these
-commands report unavailability and exit 0 (pass --require to fail instead). Atom
-retrieval also augments release-notes / check docs generation, best-effort.`,
+Memories are idempotent by title at their scope — re-contributing the same title
+revises that memory instead of creating a duplicate. Recall also augments
+release-notes / check docs generation, best-effort.
+
+The Nucleus module is enabled per organization; where it is off, these commands
+report it and exit 0 (pass --require to fail instead).`,
 	}
 	cmd.AddCommand(newNucleusQueryCmd(gf), newNucleusSyncCmd(gf))
 	return cmd
@@ -74,7 +71,7 @@ func newNucleusQueryCmd(gf *globalFlags) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "query <text>",
-		Short: "Retrieve relevant memory atoms for a query",
+		Short: "Recall the memories most relevant to a query",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextJSON(format); err != nil {
@@ -91,34 +88,38 @@ func newNucleusQueryCmd(gf *globalFlags) *cobra.Command {
 			if ns == "" {
 				return Failf(CodeError, "no knowledge namespace; set knowledge.namespace in %s or pass --namespace", config.ProjectFileName)
 			}
-			atoms, err := e.client.QueryAtoms(cmd.Context(), ns, api.AtomQuery{
-				Query: strings.Join(args, " "), Site: e.cfg.Site, Space: e.cfg.Space, Limit: limit,
-			})
+			req := api.RecallRequest{
+				Query:     strings.Join(args, " "),
+				Limit:     limit,
+				Namespace: ns,
+				SpaceID:   spaceID(cmd.Context(), e.client, e.cfg.Site, e.cfg.Space),
+			}
+			res, err := e.client.Recall(cmd.Context(), e.cfg.Site, req)
 			if err != nil {
 				if skipped, ferr := skippableFeature(err, "nucleus memory", cmd.ErrOrStderr(), require); skipped || ferr != nil {
 					return ferr
 				}
-				return Fail(CodeError, fmt.Errorf("query atoms: %w", err))
+				return Fail(CodeError, fmt.Errorf("recall: %w", err))
 			}
 			out := cmd.OutOrStdout()
 			if format == "json" {
-				return writeJSON(out, atoms)
+				return writeJSON(out, res.Hits)
 			}
-			if len(atoms) == 0 {
-				fmt.Fprintln(out, "(no atoms)")
+			if len(res.Hits) == 0 {
+				fmt.Fprintln(out, "(no memories)")
 				return nil
 			}
-			for _, a := range atoms {
-				fmt.Fprintf(out, "- %s\n", a.Content)
-				if len(a.Tags) > 0 {
-					fmt.Fprintf(out, "    tags: %s\n", strings.Join(a.Tags, ", "))
+			for _, h := range res.Hits {
+				fmt.Fprintf(out, "- %s: %s\n", h.Title, h.Body)
+				if len(h.Tags) > 0 {
+					fmt.Fprintf(out, "    tags: %s\n", strings.Join(h.Tags, ", "))
 				}
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "knowledge namespace (default: config knowledge.namespace, else site)")
-	cmd.Flags().IntVar(&limit, "limit", 8, "max atoms to return")
+	cmd.Flags().IntVar(&limit, "limit", 8, "max memories to return")
 	cmd.Flags().StringVar(&format, "format", "text", "text|json")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable nucleus as a hard error (exit 2)")
 	return cmd
@@ -135,7 +136,7 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Distill memory atoms from code changes and contribute them",
+		Short: "Distill memories from code changes and contribute them",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			e, err := resolveEnv(*gf, "")
@@ -150,20 +151,6 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 				return Failf(CodeError, "no knowledge namespace; set knowledge.namespace in %s or pass --namespace", config.ProjectFileName)
 			}
 			out := cmd.OutOrStdout()
-
-			// Pre-check availability so we don't spend LLM calls distilling atoms
-			// the platform can't store yet.
-			avail, err := featureAvailable(cmd.Context(), e.client, featureNucleus)
-			if err != nil {
-				return Fail(CodeError, fmt.Errorf("whoami: %w", classifyAuthErr(err)))
-			}
-			if !avail {
-				if require {
-					return Failf(CodeError, "nucleus memory is not yet available on this platform")
-				}
-				fmt.Fprintln(cmd.ErrOrStderr(), "note: nucleus memory is not yet available on this platform; skipping")
-				return nil
-			}
 
 			repo, err := git.Open(cmd.Context(), ".")
 			if err != nil {
@@ -180,25 +167,34 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 				return Fail(CodeError, err)
 			}
 			if len(atoms.Atoms) == 0 {
-				fmt.Fprintln(out, "no durable atoms distilled from this range")
+				fmt.Fprintln(out, "no durable memories distilled from this range")
 				return nil
 			}
 			if dryRun {
 				for _, a := range atoms.Atoms {
-					fmt.Fprintf(out, "- %s\n", a.Content)
+					fmt.Fprintf(out, "- %s: %s\n", a.Title, a.Body)
 				}
 				return nil
 			}
 
-			gen := "gravity nucleus sync v" + version
+			scope, spaceIDVal := api.MemoryScopeOrg, ""
+			if e.cfg.Site != "" {
+				scope = api.MemoryScopeSite
+				spaceIDVal = spaceID(cmd.Context(), e.client, e.cfg.Site, e.cfg.Space)
+			}
 			n := 0
 			for _, a := range atoms.Atoms {
-				_, err := e.client.UpsertAtom(cmd.Context(), ns, api.Atom{
-					Content: a.Content,
-					Tags:    a.Tags,
-					Links:   a.Links,
-					Scope:   &api.AtomScope{Namespace: ns, Site: e.cfg.Site, Space: e.cfg.Space},
-					Source:  &api.AtomSource{Kind: "code", Generator: gen},
+				if strings.TrimSpace(a.Title) == "" || strings.TrimSpace(a.Body) == "" {
+					continue
+				}
+				_, err := e.client.UpsertMemory(cmd.Context(), api.MemoryUpsertRequest{
+					Title:    a.Title,
+					Body:     a.Body,
+					Kind:     a.Kind,
+					Tags:     memoryTags(ns, e.proj, a.Tags),
+					Scope:    scope,
+					SiteSlug: e.cfg.Site,
+					SpaceID:  spaceIDVal,
 				})
 				if err != nil {
 					if skipped, ferr := skippableFeature(err, "nucleus memory", cmd.ErrOrStderr(), require); skipped {
@@ -206,11 +202,11 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 					} else if ferr != nil {
 						return ferr
 					}
-					return Fail(CodeError, fmt.Errorf("upsert atom: %w", err))
+					return Fail(CodeError, fmt.Errorf("upsert memory: %w", err))
 				}
 				n++
 			}
-			fmt.Fprintf(out, "Contributed %d atom(s) to namespace %q\n", n, ns)
+			fmt.Fprintf(out, "Contributed %d memory/memories to namespace %q\n", n, ns)
 			return nil
 		},
 	}
@@ -219,8 +215,49 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&to, "to", "", "end git ref (default: HEAD)")
 	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable nucleus as a hard error (exit 2)")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print distilled atoms without contributing them")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print distilled memories without contributing them")
 	return cmd
+}
+
+func memoryTags(namespace string, proj *config.Project, tags []string) []string {
+	out := []string{"ns:" + namespace}
+	if proj != nil && proj.Product.Repo != "" {
+		out = append(out, "repo:"+proj.Product.Repo)
+	}
+	seen := map[string]bool{}
+	deduped := make([]string, 0, len(out)+len(tags))
+	for _, t := range append(out, tags...) {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] || len(deduped) >= maxMemoryTags {
+			continue
+		}
+		seen[t] = true
+		deduped = append(deduped, t)
+	}
+	return deduped
+}
+
+var spaceIDCache sync.Map
+
+func spaceID(ctx context.Context, client *api.Client, site, spaceSlug string) string {
+	if site == "" || spaceSlug == "" {
+		return ""
+	}
+	key := site + "\x00" + spaceSlug
+	if v, ok := spaceIDCache.Load(key); ok {
+		return v.(string)
+	}
+	id := ""
+	if tree, err := client.SiteTree(ctx, site); err == nil {
+		for _, s := range tree.Spaces {
+			if s.Slug == spaceSlug {
+				id = s.ID
+				break
+			}
+		}
+	}
+	spaceIDCache.Store(key, id)
+	return id
 }
 
 func runNucleusDistill(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, logw io.Writer, mctx *api.MessagesContext) (agent.AtomsInput, error) {
@@ -233,7 +270,7 @@ func runNucleusDistill(ctx context.Context, client *api.Client, repo *git.Repo, 
 		Log:     logw,
 	}
 	kickoff := fmt.Sprintf(
-		"Distill durable memory atoms from the changes between %s and %s. "+
+		"Distill durable memories from the changes between %s and %s. "+
 			"Start with git_log(from=%q, to=%q), inspect the diffs, then call submit_atoms.",
 		rng.From, rng.To, rng.From, rng.To,
 	)

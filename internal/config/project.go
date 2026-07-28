@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	yaml "go.yaml.in/yaml/v3"
@@ -14,14 +15,10 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
-// SchemaVersion is the highest .gravity.yaml schema version this CLI
-// understands. A file declaring a higher version is rejected with a clear
-// "upgrade gravity" error.
+// SchemaVersion is the highest .gravity.yaml schema version this CLI understands.
 const SchemaVersion = 1
 
-// Project is the declarative repo manifest loaded from .gravity.yaml. It
-// carries NO secrets — there is structurally no Token field, and LoadProject
-// additionally rejects any committed `token:` key.
+// Project is the declarative repo manifest loaded from .gravity.yaml.
 type Project struct {
 	Version int    `yaml:"version"`
 	Site    string `yaml:"site"`
@@ -34,60 +31,112 @@ type Project struct {
 	ReleaseNotes ReleaseNotes `yaml:"releaseNotes"`
 	Knowledge    Knowledge    `yaml:"knowledge"`
 
-	// LegacySpace preserves today's top-level `space:` key for back-compat; it
-	// is folded into Spaces.Default / ReleaseNotes.Space when those are unset.
+	Discovery Discovery `yaml:"discovery"`
+	I18n      I18n      `yaml:"i18n"`
+	Coverage  Coverage  `yaml:"coverage"`
+
 	LegacySpace string `yaml:"space"`
 }
 
 // Product identifies the (possibly multi-repo) product this repo belongs to.
 type Product struct {
-	Slug string `yaml:"slug"` // logical product id = shared knowledge namespace
-	Repo string `yaml:"repo"` // this repo's unique name within the product
-	Role string `yaml:"role"` // informational: api | service | frontend | docs | ...
+	Slug string `yaml:"slug"`
+	Repo string `yaml:"repo"`
+	Role string `yaml:"role"`
 }
 
-// Spaces declares where this repo's pages live and which spaces are co-owned
-// with sibling repos. On a platform with space-hierarchy support a shared
-// space's pages are grouped into a per-repo collection; older platforms fall
-// back to slug-namespacing (repo/page) to avoid clobbering.
+// Unit kinds a repo's documentable things are classified as.
+const (
+	UnitsAuto      = "auto"
+	UnitFeature    = "feature"
+	UnitService    = "service"
+	UnitSystem     = "system"
+	UnitAPI        = "api"
+	UnitCapability = "capability"
+)
+
+// Product roles recognized by ResolveUnitKind.
+const (
+	RoleFrontend = "frontend"
+	RoleAPI      = "api"
+	RoleService  = "service"
+	RoleDocs     = "docs"
+)
+
+// Discovery configures how `gravity docs generate` surveys the repo.
+type Discovery struct {
+	Units       string             `yaml:"units"`
+	Include     []string           `yaml:"include"`
+	Exclude     []string           `yaml:"exclude"`
+	Entrypoints []string           `yaml:"entrypoints"`
+	Audiences   DiscoveryAudiences `yaml:"audiences"`
+}
+
+// DiscoveryAudiences sets the audiences a planned page inherits when the planner names none.
+type DiscoveryAudiences struct {
+	Default []string `yaml:"default"`
+}
+
+// I18n declares the languages this repo's pages should exist in.
+type I18n struct {
+	Languages []string `yaml:"languages"`
+}
+
+// Coverage sets the documentation-coverage bar this repo holds itself to.
+type Coverage struct {
+	Min     float64  `yaml:"min"`
+	Require []string `yaml:"require"`
+}
+
+// MaxLanguages caps i18n.languages, mirroring the platform's per-page limit.
+const MaxLanguages = 24
+
+// ResolveUnitKind returns the effective default unit kind for this repo.
+func (p *Project) ResolveUnitKind() string {
+	switch p.Discovery.Units {
+	case "", UnitsAuto:
+	case UnitFeature, UnitService, UnitSystem, UnitAPI, UnitCapability:
+		return p.Discovery.Units
+	default:
+		return UnitFeature
+	}
+	switch p.Product.Role {
+	case RoleAPI, RoleService:
+		return UnitService
+	default:
+		return UnitFeature
+	}
+}
+
+// Spaces declares where this repo's pages live.
 type Spaces struct {
 	Default string   `yaml:"default"`
 	Shared  []string `yaml:"shared"`
-	// Parent makes the default space a subspace of this top-level space
-	// (one level of nesting — e.g. default `connect` under parent
-	// `fundamentum`). Applies to the default space only; mapping-level
-	// spaces stay top-level.
-	Parent string `yaml:"parent"`
-	// Home names the page slug (within the default space) pinned as the
-	// space's home/overview page after `gravity sync`. The home page always
-	// stays flat in the space — the platform rejects a collection-filed
-	// overview page — so it is never grouped into the per-repo collection.
-	Home string `yaml:"home"`
+	Parent  string   `yaml:"parent"`
+	Home    string   `yaml:"home"`
 }
 
-// SourceMap binds a source artifact (a spec or a code file) to a doc page made
-// of machine-owned, drift-locked blocks.
+// SourceMap binds a source artifact (a spec or a code file) to a doc page.
 type SourceMap struct {
-	Source     string `yaml:"source"` // repo-relative file (hashed into the binding)
-	Kind       string `yaml:"kind"`   // openapi | code
-	Space      string `yaml:"space"`  // optional; default Spaces.Default
-	Page       string `yaml:"page"`   // target page slug
+	Source     string `yaml:"source"`
+	Kind       string `yaml:"kind"`
+	Space      string `yaml:"space"`
+	Page       string `yaml:"page"`
 	Title      string `yaml:"title"`
 	Generator  string `yaml:"generator"`
-	Collection string `yaml:"collection"` // optional; collection (page folder) inside the space
+	Collection string `yaml:"collection"`
 }
 
-// DocMap ingests a human-authored Markdown file into Gravity as native blocks,
-// either as a standalone page or as a versioned release.
+// DocMap ingests a human-authored Markdown file into Gravity as native blocks.
 type DocMap struct {
-	File       string `yaml:"file"`       // repo-relative .md file
-	Space      string `yaml:"space"`      // optional; default Spaces.Default
-	Page       string `yaml:"page"`       // target page slug (required when as=page)
-	Title      string `yaml:"title"`      // optional; default first H1 or filename
-	Ownership  string `yaml:"ownership"`  // machine | hybrid | human (default machine)
-	As         string `yaml:"as"`         // page | release (default page)
-	Version    string `yaml:"version"`    // explicit version for as=release
-	Collection string `yaml:"collection"` // optional; collection (page folder) inside the space
+	File       string `yaml:"file"`
+	Space      string `yaml:"space"`
+	Page       string `yaml:"page"`
+	Title      string `yaml:"title"`
+	Ownership  string `yaml:"ownership"`
+	As         string `yaml:"as"`
+	Version    string `yaml:"version"`
+	Collection string `yaml:"collection"`
 }
 
 // ReleaseNotes configures the git-derived release-notes command.
@@ -96,15 +145,13 @@ type ReleaseNotes struct {
 	Changelog string `yaml:"changelog"`
 }
 
-// Knowledge declares the nucleus memory namespace shared across a product's
-// repos and this repo's atom scope within it.
+// Knowledge declares the nucleus memory namespace shared across a product's repos.
 type Knowledge struct {
 	Namespace string `yaml:"namespace"`
 	Scope     string `yaml:"scope"`
 }
 
-// LoadProject reads and validates the project manifest in projectDir. A missing
-// file is not an error (returns nil, nil). A committed token is rejected.
+// LoadProject reads and validates the project manifest in projectDir.
 func LoadProject(projectDir string) (*Project, error) {
 	path := filepath.Join(projectDir, ProjectFileName)
 	data, err := os.ReadFile(path)
@@ -130,8 +177,6 @@ func LoadProject(projectDir string) (*Project, error) {
 	return &p, nil
 }
 
-// guardNoToken turns the silent committed-token footgun into a loud, actionable
-// error pointing at the offending line.
 func guardNoToken(data []byte, path string) error {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -153,7 +198,6 @@ func guardNoToken(data []byte, path string) error {
 	return nil
 }
 
-// applyDefaults fills derived defaults so downstream code can rely on them.
 func (p *Project) applyDefaults(projectDir string) {
 	if p.Version == 0 {
 		p.Version = SchemaVersion
@@ -187,6 +231,9 @@ func (p *Project) applyDefaults(projectDir string) {
 	if p.Knowledge.Scope == "" {
 		p.Knowledge.Scope = p.Product.Repo
 	}
+	if p.Discovery.Units == "" {
+		p.Discovery.Units = UnitsAuto
+	}
 }
 
 // Validate collects load-time errors so the user sees all problems at once.
@@ -208,9 +255,16 @@ func (p *Project) Validate(path string) error {
 			errs = append(errs, fmt.Sprintf("sources[%d]: 'page' is required", i))
 		}
 		switch s.Kind {
-		case "", "openapi", "code":
+		case "", "openapi":
+		case "code":
+			errs = append(errs, fmt.Sprintf(
+				"sources[%d]: kind \"code\" is no longer supported (it was never implemented). "+
+					"Delete this mapping and let `gravity docs generate` discover the file as a "+
+					"unit — add its path to discovery.include/discovery.entrypoints. Use kind: "+
+					"openapi only for an OpenAPI spec.", i,
+			))
 		default:
-			errs = append(errs, fmt.Sprintf("sources[%d]: kind %q must be openapi|code", i, s.Kind))
+			errs = append(errs, fmt.Sprintf("sources[%d]: kind %q must be openapi", i, s.Kind))
 		}
 		if msg := checkRepoRelative(s.Source); s.Source != "" && msg != "" {
 			errs = append(errs, fmt.Sprintf("sources[%d].source: %s", i, msg))
@@ -253,10 +307,6 @@ func (p *Project) Validate(path string) error {
 		if msg := checkSlug(p.Spaces.Home); msg != "" {
 			errs = append(errs, "spaces.home: "+msg)
 		}
-		// Catch a typo'd home slug offline: when mappings are declared, one of
-		// them must produce that page in the default space. A manifest with no
-		// mappings at all is left alone — `docs generate` plans its own pages
-		// and the home pin resolves against those at sync time.
 		if (len(p.Sources) > 0 || len(p.Documents) > 0) && !p.mapsHomePage() {
 			errs = append(errs, fmt.Sprintf("spaces.home %q matches no source/document page in the default space %q", p.Spaces.Home, p.Spaces.Default))
 		}
@@ -275,14 +325,83 @@ func (p *Project) Validate(path string) error {
 			}
 		}
 	}
+	errs = append(errs, p.validateDiscovery()...)
+	errs = append(errs, p.validateI18n()...)
+	errs = append(errs, p.validateCoverage()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("%s:\n  - %s", path, strings.Join(errs, "\n  - "))
 	}
 	return nil
 }
 
-// mapsHomePage reports whether any page-producing mapping targets the
-// spaces.home slug in the default space.
+func (p *Project) validateDiscovery() []string {
+	var errs []string
+	switch p.Discovery.Units {
+	case "", UnitsAuto, UnitFeature, UnitService, UnitSystem, UnitAPI, UnitCapability:
+	default:
+		errs = append(errs, fmt.Sprintf("discovery.units %q must be auto|feature|service|system|api|capability", p.Discovery.Units))
+	}
+	globs := []struct {
+		field string
+		vals  []string
+	}{
+		{"discovery.include", p.Discovery.Include},
+		{"discovery.exclude", p.Discovery.Exclude},
+		{"discovery.entrypoints", p.Discovery.Entrypoints},
+	}
+	for _, g := range globs {
+		for i, v := range g.vals {
+			if v == "" {
+				errs = append(errs, fmt.Sprintf("%s[%d]: must not be empty", g.field, i))
+				continue
+			}
+			if msg := checkRepoRelative(v); msg != "" {
+				errs = append(errs, fmt.Sprintf("%s[%d]: %s", g.field, i, msg))
+			}
+		}
+	}
+	for i, a := range p.Discovery.Audiences.Default {
+		switch a {
+		case "public", "users", "developers":
+		default:
+			errs = append(errs, fmt.Sprintf("discovery.audiences.default[%d]: %q must be public|users|developers", i, a))
+		}
+	}
+	return errs
+}
+
+func (p *Project) validateI18n() []string {
+	var errs []string
+	if len(p.I18n.Languages) > MaxLanguages {
+		errs = append(errs, fmt.Sprintf("i18n.languages: at most %d languages", MaxLanguages))
+	}
+	for i, l := range p.I18n.Languages {
+		if !languageCodeRE.MatchString(l) {
+			errs = append(errs, fmt.Sprintf("i18n.languages[%d]: %q is not a valid language code", i, l))
+		}
+	}
+	return errs
+}
+
+func (p *Project) validateCoverage() []string {
+	var errs []string
+	if p.Coverage.Min < 0 || p.Coverage.Min > 1 {
+		errs = append(errs, fmt.Sprintf("coverage.min %.2f must be between 0 and 1", p.Coverage.Min))
+	}
+	for i, slug := range p.Coverage.Require {
+		if strings.TrimSpace(slug) == "" {
+			errs = append(errs, fmt.Sprintf("coverage.require[%d]: must not be empty", i))
+			continue
+		}
+		if msg := checkSlug(slug); msg != "" {
+			errs = append(errs, fmt.Sprintf("coverage.require[%d]: %s", i, msg))
+		}
+	}
+	return errs
+}
+
+var languageCodeRE = regexp.MustCompile(`^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
+
 func (p *Project) mapsHomePage() bool {
 	inDefault := func(space string) bool { return space == "" || space == p.Spaces.Default }
 	for _, s := range p.Sources {
@@ -298,7 +417,6 @@ func (p *Project) mapsHomePage() bool {
 	return false
 }
 
-// checkSlug returns a non-empty message when s is not a lowercase slug.
 func checkSlug(s string) string {
 	for _, r := range s {
 		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
@@ -308,8 +426,6 @@ func checkSlug(s string) string {
 	return ""
 }
 
-// checkRepoRelative returns a non-empty message when ref is not a safe
-// repo-relative path.
 func checkRepoRelative(ref string) string {
 	_, err := pathsafe.Rel(ref)
 	switch {
@@ -322,18 +438,6 @@ func checkRepoRelative(ref string) string {
 }
 
 // PageTarget resolves the effective (space, slug, collection) for a page.
-//
-// Shared spaces get BOTH separations: the slug keeps its product.repo prefix
-// (page identity on the platform is (space, slug) — without the prefix two
-// repos' same-named pages would upsert onto one another) AND the page is
-// grouped into a per-repo collection for presentation (explicit mapping
-// collection wins). Unshared spaces — the common one-repo-one-space case —
-// are untouched: flat slug, no collection unless explicitly mapped.
-//
-// The spaces.home page is the exception: it is the space's single landing
-// page, so it stays unprefixed and uncollected (the platform rejects a
-// collection-filed overview page). Exactly one repo should declare `home`
-// for a shared space.
 func (p *Project) PageTarget(space, slug, collection string) (string, string, string) {
 	if space == "" {
 		space = p.Spaces.Default
@@ -350,7 +454,6 @@ func (p *Project) PageTarget(space, slug, collection string) (string, string, st
 	return space, slug, collection
 }
 
-// isHomePage reports whether slug is the declared home page of space.
 func (p *Project) isHomePage(space, slug string) bool {
 	return p.Spaces.Home != "" && slug == p.Spaces.Home && space == p.Spaces.Default
 }

@@ -8,8 +8,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
-// WritePageText prints a human-readable preview of a page's blocks (used by
-// `gravity sync --output stdout`).
+// WritePageText prints a human-readable preview of a page's blocks.
 func WritePageText(w io.Writer, p api.PageUpsertRequest) {
 	fmt.Fprintf(w, "# %s  (space: %s, slug: %s)\n", p.Title, p.SpaceSlug, p.Slug)
 	for _, b := range p.Blocks {
@@ -25,7 +24,6 @@ func WritePageText(w io.Writer, p api.PageUpsertRequest) {
 func blockSummary(b api.BlockInput) string {
 	m, ok := b.Content.(map[string]any)
 	if !ok {
-		// Typed content (e.g. apiContent) — fall back to the key.
 		return b.Key
 	}
 	switch b.Type {

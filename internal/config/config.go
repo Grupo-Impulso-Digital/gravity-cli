@@ -1,11 +1,4 @@
-// Package config resolves runtime configuration from (highest precedence
-// first): explicit flags, environment variables, a project-local
-// .gravity.yaml, and the user-level ~/.config/gravity/config.yaml.
-//
-// Secrets are deliberately segregated: a token may come ONLY from the
-// environment (CI) or the user-level credentials file (local `gravity auth
-// login`). The committable project file (.gravity.yaml) must never carry a
-// token — LoadProject rejects one outright (see project.go).
+// Package config resolves runtime configuration from flags, env, and config files.
 package config
 
 import (
@@ -19,10 +12,8 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 )
 
-// DefaultAPIURL is the single source of the default Gravity API base URL. Both
-// `gravity init`/`auth login` defaults and the resolution fallback use it, so
-// changing the target host is a one-line change.
-const DefaultAPIURL = "https://gravity.dave-vermette-1.workers.dev"
+// DefaultAPIURL is the single source of the default Gravity API base URL.
+const DefaultAPIURL = "https://app.gravitydocs.io"
 
 // Environment variable names recognized by the CLI.
 const (
@@ -42,7 +33,7 @@ type Config struct {
 	Namespace string
 }
 
-// Flags carries the per-invocation flag overrides. Empty strings mean "unset".
+// Flags carries the per-invocation flag overrides.
 type Flags struct {
 	Token  string
 	APIURL string
@@ -53,8 +44,7 @@ type Flags struct {
 // ProjectFileName is the project-local config file written by `gravity init`.
 const ProjectFileName = ".gravity.yaml"
 
-// UserConfigPath returns the path to the user-level config file, honoring
-// XDG_CONFIG_HOME when set.
+// UserConfigPath returns the path to the user-level config file.
 func UserConfigPath() (string, error) {
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		return filepath.Join(x, "gravity", "config.yaml"), nil
@@ -66,25 +56,16 @@ func UserConfigPath() (string, error) {
 	return filepath.Join(home, ".config", "gravity", "config.yaml"), nil
 }
 
-// Resolve merges all configuration sources with the documented precedence and
-// returns only the flat runtime Config. It is a thin wrapper over
-// ResolveWithProject for callers that don't need the typed manifest.
+// Resolve merges all configuration sources with the documented precedence.
 func Resolve(flags Flags, projectDir string) (Config, error) {
 	cfg, _, err := ResolveWithProject(flags, projectDir)
 	return cfg, err
 }
 
-// ResolveWithProject merges all configuration sources with the precedence:
-//
-//	flags > env > ./.gravity.yaml > ~/.config/gravity/config.yaml
-//
-// and also returns the typed project manifest (nil when no .gravity.yaml
-// exists). The token is NEVER read from the project file. projectDir is the
-// directory to look for .gravity.yaml in (usually the cwd).
+// ResolveWithProject merges all configuration sources with the documented precedence.
 func ResolveWithProject(flags Flags, projectDir string) (Config, *Project, error) {
 	var cfg Config
 
-	// Lowest precedence: user-level credentials file (token + apiUrl only).
 	uc, err := loadUserCredentials()
 	if err != nil {
 		return Config{}, nil, err
@@ -94,8 +75,6 @@ func ResolveWithProject(flags Flags, projectDir string) (Config, *Project, error
 		cfg.APIURL = uc.APIURL
 	}
 
-	// Next: the project manifest contributes site / apiUrl / default space /
-	// knowledge namespace — but never a token.
 	proj, err := LoadProject(projectDir)
 	if err != nil {
 		return Config{}, nil, err
@@ -107,14 +86,12 @@ func ResolveWithProject(flags Flags, projectDir string) (Config, *Project, error
 		setIf(&cfg.Namespace, proj.Knowledge.Namespace)
 	}
 
-	// Next: environment variables win over any file.
 	setIf(&cfg.Token, os.Getenv(EnvToken))
 	setIf(&cfg.APIURL, os.Getenv(EnvAPIURL))
 	setIf(&cfg.Site, os.Getenv(EnvSite))
 	setIf(&cfg.Space, os.Getenv(EnvSpace))
 	setIf(&cfg.Namespace, os.Getenv(EnvNamespace))
 
-	// Highest precedence: explicit flags.
 	setIf(&cfg.Token, flags.Token)
 	setIf(&cfg.APIURL, flags.APIURL)
 	setIf(&cfg.Site, flags.Site)
@@ -129,15 +106,12 @@ func ResolveWithProject(flags Flags, projectDir string) (Config, *Project, error
 	return cfg, proj, nil
 }
 
-// setIf copies v into *dst only when v is non-empty, preserving any
-// lower-precedence value otherwise.
 func setIf(dst *string, v string) {
 	if v != "" {
 		*dst = v
 	}
 }
 
-// validate checks the resolved values that every command relies on.
 func (c Config) validate() error {
 	if c.APIURL != "" {
 		u, err := url.Parse(c.APIURL)
@@ -154,8 +128,6 @@ type UserCredentials struct {
 	APIURL string `yaml:"apiUrl"`
 }
 
-// loadUserCredentials reads the user-level credentials file, returning (nil,
-// nil) when it does not exist.
 func loadUserCredentials() (*UserCredentials, error) {
 	path, err := UserConfigPath()
 	if err != nil {
@@ -175,16 +147,12 @@ func loadUserCredentials() (*UserCredentials, error) {
 	return &uc, nil
 }
 
-// LoadUserCredentials reads the user-level credentials file, returning (nil,
-// nil) when it does not exist. Exposed so `gravity auth` can inspect and
-// preserve stored values (e.g. a custom apiUrl) across a token change.
+// LoadUserCredentials reads the user-level credentials file.
 func LoadUserCredentials() (*UserCredentials, error) {
 	return loadUserCredentials()
 }
 
-// RemoveUserCredentials deletes the user-level credentials file. It returns the
-// path, whether a file was actually present (existed), and any error. A missing
-// file is not an error — existed is false. Used by `gravity auth logout`.
+// RemoveUserCredentials deletes the user-level credentials file.
 func RemoveUserCredentials() (path string, existed bool, err error) {
 	path, err = UserConfigPath()
 	if err != nil {
@@ -199,8 +167,7 @@ func RemoveUserCredentials() (path string, existed bool, err error) {
 	return path, true, nil
 }
 
-// WriteUserCredentials writes the user-level config with 0600 permissions,
-// creating the parent directory if necessary.
+// WriteUserCredentials writes the user-level config with 0600 permissions.
 func WriteUserCredentials(creds UserCredentials) (string, error) {
 	path, err := UserConfigPath()
 	if err != nil {

@@ -1,5 +1,4 @@
-// Package cli wires the cobra command tree, resolves configuration, and
-// constructs the API client and agent harness for each command.
+// Package cli wires the cobra command tree, resolves configuration, and constructs the API client and agent harness for each command.
 package cli
 
 import (
@@ -13,7 +12,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
-// version is overridable at build time via -ldflags.
 var version = "0.1.0-dev"
 
 // SetVersion lets main override the version string.
@@ -23,22 +21,18 @@ func SetVersion(v string) {
 	}
 }
 
-// globalFlags are persistent flags available on every command.
 type globalFlags struct {
 	token  string
 	apiURL string
 	site   string
 }
 
-// env bundles the resolved config, the typed project manifest, and the
-// constructed clients for a command run.
 type env struct {
 	cfg    config.Config
-	proj   *config.Project // nil when no .gravity.yaml is present
+	proj   *config.Project
 	client *api.Client
 }
 
-// resolveEnv builds the runtime environment from global flags, env, and files.
 func resolveEnv(gf globalFlags, spaceFlag string) (*env, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -56,8 +50,6 @@ func resolveEnv(gf globalFlags, spaceFlag string) (*env, error) {
 	return &env{cfg: cfg, proj: proj, client: api.New(cfg.APIURL, cfg.Token)}, nil
 }
 
-// requireAuth ensures a token and API URL are present, with CI-oriented hints
-// for the two distinct failure modes.
 func (e *env) requireAuth() error {
 	if e.cfg.Token == "" {
 		return Failf(CodeError, "no API token: set %s (CI secret) or run `gravity auth login`", config.EnvToken)
@@ -68,7 +60,6 @@ func (e *env) requireAuth() error {
 	return nil
 }
 
-// requireSite returns the configured site or an error.
 func (e *env) requireSite() (string, error) {
 	if e.cfg.Site == "" {
 		return "", Failf(CodeError, "no site configured: pass --site, set GRAVITY_SITE, or add `site:` to .gravity.yaml")
@@ -99,8 +90,10 @@ func NewRootCommand() *cobra.Command {
 		newAuthCmd(gf),
 		newDoctorCmd(gf),
 		newPingCmd(gf),
+		newReposCmd(gf),
 		newReleaseNotesCmd(gf),
 		newCheckCmd(gf),
+		newCoverageCmd(gf),
 		newSpacesCmd(gf),
 		newSyncCmd(gf),
 		newDocsCmd(gf),

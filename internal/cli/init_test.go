@@ -72,8 +72,8 @@ func TestDetectDocSources(t *testing.T) {
 	writeFile(t, dir, "openapi.yaml", "openapi: 3.0.0")
 	writeFile(t, dir, "README.md", "# hi")
 	writeFile(t, dir, "docs/guide.md", "# guide")
-	writeFile(t, dir, "CHANGELOG.md", "# changes") // excluded (release notes)
-	writeFile(t, dir, "package.json", "{}")        // not a spec
+	writeFile(t, dir, "CHANGELOG.md", "# changes")
+	writeFile(t, dir, "package.json", "{}")
 	writeFile(t, dir, "node_modules/foo/swagger.yaml", "x")
 	writeFile(t, dir, ".hidden/openapi.yaml", "x")
 

@@ -45,13 +45,9 @@ func TestDiffOperations(t *testing.T) {
 	}
 
 	docs := []checks.DocumentedOp{
-		// Matches spec exactly.
 		{Method: "GET", Path: "/users", Summary: "List users", PageSlug: "users"},
-		// Same op but summary drifted -> changed.
 		{Method: "GET", Path: "/users/{id}", Summary: "Fetch a single user", PageSlug: "users"},
-		// Documented but not in spec -> orphaned.
 		{Method: "DELETE", Path: "/users/{id}", Summary: "Delete a user", PageSlug: "users"},
-		// POST /users is in spec but NOT here -> undocumented.
 	}
 
 	findings := checks.DiffOperations(spec, docs)

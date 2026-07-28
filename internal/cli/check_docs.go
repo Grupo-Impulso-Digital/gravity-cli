@@ -108,7 +108,6 @@ func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string) outp
 	verified := 0
 	for _, p := range pages {
 		for _, blk := range p.Blocks {
-			// Only machine/hybrid blocks are expected to carry bindings.
 			if blk.Ownership != "machine" && blk.Ownership != "hybrid" {
 				continue
 			}
@@ -181,8 +180,6 @@ func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rn
 	return findings, nil
 }
 
-// docsDigest builds a compact, token-friendly summary of the published docs to
-// hand the model. It lists each page's title/slug/space and block types.
 func docsDigest(pages []api.Page) string {
 	var b strings.Builder
 	if len(pages) == 0 {

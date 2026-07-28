@@ -1,10 +1,4 @@
-// Package docs builds the blocks that `gravity sync` authors onto the Gravity
-// docs platform: machine-owned, code-derived api blocks from an OpenAPI spec,
-// and Markdown documents decomposed into native blocks (human-owned by default,
-// so they stay editable in Gravity, unless a mapping opts into machine). Every
-// machine block is bound to a repo file via a SourceBinding whose hash is
-// computed by the same hasher the drift checker (`check api`/`check docs`) uses,
-// so authored machine blocks are verifiable by construction.
+// Package docs builds the blocks that `gravity sync` authors onto the Gravity docs platform.
 package docs
 
 import (
@@ -18,8 +12,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
-// BuildBinding builds a drift-verifiable SourceBinding for a machine block,
-// hashing the repo-relative file at ref with the shared checks hasher.
+// BuildBinding builds a drift-verifiable SourceBinding for a machine block.
 func BuildBinding(repoRoot, ref, kind, generator string) (*api.SourceBinding, error) {
 	hash, err := checks.HashRepoFile(repoRoot, ref)
 	if err != nil {
@@ -33,8 +26,6 @@ func BuildBinding(repoRoot, ref, kind, generator string) (*api.SourceBinding, er
 	}, nil
 }
 
-// readRepoFile reads a repo-relative file, rejecting absolute paths and ".."
-// escapes.
 func readRepoFile(repoRoot, ref string) ([]byte, error) {
 	clean, err := pathsafe.Rel(ref)
 	switch {

@@ -1,15 +1,30 @@
-# Gravity docs checks for GitLab CI.
+# Gravity docs pipeline for GitLab CI.
 #
 # Set GRAVITY_TOKEN as a *masked, protected* CI/CD variable (Settings > CI/CD >
-# Variables). GRAVITY_API_URL and GRAVITY_SITE can be plain variables.
+# Variables). GRAVITY_API_URL, GRAVITY_SITE and LIVE_BRANCH are non-secret.
 #
-# Exit-code convention: 0 pass, 1 findings, 2 error. The `docs:check` job below
-# treats findings (exit 1) as a failure so the pipeline is red on drift; flip
-# `allow_failure` to true if you want findings to be advisory.
+# Cadence (see ci/README.md):
+#   merge request         check docs + check api        read-only
+#   push to LIVE_BRANCH   ping -> sync -> docs generate --since <last green sha>
+#   tag                   release-notes
+#
+# Exit-code convention: 0 pass, 1 findings, 2 error. The merge-request jobs let
+# findings fail the pipeline so drift is visible; the live/tag jobs allow exit 1
+# only (`allow_failure: exit_codes`), because documentation drift must never gate
+# a deploy while a broken setup (exit 2) still must.
 
 variables:
-  GRAVITY_API_URL: "https://gravity.dave-vermette-1.workers.dev"
+  GRAVITY_API_URL: "https://app.gravitydocs.io"
   GRAVITY_SITE: "docs"
+  LIVE_BRANCH: "main"
+  # release-notes, `check docs --ai` and `--since` all walk git history; a
+  # shallow clone hides it.
+  GIT_DEPTH: 0
+
+stages:
+  - test
+  - docs
+  - deploy
 
 .gravity_base:
   image: golang:1.25
@@ -17,24 +32,91 @@ variables:
     - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
     - export PATH="$PATH:$(go env GOPATH)/bin"
 
+# ---------------------------------------------------------------- merge request
+# Read-only. These never author anything, so exit 1 keeps its meaning.
+
 docs:check:
   extends: .gravity_base
   stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
     - gravity check docs --ci --format text
-  # Findings (exit 1) fail the job; errors (exit 2) also fail.
   # allow_failure: true   # uncomment to make findings advisory
 
 api:check:
   extends: .gravity_base
   stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
+    # Drop --openapi to verify each api block's source-binding hash instead of
+    # diffing a spec.
     - gravity check api --openapi openapi.yaml --ci --format text
+
+# ------------------------------------------------------------ push to the live
+# `resource_group` serializes these: two overlapping runs would race on page
+# attribution (last-writer-wins) and on the declarative inventory.
+
+docs:sync:
+  extends: .gravity_base
+  stage: docs
+  resource_group: gravity-docs-live
+  rules:
+    - if: $CI_COMMIT_BRANCH == $LIVE_BRANCH
+  script:
+    # ping registers/refreshes this repo (branch, commit, manifest) so
+    # attribution and coverage see the right revision. Cheap and idempotent.
+    - gravity ping
+    # sync first: it shapes spaces/collections/home pages so generated pages
+    # land in an existing structure.
+    - gravity sync --ci
+  allow_failure:
+    exit_codes: 1
+
+docs:generate:
+  extends: .gravity_base
+  stage: docs
+  needs: ["docs:sync"]
+  resource_group: gravity-docs-live
+  rules:
+    - if: $CI_COMMIT_BRANCH == $LIVE_BRANCH
+  script:
+    # The incremental base is the previous SUCCESSFUL run's commit, never
+    # HEAD~1 — a failed or skipped run must not leave a permanent gap. GitLab
+    # has no built-in for that, so the job reads a `docs-synced` marker tag;
+    # with no tag it falls back to a full survey, which is always correct.
+    - git fetch --tags --quiet || true
+    - SINCE="$(git rev-parse --verify --quiet 'docs-synced^{commit}' || true)"
+    - if [ -n "$SINCE" ]; then gravity docs generate --ci --since "$SINCE"; else gravity docs generate --ci; fi
+    # To enable the incremental path, move the marker here on success with a
+    # project access token that has write_repository:
+    #   - git tag -f docs-synced "$CI_COMMIT_SHA"
+    #   - git push -f "https://oauth2:${GRAVITY_CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" docs-synced
+  allow_failure:
+    exit_codes: 1
+
+docs:coverage:
+  extends: .gravity_base
+  stage: docs
+  needs: ["docs:generate"]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $LIVE_BRANCH
+  script:
+    # --min defaults to coverage.min from .gravity.yaml; exit 1 when the ratio
+    # is below it or a coverage.require page is missing.
+    - gravity coverage --ci --format text
+  allow_failure:
+    exit_codes: 1
+
+# ------------------------------------------------------------------------ tag
 
 release-notes:
   extends: .gravity_base
   stage: deploy
   rules:
-    - if: '$CI_COMMIT_TAG'
+    - if: $CI_COMMIT_TAG
   script:
     - gravity release-notes --space changelog --ci --output proposal
+  allow_failure:
+    exit_codes: 1

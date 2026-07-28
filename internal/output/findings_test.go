@@ -30,7 +30,6 @@ func TestRenderText(t *testing.T) {
 	if !strings.Contains(out, "2 finding(s)") {
 		t.Errorf("text output missing count:\n%s", out)
 	}
-	// Errors must sort before warnings.
 	errIdx := strings.Index(out, "[ERROR]")
 	warnIdx := strings.Index(out, "[WARNING]")
 	if errIdx == -1 || warnIdx == -1 || errIdx > warnIdx {

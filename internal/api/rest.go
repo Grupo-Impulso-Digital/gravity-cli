@@ -8,14 +8,11 @@ import (
 
 // WhoAmI is the response of GET /api/v1/whoami.
 type WhoAmI struct {
-	OrganizationID   string  `json:"organizationId"`
-	OrganizationName string  `json:"organizationName"`
-	DefaultSiteSlug  *string `json:"defaultSiteSlug"`
-	KeyHint          string  `json:"keyHint"`
-	// Features advertises optional platform capabilities (e.g. "captures",
-	// "nucleus"). Absent/nil means the platform predates feature reporting, so
-	// every optional feature reads as "not yet available".
-	Features map[string]bool `json:"features,omitempty"`
+	OrganizationID   string          `json:"organizationId"`
+	OrganizationName string          `json:"organizationName"`
+	DefaultSiteSlug  *string         `json:"defaultSiteSlug"`
+	KeyHint          string          `json:"keyHint"`
+	Features         map[string]bool `json:"features,omitempty"`
 }
 
 // WhoAmI calls GET /api/v1/whoami.
@@ -45,15 +42,15 @@ func (c *Client) LLMConfig(ctx context.Context) (*LLMConfig, error) {
 	return &out, nil
 }
 
-// SetupPingRequest is the body of POST /api/v1/setup/ping — the one-shot setup
-// handshake the web app polls after guiding a user through install + `gravity
-// init`. It carries no secret beyond the bearer token; the server associates the
-// ping with the acting key so the browser can confirm the token works and render
-// this repo's resolved configuration.
+// SetupPingRequest is the body of POST /api/v1/setup/ping.
 type SetupPingRequest struct {
 	CLI    PingCLI    `json:"cli"`
 	Config PingConfig `json:"config"`
 	Repo   PingRepo   `json:"repo"`
+
+	ConfigFull map[string]any  `json:"configFull,omitempty"`
+	ConfigYAML string          `json:"configYaml,omitempty"`
+	DocSources *PingDocSources `json:"docSources,omitempty"`
 }
 
 // PingCLI reports the running binary's version and build platform.
@@ -70,12 +67,29 @@ type PingConfig struct {
 	Space  string `json:"space,omitempty"`
 }
 
-// PingRepo identifies the local repo: its manifest/directory name, a normalized
-// remote (scheme + credentials stripped), and the current branch.
+// PingRepo identifies the local repo.
 type PingRepo struct {
-	Name   string `json:"name,omitempty"`
-	Remote string `json:"remote,omitempty"`
-	Branch string `json:"branch,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Remote          string `json:"remote,omitempty"`
+	Branch          string `json:"branch,omitempty"`
+	Commit          string `json:"commit,omitempty"`
+	RemoteKeySource string `json:"remoteKeySource,omitempty"`
+}
+
+// Repo-identity sources reported by PingRepo.RemoteKeySource.
+const (
+	RemoteKeySourceRemote = "remote"
+	RemoteKeySourceConfig = "config"
+)
+
+// PingDocSources summarizes the manifest's doc surface for the setup wizard.
+type PingDocSources struct {
+	Sources   int      `json:"sources"`
+	Documents int      `json:"documents"`
+	Spaces    []string `json:"spaces,omitempty"`
+	Kinds     []string `json:"kinds,omitempty"`
+	Languages []string `json:"languages,omitempty"`
+	Units     string   `json:"units,omitempty"`
 }
 
 // SetupPingResponse is the response of POST /api/v1/setup/ping.
@@ -84,6 +98,34 @@ type SetupPingResponse struct {
 	OrganizationName string `json:"organizationName"`
 	KeyHint          string `json:"keyHint"`
 	DefaultSiteSlug  string `json:"defaultSiteSlug"`
+
+	Repo           *PingRepoRef    `json:"repo,omitempty"`
+	Siblings       []SiblingRepo   `json:"siblings,omitempty"`
+	ServerFeatures map[string]bool `json:"serverFeatures,omitempty"`
+}
+
+// PingRepoRef is the platform's registration of the pinging repo.
+type PingRepoRef struct {
+	ID          string `json:"id"`
+	FirstSeenAt string `json:"firstSeenAt"`
+}
+
+// SiblingRepo is another repo in the org writing to the same site.
+type SiblingRepo struct {
+	Name        string   `json:"name"`
+	ProductSlug string   `json:"productSlug"`
+	RemoteKey   string   `json:"remoteKey"`
+	Spaces      []string `json:"spaces,omitempty"`
+	Collections []string `json:"collections,omitempty"`
+	LastPingAt  string   `json:"lastPingAt"`
+	LastWriteAt string   `json:"lastWriteAt"`
+	CLIVersion  string   `json:"cliVersion"`
+}
+
+// RepoRef attributes a write to a connected repo.
+type RepoRef struct {
+	RemoteKey string `json:"remoteKey"`
+	Name      string `json:"name,omitempty"`
 }
 
 // SetupPing calls POST /api/v1/setup/ping.
@@ -103,10 +145,7 @@ type Site struct {
 	Visibility string `json:"visibility"`
 }
 
-// Space is a page container within a site. A non-nil ParentSpaceID marks it as
-// a subspace (one level of nesting); OverviewPageID is the page rendered when a
-// reader lands on the space itself (its home page). Both are nil on platforms
-// predating the space hierarchy.
+// Space is a page container within a site.
 type Space struct {
 	ID             string  `json:"id"`
 	Slug           string  `json:"slug"`
@@ -115,8 +154,7 @@ type Space struct {
 	OverviewPageID *string `json:"overviewPageId,omitempty"`
 }
 
-// Collection is a folder of pages INSIDE a space (space-scoped since the
-// hierarchy inversion), self-nesting via ParentID.
+// Collection is a folder of pages inside a space.
 type Collection struct {
 	ID        string  `json:"id"`
 	Slug      string  `json:"slug"`
@@ -126,15 +164,16 @@ type Collection struct {
 	SpaceSlug string  `json:"spaceSlug,omitempty"`
 }
 
-// PageRef is a lightweight page reference in the site tree. A non-nil
-// CollectionID files the page under one of its space's collections.
+// PageRef is a lightweight page reference in the site tree.
 type PageRef struct {
-	ID           string  `json:"id"`
-	Slug         string  `json:"slug"`
-	Title        string  `json:"title"`
-	SpaceID      string  `json:"spaceId"`
-	SpaceSlug    string  `json:"spaceSlug"`
-	CollectionID *string `json:"collectionId,omitempty"`
+	ID            string  `json:"id"`
+	Slug          string  `json:"slug"`
+	Title         string  `json:"title"`
+	SpaceID       string  `json:"spaceId"`
+	SpaceSlug     string  `json:"spaceSlug"`
+	CollectionID  *string `json:"collectionId,omitempty"`
+	RepoID        *string `json:"repoId,omitempty"`
+	RepoRemoteKey *string `json:"repoRemoteKey,omitempty"`
 }
 
 // SiteTree is the response of GET /api/v1/sites/:siteSlug.
@@ -154,9 +193,7 @@ func (c *Client) SiteTree(ctx context.Context, siteSlug string) (*SiteTree, erro
 	return &out, nil
 }
 
-// SiteSummary is one entry in the GET /api/v1/sites list: the org's sites the
-// acting key may see (scope-aware). It carries the platform's Description, which
-// the site-tree Site does not, so it is kept distinct from Site.
+// SiteSummary is one entry in the GET /api/v1/sites list.
 type SiteSummary struct {
 	ID          string `json:"id"`
 	Slug        string `json:"slug"`
@@ -169,8 +206,7 @@ type sitesResponse struct {
 	Sites []SiteSummary `json:"sites"`
 }
 
-// Sites calls GET /api/v1/sites, returning the sites the token may target. Used
-// by `gravity init` to let the user pick a site rather than type its slug.
+// Sites calls GET /api/v1/sites.
 func (c *Client) Sites(ctx context.Context) ([]SiteSummary, error) {
 	var out sitesResponse
 	if err := c.Get(ctx, "/api/v1/sites", nil, &out); err != nil {
@@ -189,27 +225,36 @@ type SourceBinding struct {
 
 // ContentBlock is a single block within a page snapshot.
 type ContentBlock struct {
-	ID        string `json:"id"`
-	Key       string `json:"key"`
-	Type      string `json:"type"`
-	Ownership string `json:"ownership"`
-	// Audiences restricts which viewers see the block (public|users|developers);
-	// empty renders to everyone. Absent on platforms predating block audiences.
+	ID            string          `json:"id"`
+	Key           string          `json:"key"`
+	Type          string          `json:"type"`
+	Ownership     string          `json:"ownership"`
 	Audiences     []string        `json:"audiences,omitempty"`
 	Content       json.RawMessage `json:"content"`
 	SourceBinding *SourceBinding  `json:"sourceBinding"`
 	Position      int             `json:"position"`
 }
 
+// PageLanguage is one language version's freshness, from the platform's page locales.
+type PageLanguage struct {
+	Language  string `json:"language"`
+	Status    string `json:"status"`
+	Outdated  bool   `json:"outdated"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
 // Page is a full page snapshot from GET .../pages.
 type Page struct {
-	ID         string         `json:"id"`
-	Slug       string         `json:"slug"`
-	Title      string         `json:"title"`
-	SpaceSlug  string         `json:"spaceSlug"`
-	Version    *int           `json:"version"`
-	ReleasedAt string         `json:"releasedAt"`
-	Blocks     []ContentBlock `json:"blocks"`
+	ID            string         `json:"id"`
+	Slug          string         `json:"slug"`
+	Title         string         `json:"title"`
+	SpaceSlug     string         `json:"spaceSlug"`
+	Version       *int           `json:"version"`
+	ReleasedAt    string         `json:"releasedAt"`
+	Blocks        []ContentBlock `json:"blocks"`
+	RepoID        *string        `json:"repoId,omitempty"`
+	RepoRemoteKey *string        `json:"repoRemoteKey,omitempty"`
+	Languages     []PageLanguage `json:"languages,omitempty"`
 }
 
 // PagesResponse wraps the pages list.
@@ -217,17 +262,35 @@ type PagesResponse struct {
 	Pages []Page `json:"pages"`
 }
 
-// Pages calls GET /api/v1/sites/:siteSlug/pages, optionally scoped to a space.
-func (c *Client) Pages(ctx context.Context, siteSlug, spaceSlug string) ([]Page, error) {
-	var q url.Values
-	if spaceSlug != "" {
-		q = url.Values{"space": []string{spaceSlug}}
+// PageListOptions filters GET /api/v1/sites/:siteSlug/pages.
+type PageListOptions struct {
+	SpaceSlug string
+	Repo      string
+	Languages bool
+}
+
+// ListPages calls GET /api/v1/sites/:siteSlug/pages with the given filters.
+func (c *Client) ListPages(ctx context.Context, siteSlug string, opts PageListOptions) ([]Page, error) {
+	q := url.Values{}
+	if opts.SpaceSlug != "" {
+		q.Set("space", opts.SpaceSlug)
+	}
+	if opts.Repo != "" {
+		q.Set("repo", opts.Repo)
+	}
+	if opts.Languages {
+		q.Set("languages", "1")
 	}
 	var out PagesResponse
 	if err := c.Get(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/pages", q, &out); err != nil {
 		return nil, err
 	}
 	return out.Pages, nil
+}
+
+// Pages calls GET /api/v1/sites/:siteSlug/pages, optionally scoped to a space.
+func (c *Client) Pages(ctx context.Context, siteSlug, spaceSlug string) ([]Page, error) {
+	return c.ListPages(ctx, siteSlug, PageListOptions{SpaceSlug: spaceSlug})
 }
 
 // APIBlockContent is the documented operation captured in an api block.
@@ -237,7 +300,7 @@ type APIBlockContent struct {
 	Summary   string          `json:"summary"`
 	Params    json.RawMessage `json:"params"`
 	Responses json.RawMessage `json:"responses"`
-	// Extra preserves any additional fields without losing them.
+
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
@@ -247,6 +310,7 @@ type APIBlock struct {
 	PageSlug      string          `json:"pageSlug"`
 	SpaceSlug     string          `json:"spaceSlug"`
 	BlockID       string          `json:"blockId"`
+	Key           string          `json:"key,omitempty"`
 	Ownership     string          `json:"ownership"`
 	SourceBinding *SourceBinding  `json:"sourceBinding"`
 	Content       APIBlockContent `json:"content"`
@@ -272,14 +336,15 @@ type ReleaseNoteSection struct {
 	Items   []string `json:"items"`
 }
 
-// ReleaseNotesRequest is the body of POST .../release-notes. Provide either
-// Sections or BodyMarkdown.
+// ReleaseNotesRequest is the body of POST .../release-notes.
 type ReleaseNotesRequest struct {
 	SpaceSlug    string               `json:"spaceSlug"`
 	Title        string               `json:"title"`
 	Summary      string               `json:"summary,omitempty"`
 	Sections     []ReleaseNoteSection `json:"sections,omitempty"`
 	BodyMarkdown string               `json:"bodyMarkdown,omitempty"`
+	Repo         *RepoRef             `json:"repo,omitempty"`
+	Languages    []string             `json:"languages,omitempty"`
 }
 
 // ReleaseNotesResponse is the response of POST .../release-notes.
@@ -300,13 +365,7 @@ func (c *Client) CreateReleaseNotes(ctx context.Context, siteSlug string, req Re
 	return &out, nil
 }
 
-// SpaceUpsertRequest is the body of POST .../spaces. Upsert is idempotent on
-// slug: an existing space is returned (200) rather than duplicated (201).
-// Parent (a space slug) creates the space as a subspace, one level deep; on
-// the existing-space path a differing parent reparents it (declarative), while
-// an omitted parent leaves the hierarchy untouched. Requires the platform's
-// space-hierarchy feature — older servers reject unknown fields, so callers
-// must omit Parent unless whoami advertises it.
+// SpaceUpsertRequest is the body of POST .../spaces.
 type SpaceUpsertRequest struct {
 	Slug        string `json:"slug"`
 	Name        string `json:"name,omitempty"`
@@ -314,13 +373,11 @@ type SpaceUpsertRequest struct {
 	Parent      string `json:"parent,omitempty"`
 }
 
-// spaceEnvelope matches the { space: {...} } body the space endpoints return.
 type spaceEnvelope struct {
 	Space Space `json:"space"`
 }
 
-// EnsureSpace calls POST /api/v1/sites/:siteSlug/spaces, creating the space if
-// it does not exist and returning the existing one otherwise.
+// EnsureSpace calls POST /api/v1/sites/:siteSlug/spaces.
 func (c *Client) EnsureSpace(ctx context.Context, siteSlug string, req SpaceUpsertRequest) (*Space, error) {
 	var out spaceEnvelope
 	if err := c.Post(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/spaces", req, &out); err != nil {
@@ -329,22 +386,15 @@ func (c *Client) EnsureSpace(ctx context.Context, siteSlug string, req SpaceUpse
 	return &out.Space, nil
 }
 
-// SpacePatchRequest is the body of PATCH .../spaces/:spaceSlug. Pointer fields
-// distinguish "leave unchanged" (nil) from "set" / "clear" (pointer to a value
-// or to the empty string — the client maps an empty string to JSON null).
+// SpacePatchRequest is the body of PATCH .../spaces/:spaceSlug.
 type SpacePatchRequest struct {
 	Name        string  `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
-	// Parent reparents the space under the named top-level space; a pointer to
-	// "" promotes it back to the top level (sent as null).
-	Parent *string `json:"parent,omitempty"`
-	// HomePage pins the named page (a slug within this space) as the space's
-	// overview/home page; a pointer to "" unsets it (sent as null).
-	HomePage *string `json:"homePage,omitempty"`
+	Parent      *string `json:"parent,omitempty"`
+	HomePage    *string `json:"homePage,omitempty"`
 }
 
-// MarshalJSON maps empty-string Parent/HomePage pointers to JSON null (the
-// server's "clear" sentinel) while keeping omitted fields absent.
+// MarshalJSON maps empty-string Parent/HomePage pointers to JSON null.
 func (r SpacePatchRequest) MarshalJSON() ([]byte, error) {
 	m := map[string]any{}
 	if r.Name != "" {
@@ -369,9 +419,7 @@ func nullableString(s string) any {
 	return s
 }
 
-// UpdateSpace calls PATCH /api/v1/sites/:siteSlug/spaces/:spaceSlug (partial
-// update: name / description / parent / home page). Requires the platform's
-// space-hierarchy feature for the Parent/HomePage fields.
+// UpdateSpace calls PATCH /api/v1/sites/:siteSlug/spaces/:spaceSlug.
 func (c *Client) UpdateSpace(ctx context.Context, siteSlug, spaceSlug string, req SpacePatchRequest) (*Space, error) {
 	var out spaceEnvelope
 	path := "/api/v1/sites/" + url.PathEscape(siteSlug) + "/spaces/" + url.PathEscape(spaceSlug)
@@ -381,9 +429,7 @@ func (c *Client) UpdateSpace(ctx context.Context, siteSlug, spaceSlug string, re
 	return &out.Space, nil
 }
 
-// Block audiences. A block with no audiences renders to every viewer; a block
-// with one or more renders only to viewers in a listed audience. The platform
-// must advertise support via whoami.features before the CLI emits the field.
+// Block audiences.
 const (
 	AudiencePublic     = "public"
 	AudienceUsers      = "users"
@@ -392,34 +438,27 @@ const (
 
 // BlockInput is a single block to author within a page upsert.
 type BlockInput struct {
-	Key       string `json:"key"`
-	Type      string `json:"type"`
-	Ownership string `json:"ownership"`
-	// Audiences restricts which viewers see the block (public|users|developers);
-	// empty renders to everyone.
+	Key           string         `json:"key"`
+	Type          string         `json:"type"`
+	Ownership     string         `json:"ownership"`
 	Audiences     []string       `json:"audiences,omitempty"`
 	Content       any            `json:"content"`
 	SourceBinding *SourceBinding `json:"sourceBinding,omitempty"`
 	Position      int            `json:"position"`
 }
 
-// PageUpsertRequest is the body of POST .../pages. Upsert is keyed on
-// (spaceSlug, slug); it produces a DRAFT plus an open proposal and never
-// publishes directly. Collection (a slug within the space) files the page
-// under that collection, get-or-creating it — how a shared space's pages are
-// grouped per repo. Omitted = the page's current placement is left alone.
-// Requires the platform's space-hierarchy feature; callers must omit it unless
-// whoami advertises support.
+// PageUpsertRequest is the body of POST .../pages.
 type PageUpsertRequest struct {
 	SpaceSlug  string       `json:"spaceSlug"`
 	Slug       string       `json:"slug"`
 	Title      string       `json:"title"`
 	Collection string       `json:"collection,omitempty"`
 	Blocks     []BlockInput `json:"blocks"`
+	Repo       *RepoRef     `json:"repo,omitempty"`
+	Languages  []string     `json:"languages,omitempty"`
 }
 
-// UpsertPage calls POST /api/v1/sites/:siteSlug/pages. The response mirrors the
-// release-notes shape (pageId, pageSlug, proposalId, status, reviewUrl).
+// UpsertPage calls POST /api/v1/sites/:siteSlug/pages.
 func (c *Client) UpsertPage(ctx context.Context, siteSlug string, req PageUpsertRequest) (*ReleaseNotesResponse, error) {
 	var out ReleaseNotesResponse
 	if err := c.Post(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/pages", req, &out); err != nil {
@@ -429,10 +468,6 @@ func (c *Client) UpsertPage(ctx context.Context, siteSlug string, req PageUpsert
 }
 
 // DeletePage calls DELETE /api/v1/sites/:siteSlug/spaces/:spaceSlug/pages/:pageSlug.
-// Deletion is governed: the server opens a `delete` proposal (a change request a
-// reviewer approves) rather than removing the page immediately, and the call is
-// idempotent (re-requesting reuses the open proposal). The response mirrors the
-// upsert shape (pageId, pageSlug, proposalId, status, reviewUrl).
 func (c *Client) DeletePage(ctx context.Context, siteSlug, spaceSlug, pageSlug string) (*ReleaseNotesResponse, error) {
 	var out ReleaseNotesResponse
 	path := "/api/v1/sites/" + url.PathEscape(siteSlug) +

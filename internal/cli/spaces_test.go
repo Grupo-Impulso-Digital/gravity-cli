@@ -11,9 +11,6 @@ import (
 
 func strPtr(s string) *string { return &s }
 
-// The spaces view nests subspaces under their parent, counts collection and
-// flat pages separately, resolves the home page slug, and annotates the spaces
-// this repo's manifest touches.
 func TestBuildSpacesView(t *testing.T) {
 	tree := &api.SiteTree{
 		Site: api.Site{Slug: "dimonoff", Name: "Dimonoff Docs"},

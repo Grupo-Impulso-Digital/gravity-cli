@@ -10,7 +10,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/cli"
 )
 
-// version is set via -ldflags "-X main.version=..." at build time.
 var version = "0.1.0-dev"
 
 func main() {

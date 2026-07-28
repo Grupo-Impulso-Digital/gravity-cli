@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,19 +8,18 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
-// Optional platform feature keys reported by /whoami.
 const (
-	featureCaptures       = "captures"
-	featureNucleus        = "nucleus"
 	featureDocsGenerate   = "docs-generate"
 	featureBlockAudience  = "block-audience"
 	featureSpaceHierarchy = "space-hierarchy"
+
+	featureRepos         = "repos"
+	featureInventory     = "inventory"
+	featureCoverage      = "coverage"
+	featureDocAgentRuns  = "doc-agent-runs"
+	featurePageLanguages = "page-languages"
 )
 
-// skippableFeature handles "endpoint not live yet" uniformly. When err is an
-// IsUnavailable API error it prints a friendly notice and reports skipped=true;
-// with require=true it converts to a hard CodeError instead. Other errors pass
-// through unchanged.
 func skippableFeature(err error, feature string, w io.Writer, require bool) (skipped bool, out error) {
 	if err == nil {
 		return false, nil
@@ -35,15 +33,4 @@ func skippableFeature(err error, feature string, w io.Writer, require bool) (ski
 		return true, nil
 	}
 	return false, err
-}
-
-// featureAvailable reports whether the platform advertises a feature, so an
-// expensive command can bail out before doing work. A nil/absent feature map
-// means "not yet available". Network/auth errors are returned.
-func featureAvailable(ctx context.Context, client *api.Client, feature string) (bool, error) {
-	who, err := client.WhoAmI(ctx)
-	if err != nil {
-		return false, err
-	}
-	return who.Features[feature], nil
 }

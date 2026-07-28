@@ -55,8 +55,6 @@ collections inside a shared space show which repo feeds which pages.`,
 	return cmd
 }
 
-// spacesView is the JSON shape of `gravity spaces` — a hierarchy of spaces with
-// their collections, page counts, and this repo's manifest annotations.
 type spacesView struct {
 	Site   string      `json:"site"`
 	Spaces []spaceNode `json:"spaces"`
@@ -65,11 +63,11 @@ type spacesView struct {
 type spaceNode struct {
 	Slug      string           `json:"slug"`
 	Name      string           `json:"name"`
-	HomePage  string           `json:"homePage,omitempty"` // slug of the pinned overview page
-	Pages     int              `json:"pages"`              // pages directly in the space (no collection)
-	ThisRepo  bool             `json:"thisRepo,omitempty"` // this manifest's default space
-	Shared    bool             `json:"shared,omitempty"`   // declared shared in this manifest
-	Releases  bool             `json:"releases,omitempty"` // this manifest's release-notes space
+	HomePage  string           `json:"homePage,omitempty"`
+	Pages     int              `json:"pages"`
+	ThisRepo  bool             `json:"thisRepo,omitempty"`
+	Shared    bool             `json:"shared,omitempty"`
+	Releases  bool             `json:"releases,omitempty"`
 	Colls     []collectionNode `json:"collections,omitempty"`
 	Subspaces []spaceNode      `json:"subspaces,omitempty"`
 }
@@ -80,12 +78,10 @@ type collectionNode struct {
 	Pages int    `json:"pages"`
 }
 
-// buildSpacesView assembles the hierarchy from a site tree plus the local
-// manifest (proj may be nil — annotations are simply absent then).
 func buildSpacesView(tree *api.SiteTree, proj *config.Project) spacesView {
 	pageByID := make(map[string]api.PageRef, len(tree.Pages))
-	flatPages := map[string]int{} // spaceID -> pages with no collection
-	collPages := map[string]int{} // collectionID -> page count
+	flatPages := map[string]int{}
+	collPages := map[string]int{}
 	for _, p := range tree.Pages {
 		pageByID[p.ID] = p
 		if p.CollectionID == nil {
@@ -139,7 +135,6 @@ func buildSpacesView(tree *api.SiteTree, proj *config.Project) spacesView {
 		}
 		view.Spaces = append(view.Spaces, parent)
 	}
-	// Orphans (parent not visible to this key) render as top-level.
 	for _, s := range tree.Spaces {
 		if !emitted[s.ID] {
 			view.Spaces = append(view.Spaces, node(s))
@@ -148,7 +143,6 @@ func buildSpacesView(tree *api.SiteTree, proj *config.Project) spacesView {
 	return view
 }
 
-// printSpacesView renders the hierarchy as an indented tree.
 func printSpacesView(out io.Writer, site api.Site, view spacesView) {
 	fmt.Fprintf(out, "%s — %s\n\n", site.Slug, site.Name)
 	if len(view.Spaces) == 0 {

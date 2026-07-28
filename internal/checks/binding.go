@@ -15,27 +15,16 @@ import (
 
 // BindingCheck is the outcome of verifying one block's source binding.
 type BindingCheck struct {
-	// Verified is true when the binding had a hash + a repo-resident ref and a
-	// sha256 was computed.
-	Verified bool
-	// Stale is true when the recomputed hash differs from the recorded one.
-	Stale bool
-	// Skipped is true when the binding could not be verified.
-	Skipped bool
-	// SkipReason explains why the block was skipped.
+	Verified   bool
+	Stale      bool
+	Skipped    bool
 	SkipReason string
-	// Ref is the source path that was (or would be) checked.
-	Ref string
-	// Want / Got are the recorded and recomputed hashes.
-	Want string
-	Got  string
+	Ref        string
+	Want       string
+	Got        string
 }
 
-// HashRepoFile computes the lowercase hex sha256 of a repo-relative file inside
-// repoRoot, applying the SAME sandbox rules (resolveRepoPath) and digest
-// (hashFile) that VerifyBinding uses. Authoring producers call this so an
-// authored block's recorded hash provably matches what the drift checker later
-// recomputes for the same file.
+// HashRepoFile computes the lowercase hex sha256 of a repo-relative file inside repoRoot.
 func HashRepoFile(repoRoot, ref string) (string, error) {
 	clean, err := resolveRepoPath(repoRoot, ref)
 	if err != nil {
@@ -51,7 +40,6 @@ func HashRepoFile(repoRoot, ref string) (string, error) {
 	return hashFile(clean)
 }
 
-// hashFile computes the sha256 of the file at path.
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -65,7 +53,6 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// normalizeRecorded strips an optional "sha256:" prefix from a recorded hash.
 func normalizeRecorded(h string) string {
 	h = strings.TrimSpace(h)
 	if i := strings.IndexByte(h, ':'); i >= 0 {
@@ -75,10 +62,6 @@ func normalizeRecorded(h string) string {
 }
 
 // VerifyBinding checks a single source binding against a file in repoRoot.
-//
-// A block is verifiable only when the binding has a non-empty Hash and a Ref
-// that resolves to an existing file inside the repo. Otherwise it is skipped
-// (the caller is responsible for logging the skip count).
 func VerifyBinding(repoRoot string, b *api.SourceBinding) BindingCheck {
 	if b == nil {
 		return BindingCheck{Skipped: true, SkipReason: "no source binding"}
@@ -111,8 +94,6 @@ func VerifyBinding(repoRoot string, b *api.SourceBinding) BindingCheck {
 	return check
 }
 
-// resolveRepoPath validates ref is a repo-relative path inside repoRoot and
-// returns the absolute path.
 func resolveRepoPath(repoRoot, ref string) (string, error) {
 	abs, err := pathsafe.Resolve(repoRoot, ref)
 	switch {
