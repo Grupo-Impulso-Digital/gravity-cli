@@ -75,7 +75,7 @@ func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.
 				title = txt
 				continue
 			}
-			emit("heading", map[string]any{"text": txt, "level": node.Level}, fmt.Sprintf("doc:%s:%s", fileRef, uniq))
+			emit("heading", map[string]any{"text": txt, "level": headingLevel(node.Level)}, fmt.Sprintf("doc:%s:%s", fileRef, uniq))
 		case *ast.FencedCodeBlock:
 			emit("code", map[string]any{"text": codeText(node, data), "language": string(node.Language(data))}, sectionKey())
 		case *ast.CodeBlock:
@@ -132,6 +132,13 @@ func inlineText(n ast.Node, src []byte) string {
 		return ast.WalkContinue, nil
 	})
 	return strings.TrimSpace(b.String())
+}
+
+func headingLevel(level int) int {
+	if level > 3 {
+		return 3
+	}
+	return level
 }
 
 func codeText(n ast.Node, src []byte) string {

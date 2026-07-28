@@ -205,3 +205,34 @@ func TestMarkdownPage_Idempotent(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkdownPage_HeadingLevelClamp(t *testing.T) {
+	dir := t.TempDir()
+	md := "# Title\n\n## Two\n\nbody\n\n#### Four\n\nbody\n\n###### Six\n\nbody\n"
+	writeFile(t, dir, "deep.md", md)
+
+	blocks, _, err := docs.MarkdownPage(dir, "deep.md", "human", "test")
+	if err != nil {
+		t.Fatalf("MarkdownPage: %v", err)
+	}
+	var levels []int
+	for _, b := range blocks {
+		if b.Type != "heading" {
+			continue
+		}
+		m, ok := b.Content.(map[string]any)
+		if !ok {
+			t.Fatalf("heading content type %T", b.Content)
+		}
+		levels = append(levels, m["level"].(int))
+	}
+	want := []int{2, 3, 3}
+	if len(levels) != len(want) {
+		t.Fatalf("heading levels = %v, want %v", levels, want)
+	}
+	for i, lv := range levels {
+		if lv != want[i] {
+			t.Errorf("heading %d level = %d, want %d (platform accepts only 1-3)", i, lv, want[i])
+		}
+	}
+}
