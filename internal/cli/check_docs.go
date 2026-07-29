@@ -13,6 +13,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/output"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
@@ -70,7 +71,7 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 				return Fail(CodeError, fmt.Errorf("fetch pages: %w", err))
 			}
 
-			res := verifyDocsBindings(repo.Root, pages, siteSlug)
+			res := verifyDocsBindings(repo.Root, pages, siteSlug, mappedRefs(e.proj))
 
 			if useAI {
 				rng, err := repo.ResolveRange(cmd.Context(), from, to)
@@ -103,9 +104,27 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 	return cmd
 }
 
-func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string) output.Result {
+func mappedRefs(proj *config.Project) map[string]bool {
+	if proj == nil {
+		return nil
+	}
+	refs := make(map[string]bool, len(proj.Documents)+len(proj.Sources))
+	for _, d := range proj.Documents {
+		refs[d.File] = true
+	}
+	for _, s := range proj.Sources {
+		refs[s.Source] = true
+	}
+	return refs
+}
+
+func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string, mapped map[string]bool) output.Result {
 	res := output.Result{Command: "check docs", Site: siteSlug}
 	verified := 0
+	type staleKey struct{ page, ref string }
+	staleBlocks := map[staleKey]int{}
+	staleChecks := map[staleKey]checks.BindingCheck{}
+	staleTypes := map[staleKey]string{}
 	for _, p := range pages {
 		for _, blk := range p.Blocks {
 			if blk.Ownership != "machine" && blk.Ownership != "hybrid" {
@@ -118,17 +137,42 @@ func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string) outp
 			}
 			verified++
 			if check.Stale {
-				res.Findings = append(res.Findings, output.Finding{
-					Severity: output.SeverityError,
-					Kind:     "stale",
-					Title:    fmt.Sprintf("stale: %s block on page %q", blk.Type, p.Slug),
-					Detail: fmt.Sprintf("source %s changed; recorded hash %s but file hashes to %s",
-						check.Ref, shortHash(check.Want), shortHash(check.Got)),
-					Location:      check.Ref,
-					SuggestedPage: p.Slug,
-				})
+				k := staleKey{page: p.Slug, ref: check.Ref}
+				staleBlocks[k]++
+				staleChecks[k] = check
+				staleTypes[k] = blk.Type
 			}
 		}
+	}
+	keys := make([]staleKey, 0, len(staleBlocks))
+	for k := range staleBlocks {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].page != keys[j].page {
+			return keys[i].page < keys[j].page
+		}
+		return keys[i].ref < keys[j].ref
+	})
+	for _, k := range keys {
+		check := staleChecks[k]
+		count := staleBlocks[k]
+		if mapped[k.ref] {
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"stale but mapped: %s changed and page %q lags it (%d block(s)) — the next sync on the live branch refreshes it automatically",
+				k.ref, k.page, count,
+			))
+			continue
+		}
+		res.Findings = append(res.Findings, output.Finding{
+			Severity: output.SeverityError,
+			Kind:     "stale",
+			Title:    fmt.Sprintf("stale: %s block(s) on page %q (%d affected)", staleTypes[k], k.page, count),
+			Detail: fmt.Sprintf("source %s changed; recorded hash %s but file hashes to %s",
+				k.ref, shortHash(check.Want), shortHash(check.Got)),
+			Location:      k.ref,
+			SuggestedPage: k.page,
+		})
 	}
 	res.Notes = append(res.Notes, fmt.Sprintf("verified %d machine/hybrid block(s), skipped %d without a verifiable binding", verified, res.Skipped))
 	return res
