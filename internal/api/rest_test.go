@@ -627,6 +627,48 @@ func TestListPagesFilters(t *testing.T) {
 	}
 }
 
+func TestListPagesIncludeDraft(t *testing.T) {
+	cases := []struct {
+		name        string
+		opts        api.PageListOptions
+		wantInclude string
+	}{
+		{name: "released only", opts: api.PageListOptions{}},
+		{name: "drafts included", opts: api.PageListOptions{IncludeDraft: true}, wantInclude: "draft"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var gotQuery url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.Query()
+				_, _ = w.Write([]byte(`{"pages":[
+					{"id":"p1","slug":"guide","title":"Guide","spaceSlug":"docs","status":"draft","blocks":[]},
+					{"id":"p2","slug":"intro","title":"Intro","spaceSlug":"docs","status":"released","blocks":[]},
+					{"id":"p3","slug":"legacy","title":"Legacy","spaceSlug":"docs","blocks":[]}
+				]}`))
+			}))
+			defer srv.Close()
+
+			pages, err := api.New(srv.URL, "tok").ListPages(context.Background(), "orbit", c.opts)
+			if err != nil {
+				t.Fatalf("ListPages: %v", err)
+			}
+			if got := gotQuery.Get("include"); got != c.wantInclude {
+				t.Errorf("include = %q, want %q", got, c.wantInclude)
+			}
+			if len(pages) != 3 {
+				t.Fatalf("pages = %+v", pages)
+			}
+			if !pages[0].IsDraft() {
+				t.Errorf("status=draft page not reported as a draft: %+v", pages[0])
+			}
+			if pages[1].IsDraft() || pages[2].IsDraft() {
+				t.Errorf("released and status-less pages must both count as released: %+v", pages[1:])
+			}
+		})
+	}
+}
+
 func TestPagesUnattributedStayNil(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"pages":[{"id":"p1","slug":"intro","title":"Intro","spaceSlug":"docs",

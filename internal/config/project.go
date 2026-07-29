@@ -110,10 +110,116 @@ func (p *Project) ResolveUnitKind() string {
 
 // Spaces declares where this repo's pages live.
 type Spaces struct {
-	Default string   `yaml:"default"`
-	Shared  []string `yaml:"shared"`
-	Parent  string   `yaml:"parent"`
-	Home    string   `yaml:"home"`
+	Default string      `yaml:"default"`
+	Shared  []string    `yaml:"shared"`
+	Parent  string      `yaml:"parent"`
+	Home    string      `yaml:"home"`
+	Declare []SpaceDecl `yaml:"declare"`
+}
+
+// SpaceDecl declares a space the site should have, with the audience it serves.
+type SpaceDecl struct {
+	Slug       string   `yaml:"slug"`
+	Name       string   `yaml:"name"`
+	Parent     string   `yaml:"parent"`
+	Type       string   `yaml:"type"`
+	Visibility string   `yaml:"visibility"`
+	Audiences  []string `yaml:"audiences"`
+}
+
+// Space types accepted by spaces.declare[].type.
+const (
+	SpaceTypeProductDocs   = "product-docs"
+	SpaceTypeAPIReference  = "api-reference"
+	SpaceTypeReleaseNotes  = "release-notes"
+	SpaceTypeKnowledgeBase = "knowledge-base"
+	SpaceTypeHandbook      = "handbook"
+	SpaceTypeGeneral       = "general"
+)
+
+// Space visibilities accepted by spaces.declare[].visibility.
+const (
+	SpaceVisibilityPublic   = "public"
+	SpaceVisibilityUnlisted = "unlisted"
+	SpaceVisibilityPrivate  = "private"
+	SpaceVisibilityInherit  = "inherit"
+)
+
+var (
+	spaceTypes = []string{
+		SpaceTypeProductDocs, SpaceTypeAPIReference, SpaceTypeReleaseNotes,
+		SpaceTypeKnowledgeBase, SpaceTypeHandbook, SpaceTypeGeneral,
+	}
+	spaceVisibilities = []string{
+		SpaceVisibilityPublic, SpaceVisibilityUnlisted, SpaceVisibilityPrivate, SpaceVisibilityInherit,
+	}
+	spaceAudiences = []string{"public", "users", "developers"}
+)
+
+// DeclaredSpaces returns the declared spaces parents-first, the order they must be ensured in.
+func (p *Project) DeclaredSpaces() []SpaceDecl {
+	if p == nil {
+		return nil
+	}
+	out := make([]SpaceDecl, 0, len(p.Spaces.Declare))
+	for _, d := range p.Spaces.Declare {
+		if d.Slug != "" && d.Parent == "" {
+			out = append(out, d)
+		}
+	}
+	for _, d := range p.Spaces.Declare {
+		if d.Slug != "" && d.Parent != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// SpaceForAudiences returns the declared space serving every one of these audiences, most specific first.
+func (p *Project) SpaceForAudiences(audiences []string) string {
+	if p == nil || len(audiences) == 0 {
+		return ""
+	}
+	var best *SpaceDecl
+	for i := range p.Spaces.Declare {
+		d := &p.Spaces.Declare[i]
+		if !coversAudiences(d.Audiences, audiences) {
+			continue
+		}
+		if best == nil || moreSpecificSpace(*d, *best) {
+			best = d
+		}
+	}
+	if best == nil {
+		return ""
+	}
+	return best.Slug
+}
+
+func coversAudiences(have, want []string) bool {
+	if len(have) == 0 {
+		return false
+	}
+	set := make(map[string]bool, len(have))
+	for _, a := range have {
+		set[a] = true
+	}
+	for _, a := range want {
+		if !set[a] {
+			return false
+		}
+	}
+	return true
+}
+
+func moreSpecificSpace(cand, best SpaceDecl) bool {
+	if cand.Parent == best.Slug {
+		return true
+	}
+	if best.Parent == cand.Slug {
+		return false
+	}
+	return len(cand.Audiences) < len(best.Audiences)
 }
 
 // SourceMap binds a source artifact (a spec or a code file) to a doc page.
@@ -307,9 +413,6 @@ func (p *Project) Validate(path string) error {
 		if msg := checkSlug(p.Spaces.Home); msg != "" {
 			errs = append(errs, "spaces.home: "+msg)
 		}
-		if (len(p.Sources) > 0 || len(p.Documents) > 0) && !p.mapsHomePage() {
-			errs = append(errs, fmt.Sprintf("spaces.home %q matches no source/document page in the default space %q", p.Spaces.Home, p.Spaces.Default))
-		}
 	}
 	for i, s := range p.Sources {
 		if s.Collection != "" {
@@ -325,6 +428,7 @@ func (p *Project) Validate(path string) error {
 			}
 		}
 	}
+	errs = append(errs, p.validateSpaceDeclarations()...)
 	errs = append(errs, p.validateDiscovery()...)
 	errs = append(errs, p.validateI18n()...)
 	errs = append(errs, p.validateCoverage()...)
@@ -332,6 +436,65 @@ func (p *Project) Validate(path string) error {
 		return fmt.Errorf("%s:\n  - %s", path, strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+func (p *Project) validateSpaceDeclarations() []string {
+	var errs []string
+	declared := make(map[string]SpaceDecl, len(p.Spaces.Declare))
+	for i, d := range p.Spaces.Declare {
+		slug := strings.TrimSpace(d.Slug)
+		if slug == "" {
+			errs = append(errs, fmt.Sprintf("spaces.declare[%d]: 'slug' is required", i))
+		} else {
+			if msg := checkSlug(slug); msg != "" {
+				errs = append(errs, fmt.Sprintf("spaces.declare[%d].slug: %s", i, msg))
+			}
+			if _, dup := declared[slug]; dup {
+				errs = append(errs, fmt.Sprintf("spaces.declare[%d]: duplicate slug %q — declare each space once", i, slug))
+			} else {
+				declared[slug] = d
+			}
+		}
+		if d.Type != "" && !contains(spaceTypes, d.Type) {
+			errs = append(errs, fmt.Sprintf("spaces.declare[%d].type %q must be %s", i, d.Type, strings.Join(spaceTypes, "|")))
+		}
+		if d.Visibility != "" && !contains(spaceVisibilities, d.Visibility) {
+			errs = append(errs, fmt.Sprintf("spaces.declare[%d].visibility %q must be %s", i, d.Visibility, strings.Join(spaceVisibilities, "|")))
+		}
+		for j, a := range d.Audiences {
+			if !contains(spaceAudiences, a) {
+				errs = append(errs, fmt.Sprintf("spaces.declare[%d].audiences[%d]: %q must be %s", i, j, a, strings.Join(spaceAudiences, "|")))
+			}
+		}
+	}
+	for i, d := range p.Spaces.Declare {
+		parent := strings.TrimSpace(d.Parent)
+		if parent == "" {
+			continue
+		}
+		if parent == strings.TrimSpace(d.Slug) {
+			errs = append(errs, fmt.Sprintf("spaces.declare[%d].parent must name a different space than %q (a space cannot be its own parent)", i, d.Slug))
+			continue
+		}
+		up, ok := declared[parent]
+		if !ok {
+			errs = append(errs, fmt.Sprintf("spaces.declare[%d].parent %q must be another declared space (add it to spaces.declare)", i, parent))
+			continue
+		}
+		if strings.TrimSpace(up.Parent) != "" {
+			errs = append(errs, fmt.Sprintf("spaces.declare[%d]: parent %q is itself nested under %q — spaces nest one level only", i, parent, up.Parent))
+		}
+	}
+	return errs
+}
+
+func contains(allowed []string, v string) bool {
+	for _, a := range allowed {
+		if a == v {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Project) validateDiscovery() []string {
@@ -401,21 +564,6 @@ func (p *Project) validateCoverage() []string {
 }
 
 var languageCodeRE = regexp.MustCompile(`^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
-
-func (p *Project) mapsHomePage() bool {
-	inDefault := func(space string) bool { return space == "" || space == p.Spaces.Default }
-	for _, s := range p.Sources {
-		if s.Page == p.Spaces.Home && inDefault(s.Space) {
-			return true
-		}
-	}
-	for _, d := range p.Documents {
-		if (d.As == "" || d.As == "page") && d.Page == p.Spaces.Home && inDefault(d.Space) {
-			return true
-		}
-	}
-	return false
-}
 
 func checkSlug(s string) string {
 	for _, r := range s {

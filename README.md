@@ -151,6 +151,37 @@ All of this requires the platform's `space-hierarchy` capability (`gravity
 doctor` reports it). Older platforms sync flat with a notice — nothing breaks.
 Use `gravity spaces` to see the resulting hierarchy and what feeds it.
 
+#### Declaring spaces and who they serve
+
+`spaces.declare` states the spaces the site should have and the audience each
+one serves. `gravity sync` and `gravity docs generate` ensure them first
+(parents before children) and route every authored page to the space whose
+audiences cover it:
+
+```yaml
+spaces:
+  default: product
+  declare:
+    - slug: product
+      name: Product docs
+      type: product-docs      # product-docs|api-reference|release-notes|knowledge-base|handbook|general
+      visibility: public      # public|unlisted|private|inherit
+      audiences: [public, users]
+    - slug: developers
+      name: Developer docs
+      parent: product         # one level only; must be another declared slug
+      type: api-reference
+      visibility: unlisted
+      audiences: [developers]
+```
+
+- **Routing.** A planned page goes to the declared space whose `audiences`
+  cover the page's audiences; the narrowest match wins (a subspace beats its
+  parent). An explicit `space:` on the page, or `--space`, still wins outright.
+- **Degradation.** `type`/`visibility` need the platform's `space-metadata`
+  capability; without it the spaces are still created, minus those two fields,
+  with one notice. `parent` follows `space-hierarchy` as above.
+
 `~/.config/gravity/config.yaml` (user, `0600`, holds the token):
 
 ```yaml

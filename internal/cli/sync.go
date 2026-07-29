@@ -31,6 +31,7 @@ type hierarchySpec struct {
 	defaultSpace string
 	parent       string
 	home         string
+	declared     []config.SpaceDecl
 }
 
 func hierarchyFromProject(proj *config.Project) *hierarchySpec {
@@ -41,7 +42,35 @@ func hierarchyFromProject(proj *config.Project) *hierarchySpec {
 		defaultSpace: proj.Spaces.Default,
 		parent:       proj.Spaces.Parent,
 		home:         proj.Spaces.Home,
+		declared:     proj.DeclaredSpaces(),
 	}
+}
+
+func (h *hierarchySpec) declaresNesting() bool {
+	for _, d := range h.declared {
+		if d.Parent != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *hierarchySpec) flatten() {
+	h.parent, h.home = "", ""
+	for i := range h.declared {
+		h.declared[i].Parent = ""
+	}
+}
+
+func (h *hierarchySpec) stripMetadata() bool {
+	stripped := false
+	for i := range h.declared {
+		if h.declared[i].Type != "" || h.declared[i].Visibility != "" {
+			h.declared[i].Type, h.declared[i].Visibility = "", ""
+			stripped = true
+		}
+	}
+	return stripped
 }
 
 func newSyncCmd(gf *globalFlags) *cobra.Command {
@@ -223,12 +252,22 @@ func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilte
 	return targets, nil
 }
 
+func copyHierarchy(hier *hierarchySpec) *hierarchySpec {
+	if hier == nil {
+		return nil
+	}
+	spec := *hier
+	spec.declared = append([]config.SpaceDecl(nil), hier.declared...)
+	return &spec
+}
+
 type reconcileResult struct {
 	index         int
 	space         string
 	configSlug    string
 	effectiveSlug string
 	update        bool
+	draft         bool
 }
 
 type orphanPage struct {
@@ -266,6 +305,7 @@ func reconcilePageTargets(existing []api.Page, targets []syncTarget, myRemoteKey
 		if chosen != nil {
 			res.effectiveSlug = chosen.Slug
 			res.update = true
+			res.draft = chosen.IsDraft()
 			pickedID[chosen.ID] = true
 			keptForTitle[space+"\x00"+title] = chosen.Slug
 		}
@@ -403,8 +443,8 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 	} else {
 		fmt.Fprintf(out, "warning: could not probe platform features (%v); syncing without hierarchy fields\n", err)
 	}
-	hierarchyOK := features[featureSpaceHierarchy]
-	if !hierarchyOK {
+	hier = copyHierarchy(hier)
+	if !features[featureSpaceHierarchy] {
 		stripped := false
 		for i := range targets {
 			if targets[i].page.Collection != "" {
@@ -412,10 +452,15 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 				stripped = true
 			}
 		}
-		if stripped || (hier != nil && (hier.parent != "" || hier.home != "")) {
+		if stripped || (hier != nil && (hier.parent != "" || hier.home != "" || hier.declaresNesting())) {
 			fmt.Fprintln(out, "note: this platform predates subspaces/collections — pages sync flat; spaces.parent / spaces.home / collections take effect once the platform supports them")
 		}
-		hier = nil
+		if hier != nil {
+			hier.flatten()
+		}
+	}
+	if !features[featureSpaceMetadata] && hier != nil && hier.stripMetadata() {
+		fmt.Fprintln(out, "note: this platform does not type spaces yet — declared spaces sync without type/visibility; they take effect once it does")
 	}
 
 	myRemoteKey := ""
@@ -429,7 +474,7 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 	}
 
 	var orphans []orphanPage
-	if existing, err := client.Pages(ctx, site, ""); err != nil {
+	if existing, err := client.ListPages(ctx, site, api.PageListOptions{IncludeDraft: true}); err != nil {
 		fmt.Fprintf(out, "warning: could not read existing pages to reconcile (%v); authoring with configured slugs\n", err)
 	} else {
 		var plan []reconcileResult
@@ -442,6 +487,9 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 			note := ""
 			if r.update && r.effectiveSlug != r.configSlug {
 				note = fmt.Sprintf(" (config slug %q remapped onto the existing page)", r.configSlug)
+			}
+			if r.draft {
+				note += " (draft — updating the open proposal in place)"
 			}
 			fmt.Fprintf(out, "plan: %-6s %s/%s%s\n", verb, r.space, r.effectiveSlug, note)
 			targets[r.index].page.Slug = r.effectiveSlug
@@ -461,7 +509,18 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 	}
 
 	ensured := map[string]bool{}
-	if hier != nil && hier.parent != "" {
+	if hier != nil {
+		for _, d := range hier.declared {
+			req := api.SpaceUpsertRequest{
+				Slug: d.Slug, Name: d.Name, Parent: d.Parent, Type: d.Type, Visibility: d.Visibility,
+			}
+			if _, err := client.EnsureSpace(ctx, site, req); err != nil {
+				return syncAPIError(err, fmt.Sprintf("ensure declared space %q", d.Slug))
+			}
+			ensured[d.Slug] = true
+		}
+	}
+	if hier != nil && hier.parent != "" && !ensured[hier.parent] {
 		if _, err := client.EnsureSpace(ctx, site, api.SpaceUpsertRequest{Slug: hier.parent}); err != nil {
 			return syncAPIError(err, fmt.Sprintf("ensure parent space %q", hier.parent))
 		}
@@ -506,7 +565,7 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 			failures = append(failures, t.label)
 			continue
 		}
-		if t.home && t.kind == "page" && hier != nil {
+		if t.home && t.kind == "page" && hier != nil && hier.home != "" {
 			homeSpace, homeSlug = t.space, firstNonEmpty(resp.PageSlug, t.page.Slug)
 		}
 		proposed++

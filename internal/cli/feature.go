@@ -13,6 +13,8 @@ const (
 	featureBlockAudience  = "block-audience"
 	featureSpaceHierarchy = "space-hierarchy"
 
+	featureSpaceMetadata = "space-metadata"
+
 	featureRepos         = "repos"
 	featureInventory     = "inventory"
 	featureCoverage      = "coverage"

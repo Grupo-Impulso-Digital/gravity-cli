@@ -111,8 +111,8 @@ documents:
 	if !strings.Contains(msg, "spaces.parent must name a different space") {
 		t.Errorf("missing self-parent error: %v", msg)
 	}
-	if !strings.Contains(msg, "matches no source/document page") {
-		t.Errorf("missing home-typo error: %v", msg)
+	if strings.Contains(msg, "matches no source/document page") {
+		t.Errorf("home without a mapping must be allowed (AI-authored home pages): %v", msg)
 	}
 }
 
@@ -120,6 +120,184 @@ func TestLoadProject_HomeWithoutMappingsAllowed(t *testing.T) {
 	p := loadProject(t, "site: acme\nspaces:\n  default: connect\n  home: overview\n")
 	if p.Spaces.Home != "overview" {
 		t.Errorf("home = %q", p.Spaces.Home)
+	}
+}
+
+func TestLoadProject_SpaceDeclarations(t *testing.T) {
+	p := loadProject(t, `site: acme
+spaces:
+  default: product
+  declare:
+    - slug: product
+      name: Product
+      type: product-docs
+      visibility: public
+      audiences: [public, users]
+    - slug: developers
+      parent: product
+      type: api-reference
+      visibility: unlisted
+      audiences: [developers]
+`)
+	if len(p.Spaces.Declare) != 2 {
+		t.Fatalf("declare = %+v", p.Spaces.Declare)
+	}
+	if d := p.Spaces.Declare[0]; d.Name != "Product" || d.Type != config.SpaceTypeProductDocs || d.Visibility != config.SpaceVisibilityPublic {
+		t.Errorf("first declaration = %+v", d)
+	}
+	ordered := p.DeclaredSpaces()
+	if len(ordered) != 2 || ordered[0].Slug != "product" || ordered[1].Slug != "developers" {
+		t.Errorf("DeclaredSpaces() = %+v, want parents first", ordered)
+	}
+
+	nested := loadProject(t, `site: acme
+spaces:
+  default: product
+  declare:
+    - slug: developers
+      parent: product
+      audiences: [developers]
+    - slug: product
+      audiences: [public, users]
+`)
+	ordered = nested.DeclaredSpaces()
+	if len(ordered) != 2 || ordered[0].Slug != "product" || ordered[1].Slug != "developers" {
+		t.Errorf("DeclaredSpaces() = %+v, want the parent hoisted ahead of its child", ordered)
+	}
+}
+
+func TestSpaceForAudiences(t *testing.T) {
+	proj := &config.Project{Spaces: config.Spaces{
+		Default: "product",
+		Declare: []config.SpaceDecl{
+			{Slug: "product", Audiences: []string{"public", "users", "developers"}},
+			{Slug: "developers", Parent: "product", Audiences: []string{"developers"}},
+			{Slug: "handbook"},
+		},
+	}}
+	cases := []struct {
+		name      string
+		audiences []string
+		want      string
+	}{
+		{"developers-only routes to the subspace", []string{"developers"}, "developers"},
+		{"public routes to the covering parent", []string{"public"}, "product"},
+		{"mixed audiences need one space covering all", []string{"public", "developers"}, "product"},
+		{"users+developers is only covered by the parent", []string{"users", "developers"}, "product"},
+		{"no audiences matches nothing", nil, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := proj.SpaceForAudiences(c.audiences); got != c.want {
+				t.Errorf("SpaceForAudiences(%v) = %q, want %q", c.audiences, got, c.want)
+			}
+		})
+	}
+	if got := (*config.Project)(nil).SpaceForAudiences([]string{"public"}); got != "" {
+		t.Errorf("nil project = %q, want empty", got)
+	}
+	undeclared := &config.Project{Spaces: config.Spaces{Default: "docs"}}
+	if got := undeclared.SpaceForAudiences([]string{"public"}); got != "" {
+		t.Errorf("no declarations = %q, want empty", got)
+	}
+}
+
+func TestLoadProject_SpaceDeclareValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{
+			name: "slug is required and must be a slug",
+			body: `site: acme
+spaces:
+  declare:
+    - name: No slug
+    - slug: Not A Slug
+`,
+			want: []string{
+				"spaces.declare[0]: 'slug' is required",
+				`spaces.declare[1].slug: "Not A Slug" must be a lowercase slug`,
+			},
+		},
+		{
+			name: "duplicate slugs are rejected",
+			body: `site: acme
+spaces:
+  declare:
+    - slug: product
+    - slug: product
+`,
+			want: []string{`spaces.declare[1]: duplicate slug "product"`},
+		},
+		{
+			name: "enums are checked",
+			body: `site: acme
+spaces:
+  declare:
+    - slug: product
+      type: marketing
+      visibility: secret
+      audiences: [internal]
+`,
+			want: []string{
+				`spaces.declare[0].type "marketing" must be product-docs|api-reference|release-notes|knowledge-base|handbook|general`,
+				`spaces.declare[0].visibility "secret" must be public|unlisted|private|inherit`,
+				`spaces.declare[0].audiences[0]: "internal" must be public|users|developers`,
+			},
+		},
+		{
+			name: "parent must be another declared space",
+			body: `site: acme
+spaces:
+  declare:
+    - slug: developers
+      parent: product
+`,
+			want: []string{`spaces.declare[0].parent "product" must be another declared space`},
+		},
+		{
+			name: "a space cannot parent itself",
+			body: `site: acme
+spaces:
+  declare:
+    - slug: product
+      parent: product
+`,
+			want: []string{`spaces.declare[0].parent must name a different space than "product"`},
+		},
+		{
+			name: "nesting deeper than one level is rejected",
+			body: `site: acme
+spaces:
+  declare:
+    - slug: product
+    - slug: developers
+      parent: product
+    - slug: internals
+      parent: developers
+`,
+			want: []string{`spaces.declare[2]: parent "developers" is itself nested under "product"`},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, config.ProjectFileName), []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := config.LoadProject(dir)
+			if err == nil {
+				t.Fatal("expected validation errors")
+			}
+			for _, want := range c.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error missing %q; got: %s", want, err.Error())
+				}
+			}
+		})
 	}
 }
 
