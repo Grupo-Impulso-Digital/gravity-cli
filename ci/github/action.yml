@@ -48,6 +48,14 @@ runs:
       env:
         GRAVITY_CLI_VERSION: ${{ inputs.version }}
       run: |
+        # Release tags are immutable, so the module proxy is fine (and fast).
+        # Branch names and commit SHAs are resolved directly from GitHub:
+        # proxy.golang.org caches branch lookups for up to ~30 minutes, which
+        # otherwise installs a stale tip right after a merge to main.
+        case "$GRAVITY_CLI_VERSION" in
+          v[0-9]*) ;;
+          *) export GOPRIVATE=github.com/Grupo-Impulso-Digital/gravity-cli ;;
+        esac
         go install "github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@${GRAVITY_CLI_VERSION}"
 
     - name: Run gravity
