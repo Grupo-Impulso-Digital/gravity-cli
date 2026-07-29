@@ -42,6 +42,7 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 				fmt.Fprintln(out, "Default site: (none)")
 			}
 			fmt.Fprintf(out, "Space hierarchy (subspaces/home pages/collections): %s\n", featureState(who.Features[featureSpaceHierarchy]))
+			fmt.Fprintf(out, "Space metadata (declared space type/visibility): %s\n", featureState(who.Features[featureSpaceMetadata]))
 			fmt.Fprintf(out, "Connected repos (registration + write attribution): %s\n", featureState(who.Features[featureRepos]))
 			fmt.Fprintf(out, "Feature inventory: %s\n", featureState(who.Features[featureInventory]))
 			fmt.Fprintf(out, "Coverage reporting: %s\n", featureState(who.Features[featureCoverage]))

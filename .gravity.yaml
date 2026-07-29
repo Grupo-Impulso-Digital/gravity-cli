@@ -3,9 +3,9 @@
 # release-notes on a published release).
 # Committed on purpose. NEVER put a token here: GRAVITY_TOKEN is an org secret.
 #
-# This repo publishes into the "gravity" site, sharing the "guides" space with
-# its sibling repos (gravity, origin-plugin). Pages are filed under a "cli"
-# collection so the sidebar keeps one tidy group per repo.
+# This repo is a SATELLITE of the "gravity" product. Its developer docs live in
+# the `cli` subspace under the shared `developers` space; team-internal docs
+# file into the private `internal` space under a per-repo collection.
 #
 # It also doubles as the worked example of the v2 manifest — every optional
 # section below is exercised here rather than only in ci/README.md.
@@ -20,64 +20,58 @@ product:
   # unit kind is pinned explicitly under discovery instead.
 
 spaces:
-  default: guides
-  shared: [guides]
+  default: cli
+  parent: developers
+  home: overview
+  shared: [internal]
+  declare:
+    - slug: developers
+      name: Developers
+      type: api-reference
+      visibility: public
+    - slug: cli
+      name: CLI
+      parent: developers
+      audiences: [developers]
+    - slug: internal
+      name: Engineering Handbook
+      type: handbook
+      visibility: private
 
-# How `gravity docs generate` surveys this repo for documentable units.
-discovery:
-  units: feature
-  include:
-    - cmd/**
-    - internal/**
-    - ci/**
-  exclude:
-    - "**/*_test.go"
-    - bin/**
-    - dist/**
-    - .gravity/**
-  # Read first: the command tree and the exit-code/config contracts are how the
-  # planner orients itself in a cobra CLI.
-  entrypoints:
-    - cmd/gravity/main.go
-    - internal/cli/root.go
-    - README.md
-    - AGENTS.md
-  audiences:
-    default: [developers]
-
-# The bar this repo holds itself to. `require` names page slugs that must exist
-# in the default space; a missing one is a finding regardless of `min`. Ratchet
-# `min` up as the inventory fills in.
-coverage:
-  min: 0.6
-  require: [overview]
-
-# Translations are queued by the platform on the languages declared here.
-# Uncomment once the CLI docs are worth maintaining in more than one language.
-# i18n:
-#   languages: [fr]
-
-# Markdown authored here, pushed verbatim. `gravity docs generate` writes the
-# rest from the code as proposals — this list is only for files you maintain
-# by hand and want published as-is.
+# Hand-maintained markdown, published verbatim. The README is developer-facing
+# on purpose — it fronts the `cli` subspace, not the customer docs space.
 documents:
   - file: README.md
     page: overview
-    title: Gravity — CLI
+    title: Gravity CLI
     ownership: hybrid
-    as: page
-
-  # Also in this repo — uncomment the ones that are customer-facing:
-  # - file: docs/platform-authoring-api.md
-  #   page: platform-authoring-api
-  #   ownership: hybrid
-  #   as: page
+  - file: docs/platform-authoring-api.md
+    space: internal
+    page: platform-authoring-api
+    title: Platform authoring API (CLI-side contract mirror)
+    ownership: hybrid
 
 releaseNotes:
   space: changelog
 
-# Nucleus memory is shared across the product's repos, so they compose one
-# picture rather than each remembering in isolation.
 knowledge:
   namespace: gravity
-  scope: cli
+
+discovery:
+  units: capability
+  exclude:
+    - dist/**
+    - '**/*_test.go'
+  entrypoints:
+    - cmd/gravity/main.go
+    - internal/cli/root.go
+    - internal/config/project.go
+  audiences:
+    default: [developers]
+
+i18n:
+  languages: [fr]
+
+coverage:
+  min: 0.7
+  require: [overview]

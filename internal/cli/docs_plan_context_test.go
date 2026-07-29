@@ -33,6 +33,48 @@ func TestExistingPagesDigestFirstPass(t *testing.T) {
 	}
 }
 
+func TestExistingPagesDigestLabelsDrafts(t *testing.T) {
+	got := existingPagesDigest([]api.Page{
+		{SpaceSlug: "product", Slug: "billing", Title: "Billing", Status: api.PageStatusReleased},
+		{SpaceSlug: "product", Slug: "webhooks", Title: "Webhooks", Status: api.PageStatusDraft},
+		{SpaceSlug: "product", Slug: "legacy", Title: "Legacy"},
+	})
+	for _, want := range []string{
+		"- product/billing — Billing\n",
+		"- product/webhooks — Webhooks [draft]\n",
+		"- product/legacy — Legacy\n",
+		"[draft] page is a live page",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("digest missing %q:\n%s", want, got)
+		}
+	}
+
+	released := existingPagesDigest([]api.Page{{SpaceSlug: "product", Slug: "billing", Title: "Billing"}})
+	if strings.Contains(released, "[draft]") {
+		t.Errorf("a draft-free digest must not explain drafts:\n%s", released)
+	}
+}
+
+func TestSpacesDigestListsDeclaredSpaces(t *testing.T) {
+	got := spacesDigest(&config.Project{Spaces: config.Spaces{
+		Default: "product",
+		Declare: []config.SpaceDecl{
+			{Slug: "product", Type: config.SpaceTypeProductDocs, Audiences: []string{api.AudiencePublic, api.AudienceUsers}},
+			{Slug: "developers", Parent: "product", Type: config.SpaceTypeAPIReference, Audiences: []string{api.AudienceDevelopers}},
+		},
+	}})
+	for _, want := range []string{
+		"- product (default, type product-docs, serves public+users)",
+		"- developers (under product, type api-reference, serves developers)",
+		"Route each page to the space whose audiences cover",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("digest missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSpacesDigestListsDefaultParentAndMappings(t *testing.T) {
 	proj := &config.Project{
 		Spaces:    config.Spaces{Default: "control-plane", Parent: "developers"},
@@ -150,6 +192,80 @@ func TestAudienceSpaceMapping(t *testing.T) {
 	plain := &config.Project{Spaces: config.Spaces{Default: "docs", Shared: []string{"docs"}}}
 	if got := audienceSpace(plain, []string{api.AudienceDevelopers}); got != "" {
 		t.Errorf("unconfigured dev space -> %q, want empty", got)
+	}
+}
+
+func TestAudienceSpaceDeclarationPrecedence(t *testing.T) {
+	declared := &config.Project{Spaces: config.Spaces{
+		Default: "product",
+		Shared:  []string{"api"},
+		Declare: []config.SpaceDecl{
+			{Slug: "product", Type: config.SpaceTypeProductDocs, Audiences: []string{api.AudiencePublic, api.AudienceUsers, api.AudienceDevelopers}},
+			{Slug: "developers", Parent: "product", Type: config.SpaceTypeAPIReference, Audiences: []string{api.AudienceDevelopers}},
+		},
+	}}
+	partial := &config.Project{Spaces: config.Spaces{
+		Default: "product",
+		Shared:  []string{"api"},
+		Declare: []config.SpaceDecl{
+			{Slug: "product", Type: config.SpaceTypeProductDocs, Audiences: []string{api.AudiencePublic, api.AudienceUsers}},
+		},
+	}}
+
+	tests := []struct {
+		name      string
+		proj      *config.Project
+		audiences []string
+		want      string
+	}{
+		{"declared subspace beats the name heuristic", declared, []string{api.AudienceDevelopers}, "developers"},
+		{"the parent serves what its subspace does not", declared, []string{api.AudiencePublic}, "product"},
+		{"a multi-audience page needs one space covering all of them", declared, []string{api.AudiencePublic, api.AudienceUsers}, "product"},
+		{"no declaration covers it: fall back to the name heuristic", partial, []string{api.AudienceDevelopers}, "api"},
+		{"a declared space covers users", partial, []string{api.AudienceUsers}, "product"},
+		{"nothing matches: the caller falls back", partial, []string{api.AudiencePublic, api.AudienceDevelopers}, ""},
+		{"no audiences at all", declared, nil, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := audienceSpace(tc.proj, tc.audiences); got != tc.want {
+				t.Errorf("audienceSpace(%v) = %q, want %q", tc.audiences, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolvePlannedPagesRoutingPrecedence(t *testing.T) {
+	proj := &config.Project{Spaces: config.Spaces{
+		Default: "product",
+		Declare: []config.SpaceDecl{
+			{Slug: "product", Type: config.SpaceTypeProductDocs, Audiences: []string{api.AudiencePublic, api.AudienceUsers}},
+			{Slug: "developers", Parent: "product", Type: config.SpaceTypeAPIReference, Audiences: []string{api.AudienceDevelopers}},
+		},
+	}}
+	want := []string{api.AudiencePublic, api.AudienceUsers, api.AudienceDevelopers}
+	plan := agent.DocPlanInput{Pages: []agent.DocPlanPage{
+		{Slug: "webhooks", Title: "Webhooks", Audiences: []string{api.AudienceDevelopers}},
+		{Slug: "billing", Title: "Billing", Audiences: []string{api.AudienceUsers}},
+		{Space: "handbook", Slug: "runbook", Title: "Runbook", Audiences: []string{api.AudienceDevelopers}},
+		{Slug: "everything", Title: "Everything", Audiences: want},
+	}}
+
+	got := resolvePlannedPages(plan, proj, "", "fallback", want)
+	if len(got) != 4 {
+		t.Fatalf("planned %d pages, want 4", len(got))
+	}
+	for i, wantSpace := range []string{"developers", "product", "handbook", "fallback"} {
+		if got[i].space != wantSpace {
+			t.Errorf("page %q landed in %q, want %q", got[i].slug, got[i].space, wantSpace)
+		}
+	}
+
+	forced := resolvePlannedPages(plan, proj, "changelog", "fallback", want)
+	for _, p := range forced {
+		if p.space != "changelog" {
+			t.Errorf("--space must beat every declaration: %+v", p)
+		}
 	}
 }
 

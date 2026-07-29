@@ -243,18 +243,30 @@ type PageLanguage struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// Page statuses reported by GET .../pages; an older server omits the field.
+const (
+	PageStatusReleased = "released"
+	PageStatusDraft    = "draft"
+)
+
 // Page is a full page snapshot from GET .../pages.
 type Page struct {
 	ID            string         `json:"id"`
 	Slug          string         `json:"slug"`
 	Title         string         `json:"title"`
 	SpaceSlug     string         `json:"spaceSlug"`
+	Status        string         `json:"status,omitempty"`
 	Version       *int           `json:"version"`
 	ReleasedAt    string         `json:"releasedAt"`
 	Blocks        []ContentBlock `json:"blocks"`
 	RepoID        *string        `json:"repoId,omitempty"`
 	RepoRemoteKey *string        `json:"repoRemoteKey,omitempty"`
 	Languages     []PageLanguage `json:"languages,omitempty"`
+}
+
+// IsDraft reports whether this page exists only as a draft or open proposal.
+func (p Page) IsDraft() bool {
+	return p.Status == PageStatusDraft
 }
 
 // PagesResponse wraps the pages list.
@@ -264,9 +276,10 @@ type PagesResponse struct {
 
 // PageListOptions filters GET /api/v1/sites/:siteSlug/pages.
 type PageListOptions struct {
-	SpaceSlug string
-	Repo      string
-	Languages bool
+	SpaceSlug    string
+	Repo         string
+	Languages    bool
+	IncludeDraft bool
 }
 
 // ListPages calls GET /api/v1/sites/:siteSlug/pages with the given filters.
@@ -280,6 +293,9 @@ func (c *Client) ListPages(ctx context.Context, siteSlug string, opts PageListOp
 	}
 	if opts.Languages {
 		q.Set("languages", "1")
+	}
+	if opts.IncludeDraft {
+		q.Set("include", "draft")
 	}
 	var out PagesResponse
 	if err := c.Get(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/pages", q, &out); err != nil {
@@ -371,6 +387,8 @@ type SpaceUpsertRequest struct {
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
 	Parent      string `json:"parent,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Visibility  string `json:"visibility,omitempty"`
 }
 
 type spaceEnvelope struct {

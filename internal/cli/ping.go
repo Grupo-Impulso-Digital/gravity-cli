@@ -190,6 +190,9 @@ func docSourcesSummary(proj *config.Project) *api.PingDocSources {
 	for _, s := range proj.Spaces.Shared {
 		add(s)
 	}
+	for _, d := range proj.Spaces.Declare {
+		add(d.Slug)
+	}
 	for _, s := range proj.Sources {
 		add(s.Space)
 		kinds[firstNonEmpty(s.Kind, "openapi")] = true

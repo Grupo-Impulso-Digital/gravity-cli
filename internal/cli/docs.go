@@ -154,7 +154,7 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 			planPrompt := resolvePrompt(cmd.Context(), e.client, prompts.NameDocsPlan, logw)
 			authorPrompt := resolvePrompt(cmd.Context(), e.client, prompts.NameDocsAuthor, logw)
 
-			existing, err := e.client.Pages(cmd.Context(), siteSlug, "")
+			existing, err := e.client.ListPages(cmd.Context(), siteSlug, api.PageListOptions{IncludeDraft: true})
 			if err != nil {
 				return Fail(CodeError, fmt.Errorf("fetch pages: %w", err))
 			}
@@ -395,7 +395,17 @@ func pageAudiences(pg agent.DocPlanPage, proj *config.Project, want []string) []
 var devSpaceNames = map[string]bool{"developers": true, "developer": true, "dev": true, "dev-docs": true, "api": true}
 
 func audienceSpace(proj *config.Project, audiences []string) string {
-	if proj == nil || len(audiences) != 1 || audiences[0] != api.AudienceDevelopers {
+	if proj == nil || len(audiences) == 0 {
+		return ""
+	}
+	if s := proj.SpaceForAudiences(audiences); s != "" {
+		return s
+	}
+	return devNamedSpace(proj, audiences)
+}
+
+func devNamedSpace(proj *config.Project, audiences []string) string {
+	if len(audiences) != 1 || audiences[0] != api.AudienceDevelopers {
 		return ""
 	}
 	for _, s := range proj.Spaces.Shared {
@@ -860,21 +870,56 @@ func spacesDigest(proj *config.Project) string {
 	if proj == nil {
 		return ""
 	}
+	declared := make(map[string]config.SpaceDecl, len(proj.Spaces.Declare))
+	for _, d := range proj.Spaces.Declare {
+		declared[d.Slug] = d
+	}
 	var b strings.Builder
 	b.WriteString("Spaces available to this repo:\n")
-	fmt.Fprintf(&b, "- %s (default)\n", proj.Spaces.Default)
+	line := func(slug, note string) {
+		attrs := []string{}
+		if note != "" {
+			attrs = append(attrs, note)
+		}
+		if d, ok := declared[slug]; ok {
+			if d.Parent != "" {
+				attrs = append(attrs, "under "+d.Parent)
+			}
+			if d.Type != "" {
+				attrs = append(attrs, "type "+d.Type)
+			}
+			if len(d.Audiences) > 0 {
+				attrs = append(attrs, "serves "+strings.Join(d.Audiences, "+"))
+			}
+		}
+		if len(attrs) == 0 {
+			fmt.Fprintf(&b, "- %s\n", slug)
+			return
+		}
+		fmt.Fprintf(&b, "- %s (%s)\n", slug, strings.Join(attrs, ", "))
+	}
+	line(proj.Spaces.Default, "default")
 	if proj.Spaces.Parent != "" {
 		fmt.Fprintf(&b, "  nested under %q\n", proj.Spaces.Parent)
 	}
 	seen := map[string]bool{proj.Spaces.Default: true}
+	for _, d := range proj.Spaces.Declare {
+		if d.Slug != "" && !seen[d.Slug] {
+			seen[d.Slug] = true
+			line(d.Slug, "")
+		}
+	}
 	for _, d := range proj.Documents {
 		if d.Space != "" && !seen[d.Space] {
 			seen[d.Space] = true
-			fmt.Fprintf(&b, "- %s\n", d.Space)
+			line(d.Space, "")
 		}
 	}
 	if dev := audienceSpace(proj, []string{api.AudienceDevelopers}); dev != "" {
 		fmt.Fprintf(&b, "Developer-only pages belong in %q.\n", dev)
+	}
+	if len(declared) > 0 {
+		b.WriteString("Route each page to the space whose audiences cover the page's audiences; the narrowest matching space wins.\n")
 	}
 	b.WriteString("Target one of these exactly. Do not invent a space slug.\n\n")
 	return b.String()
@@ -886,8 +931,17 @@ func existingPagesDigest(existing []api.Page) string {
 	}
 	var b strings.Builder
 	b.WriteString("Pages that already exist (REUSE these slugs when your page covers the same feature):\n")
+	drafts := false
 	for _, p := range existing {
-		fmt.Fprintf(&b, "- %s/%s — %s\n", p.SpaceSlug, p.Slug, p.Title)
+		marker := ""
+		if p.IsDraft() {
+			marker = " [draft]"
+			drafts = true
+		}
+		fmt.Fprintf(&b, "- %s/%s — %s%s\n", p.SpaceSlug, p.Slug, p.Title, marker)
+	}
+	if drafts {
+		b.WriteString("A [draft] page is a live page whose latest version is still an open proposal — edit it like any other existing page; it is not a gap, and a second slug for it would fork the docs.\n")
 	}
 	b.WriteString("\n")
 	return b.String()

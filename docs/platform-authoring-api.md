@@ -32,9 +32,9 @@ exchange (which command sends what, and how it degrades).
 | `POST` | `/api/v1/setup/ping` | `ping`, `repos` | — (v2 fields degrade) |
 | `GET` | `/api/v1/sites` | `sites`, `init` | — |
 | `GET` | `/api/v1/sites/:site` | `sync`, `docs generate`, `nucleus` | — |
-| `POST` | `/api/v1/sites/:site/spaces` | `sync`, `spaces`, `init` | `space-hierarchy` for `parent` |
+| `POST` | `/api/v1/sites/:site/spaces` | `sync`, `spaces`, `init` | `space-hierarchy` for `parent`, `space-metadata` for `type`/`visibility` |
 | `PATCH` | `/api/v1/sites/:site/spaces/:space` | `sync` | `space-hierarchy` |
-| `GET` | `/api/v1/sites/:site/pages` | `sync`, `docs generate`, `check docs`, `coverage` | — (`repo=`/`languages=1` are v2) |
+| `GET` | `/api/v1/sites/:site/pages` | `sync`, `docs generate`, `check docs`, `coverage` | — (`repo=`/`languages=1`/`include=draft` are v2) |
 | `GET` | `/api/v1/sites/:site/spaces/:space/pages/:page` | `check docs` | — |
 | `GET` | `/api/v1/sites/:site/api-blocks` | `check api` | — |
 | `POST` | `/api/v1/sites/:site/pages` | `sync`, `docs generate` | `repos` / `page-languages` for the v2 fields |
@@ -56,6 +56,7 @@ exchange (which command sends what, and how it degrades).
   "prompt-endpoint": true,  // GET /api/llm/v1/prompts/:name
   "docs-generate":   true,  // the server side of `gravity docs generate`
   "space-hierarchy": true,  // subspaces, home pages, page-upsert collections
+  "space-metadata":  true,  // space-ensure `type` + `visibility`
   // v2
   "repos":          true,   // connected_repo: ping registration + `repo` on writes
   "inventory":      true,   // POST /api/v1/sites/:site/inventory
@@ -79,6 +80,7 @@ Degradation per flag:
 | `doc-agent-runs` | `gravity capture` reports unavailability and exits `0` (`--require` ⇒ exit `2`); a `412 feature_disabled` from the route behaves the same. |
 | `page-languages` | `languages` is stripped from every write. One notice. |
 | `space-hierarchy` | `collection` stripped, no `parent`/`homePage`. One notice. Shared-space slugs stay prefixed either way. |
+| `space-metadata` | declared spaces are still ensured, with `type`/`visibility` stripped. One notice. |
 | `block-audience` | blocks are authored with no `audiences`, so they render to everyone. |
 
 ## Repo identity — `remoteKey`
@@ -223,6 +225,22 @@ Site → Space (+ one level of Subspace via parentSpaceId)
 - **`spaces.home`** → after authoring, `PATCH /spaces/:space {homePage: <slug>}`.
   The home page must sit flat in the space, so the CLI never prefixes or collects
   it.
+- **`spaces.declare`** → every declared space is ensured BEFORE the mapping
+  targets, parents first, with `name`/`parent` plus `type`/`visibility` when the
+  `space-metadata` flag is on (stripped, with one notice, when it is off). The
+  declaration's `audiences` never reach the server: they route planned pages
+  client-side (narrowest covering space wins; an explicit page `space` or
+  `--space` wins over both).
+
+## Draft-aware page reads (`include=draft`)
+
+`GET /api/v1/sites/:site/pages?include=draft` additionally returns pages that
+exist only as a draft/open proposal, and every row carries
+`status: "released" | "draft"`. `gravity sync` and `gravity docs generate` both
+request it: the planner sees a draft page as a page to EDIT (the existing-pages
+digest marks it `[draft]`), and reconciliation upserts onto the open proposal
+instead of minting a duplicate slug. An older server ignores the query param and
+omits `status`; the CLI treats a missing `status` as `released`.
 
 ## Feature inventory + coverage
 
