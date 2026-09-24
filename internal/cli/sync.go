@@ -558,7 +558,9 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 		}
 		if err != nil {
 			var ae *api.APIError
-			if errors.As(err, &ae) && ae.IsAuth() {
+			// A license refusal would fail every remaining target the same
+			// way, so it aborts the run like an auth failure does.
+			if (errors.As(err, &ae) && ae.IsAuth()) || api.IsLicenseError(err) {
 				return syncAPIError(err, t.label)
 			}
 			fmt.Fprintf(out, "FAILED: %s: %v\n", t.label, err)

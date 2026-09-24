@@ -22,7 +22,7 @@ exchange (which command sends what, and how it degrades).
   `{ pageId, pageSlug, proposalId, status, reviewUrl }`. Repo registration,
   inventory, attribution and translation requests are **metadata** writes and land
   directly.
-- Exit codes: `0` pass · `1` findings · `2` operational error. v2 adds none.
+- Exit codes: `0` pass · `1` findings · `2` operational error · `3` license refusal (403 `module_disabled` / `seat_limit`).
 
 ## Endpoint map
 

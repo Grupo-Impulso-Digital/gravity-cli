@@ -97,8 +97,16 @@ the same symbol the Makefile sets.
   wrap an underlying error (preserve the chain — `errorlint` guards it). Error
   strings are lowercase and unpunctuated. No `panic` in non-test code.
 - **Exit-code contract** (`internal/cli/exit.go`): `0` success/no findings,
-  `1` findings produced, `2` operational error (auth/network/bad input).
-  Commands return an `*ExitError`; never call `os.Exit` inside a command.
+  `1` findings produced, `2` operational error (auth/network/bad input),
+  `3` license refusal. Commands return an `*ExitError`; never call `os.Exit`
+  inside a command.
+- **License refusals** (`internal/api/license.go`): a 403 whose envelope code is
+  `module_disabled` (with `module`) or `seat_limit` decodes to
+  `*api.ModuleDisabledError` / `*api.SeatLimitError`, whose message tells the
+  user to ask an administrator. They are *not* `IsAuth()` (the token is fine) and
+  `CodeFor` maps them to `3` from anywhere in the chain — so wrap with `%w`, never
+  flatten one into a `Failf` string. The CLI never calls `/api/mcp`, so the
+  JSON-RPC `MODULE_DISABLED` shape needs no handling here.
 - **Token-security boundary** (`internal/config`): a token may come *only* from
   the `GRAVITY_TOKEN` env var or the user-level `~/.config/gravity/config.yaml`
   (mode `0600`). A `token:` committed to `.gravity.yaml` is a loud error, never

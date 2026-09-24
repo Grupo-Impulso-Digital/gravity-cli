@@ -52,8 +52,18 @@ func (e *APIError) Error() string {
 }
 
 // IsAuth reports whether the error is an authentication/authorization failure.
+// A license refusal (module_disabled, seat_limit) is a 403 but not an auth
+// failure: the credential is fine and "check your token" would send the user
+// down the wrong path, so those surface as *ModuleDisabledError/*SeatLimitError.
 func (e *APIError) IsAuth() bool {
+	if e.isLicense() {
+		return false
+	}
 	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
+}
+
+func (e *APIError) isLicense() bool {
+	return e.Code == CodeModuleDisabled || e.Code == CodeSeatLimit
 }
 
 // IsUnavailable reports that the platform does not (yet) implement this route.
@@ -73,6 +83,7 @@ type errorEnvelope struct {
 	Error struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
+		Module  string `json:"module"`
 	} `json:"error"`
 }
 
@@ -130,7 +141,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		if apiErr.Message == "" {
 			apiErr.Message = strings.TrimSpace(string(data))
 		}
-		return apiErr
+		return classifyLicense(apiErr, env.Error.Module)
 	}
 
 	if out != nil && len(data) > 0 {

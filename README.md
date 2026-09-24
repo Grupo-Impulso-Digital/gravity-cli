@@ -519,6 +519,7 @@ generation, strictly best-effort — it can never break those commands.
 | `0`  | success / no findings |
 | `1`  | findings (drift, gaps, stale bindings, coverage below the bar) |
 | `2`  | error (auth, network, bad input) |
+| `3`  | license refusal — the workspace's licence doesn't include the module this command needs (`module_disabled`, e.g. the `cli` module) or its seats are used up (`seat_limit`). The message names the module; ask a workspace administrator. |
 
 ## CI
 
