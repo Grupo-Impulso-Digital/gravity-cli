@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -349,8 +348,8 @@ func (p *Project) Validate(path string) error {
 		errs = append(errs, fmt.Sprintf("version %d is newer than this gravity CLI supports (max %d); upgrade the CLI", p.Version, SchemaVersion))
 	}
 	if p.APIURL != "" {
-		if u, err := url.Parse(p.APIURL); err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") {
-			errs = append(errs, fmt.Sprintf("apiUrl %q must be an absolute http(s) URL", p.APIURL))
+		if err := CheckAPIURL(p.APIURL); err != nil {
+			errs = append(errs, fmt.Sprintf("apiUrl: %v", err))
 		}
 	}
 	for i, s := range p.Sources {

@@ -83,6 +83,10 @@ func newAuthLoginCmd() *cobra.Command {
 				}
 			}
 
+			if err := config.CheckAPIURL(apiURL); err != nil {
+				return Fail(CodeError, err)
+			}
+
 			path, err := config.WriteUserCredentials(config.UserCredentials{Token: token, APIURL: apiURL})
 			if err != nil {
 				return Fail(CodeError, err)
