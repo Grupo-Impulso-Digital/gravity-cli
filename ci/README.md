@@ -18,13 +18,17 @@ Three triggers, three jobs. `live` is whatever branch you deploy from (`main`,
 | -------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------ |
 | **Pull request**     | `gravity check api --ci --format github`<br>`gravity check docs --ci --format github` | Read-only. Annotates the diff with drift.        |
 | **Push to `live`**   | `gravity ping`<br>`gravity sync --ci`<br>`gravity docs generate --since <sha> --ci` | Registers the repo, shapes the site, authors what changed. |
-| **Release published**| `gravity release-notes --ci --output proposal`                                | Drafts the release page.                         |
+| **Release tag pushed**| `gravity release-notes --ci --output proposal --from <previous tag> --to <tag>` | Drafts the release page.                         |
 
 Rules that make the cadence work:
 
 - **Checks on PRs, authoring on `live`.** `check api` / `check docs` only read
-  and verify, so exit `1` keeps its meaning there. Keeping authoring off the PR
-  gate is what preserves that meaning.
+  and verify, so exit `1` keeps its meaning there: findings are annotated on the
+  diff. They are **advisory by default** (`continue-on-findings: "true"`); a repo
+  opts into a blocking gate explicitly (`fail-on-findings: true` on the org
+  reusable workflow, `GRAVITY_FAIL_ON_FINDINGS=true` here). Exit `2` always
+  fails. `check docs` verifies only the bindings on pages this repo wrote, so a
+  sibling repo's pages never fail your PR.
 - **`ping` first, once, in the live job.** It registers/refreshes this repo's
   `connected_repo` row (branch, commit, resolved manifest) so write attribution
   and coverage see the right revision. Cheap, idempotent, writes no content.
@@ -45,7 +49,17 @@ Rules that make the cadence work:
   attribution (last-writer-wins) and on the declarative inventory.
 - **Never gate a deploy on exit `1`.** Findings are documentation drift, not a
   broken build. In the push/release jobs treat exit `2` as the only hard
-  failure.
+  failure. Where the PR into `live` *is* the deploy (a promotion PR), keep the
+  PR checks advisory too.
+- **`docs generate` is opt-in per repo.** It spends LLM budget and writes
+  proposals onto pages; while a team hand-authors its pages, leave it off
+  (`generate: false` / `GRAVITY_DOCS_GENERATE` unset) and let `ping` + `sync`
+  run alone. It needs an LLM provider key on the tenant (Settings → AI), or it
+  exits `2` with `no_provider_key`.
+- **Release notes run on the tag push, not on `release: published`.** A release
+  created by GoReleaser or any `GITHUB_TOKEN` never triggers another workflow,
+  so a `release` trigger silently never fires. Range from the previous tag to
+  the pushed tag explicitly (`--from`/`--to`).
 - **Everything gravity writes is a draft + open proposal.** No CI job can change
   live documentation without a human approving it in the app.
 
@@ -171,7 +185,7 @@ Inputs:
 | `args`                 | `--ci --format github`       | Appended verbatim. Pass `""` for commands with no `--ci`/`--format` (`ping`, `repos`). |
 | `since`                | `""`                         | Appended as `--since <ref>` for an incremental `docs generate`.      |
 | `continue-on-findings` | `false`                      | Exit `1` → success; exit `2` still fails.                            |
-| `version`              | `main`                       | Git ref of this repo to build the CLI from.                          |
+| `version`              | `latest`                     | `latest` (newest release), a release tag, or a git ref of this repo. |
 
 The full three-trigger pipeline is
 [`.github/workflows/docs.yml`](../.github/workflows/docs.yml) in this repo —

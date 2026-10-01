@@ -31,9 +31,9 @@ inputs:
     required: false
     default: "false"
   version:
-    description: "gravity CLI version/ref to build from (git ref of this repo)."
+    description: "gravity CLI version to install: 'latest' (newest release), a release tag, or a git ref of this repo."
     required: false
-    default: "main"
+    default: "latest"
 
 runs:
   using: "composite"
@@ -42,18 +42,15 @@ runs:
       uses: actions/setup-go@v5
       with:
         go-version: "1.25"
+        cache: false
 
     - name: Install gravity
       shell: bash
       env:
         GRAVITY_CLI_VERSION: ${{ inputs.version }}
       run: |
-        # Release tags are immutable, so the module proxy is fine (and fast).
-        # Branch names and commit SHAs are resolved directly from GitHub:
-        # proxy.golang.org caches branch lookups for up to ~30 minutes, which
-        # otherwise installs a stale tip right after a merge to main.
         case "$GRAVITY_CLI_VERSION" in
-          v[0-9]*) ;;
+          v[0-9]*|latest) ;;
           *) export GOPRIVATE=github.com/Grupo-Impulso-Digital/gravity-cli ;;
         esac
         go install "github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@${GRAVITY_CLI_VERSION}"

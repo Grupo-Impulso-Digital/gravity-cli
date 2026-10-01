@@ -1,29 +1,18 @@
 name: Docs (Gravity)
 
-# This repo's own Gravity pipeline, and the reference implementation of the CI
-# cadence documented in ci/README.md:
-#
-#   pull request     check docs + check api      advisory annotations
-#   push to main     ping -> sync -> docs generate --since <last green sha>
-#   release          release-notes
-#
-# It composes the LOCAL composite action (./ci/github) instead of calling
-# Grupo-Impulso-Digital/workflows' gravity-docs.yml, for exactly the reason
-# .github/workflows/ci.yml is self-contained: gravity-cli is a PUBLIC repository
-# and that workflows repo is PRIVATE, so its reusable workflows are unreachable
-# from here. Running the composite action also dogfoods the contract downstream
-# consumers get.
-#
-# Everything gravity writes is a draft + open proposal, so nothing here changes
-# live documentation without a human approving it in the app. Slugs live in
-# .gravity.yaml; GRAVITY_TOKEN is an org secret.
-
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      from:
+        description: Release notes start ref (e.g. v0.2.0)
+        required: true
+      to:
+        description: Release notes end ref (e.g. v0.2.1)
+        required: true
 
 permissions:
   contents: read
@@ -31,7 +20,6 @@ permissions:
 jobs:
   check:
     name: check (pull request)
-    # Fork PRs get no secrets, so the checks would only ever exit 2 there.
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -41,10 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # check docs --ai and release-notes resolve git ranges
+          fetch-depth: 0
 
-      # The repo secret is not configured yet on this public repository —
-      # skip with a notice instead of failing every run on an auth error.
       - name: Gate on token
         id: gate
         run: |
@@ -60,35 +46,33 @@ jobs:
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
-          api-url: ${{ vars.GRAVITY_API_URL || 'https://app.gravitydocs.io' }}
-          site: ${{ vars.GRAVITY_SITE }}
+          api-url: ${{ vars.GRAVITY_API_URL }}
+          version: ${{ github.event.pull_request.head.sha }}
           command: check docs
           args: --ci --format github
-          continue-on-findings: "true"
+          continue-on-findings: ${{ vars.GRAVITY_FAIL_ON_FINDINGS == 'true' && 'false' || 'true' }}
 
       - name: Check api
         if: steps.gate.outputs.ready == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
-          api-url: ${{ vars.GRAVITY_API_URL || 'https://app.gravitydocs.io' }}
-          site: ${{ vars.GRAVITY_SITE }}
+          api-url: ${{ vars.GRAVITY_API_URL }}
+          version: ${{ github.event.pull_request.head.sha }}
           command: check api
           args: --ci --format github
-          continue-on-findings: "true"
+          continue-on-findings: ${{ vars.GRAVITY_FAIL_ON_FINDINGS == 'true' && 'false' || 'true' }}
 
   live:
     name: sync + generate (main)
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # Two overlapping runs would race on page attribution (last-writer-wins) and
-    # on the declarative inventory, so queue rather than cancel.
     concurrency:
       group: gravity-docs-live
       cancel-in-progress: false
     permissions:
       contents: read
-      actions: read # gh run list, to resolve the incremental base
+      actions: read
     env:
       GRAVITY_TOKEN: ${{ secrets.GRAVITY_TOKEN }}
     steps:
@@ -96,8 +80,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The repo secret is not configured yet on this public repository —
-      # skip with a notice instead of failing every run on an auth error.
       - name: Gate on token
         id: gate
         run: |
@@ -113,8 +95,8 @@ jobs:
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
-          api-url: ${{ vars.GRAVITY_API_URL || 'https://app.gravitydocs.io' }}
-          site: ${{ vars.GRAVITY_SITE }}
+          api-url: ${{ vars.GRAVITY_API_URL }}
+          version: ${{ github.sha }}
           command: ping
           args: ""
 
@@ -123,21 +105,18 @@ jobs:
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
-          api-url: ${{ vars.GRAVITY_API_URL || 'https://app.gravitydocs.io' }}
-          site: ${{ vars.GRAVITY_SITE }}
+          api-url: ${{ vars.GRAVITY_API_URL }}
+          version: ${{ github.sha }}
           command: sync
           args: --ci
           continue-on-findings: "true"
 
       - name: Resolve incremental base
         id: base
-        if: steps.gate.outputs.ready == 'true'
+        if: steps.gate.outputs.ready == 'true' && vars.GRAVITY_DOCS_GENERATE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The previous SUCCESSFUL run's commit, never HEAD~1: a failed or
-          # skipped run must not leave a permanent documentation gap. An empty
-          # ref means a full survey, which is always correct, only slower.
           sha="$(gh run list --workflow=docs.yml --branch=main --status=success \
                    --limit=1 --json headSha --jq '.[0].headSha // empty' 2>/dev/null || true)"
           if [ -z "$sha" ]; then
@@ -146,20 +125,15 @@ jobs:
           if [ -n "$sha" ] && ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
             sha=""
           fi
-          if [ -z "$sha" ]; then
-            echo "no green base resolved; running a full survey"
-          else
-            echo "incremental base: $sha"
-          fi
           echo "ref=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Generate docs from code
-        if: steps.gate.outputs.ready == 'true'
+        if: steps.gate.outputs.ready == 'true' && vars.GRAVITY_DOCS_GENERATE == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
-          api-url: ${{ vars.GRAVITY_API_URL || 'https://app.gravitydocs.io' }}
-          site: ${{ vars.GRAVITY_SITE }}
+          api-url: ${{ vars.GRAVITY_API_URL }}
+          version: ${{ github.sha }}
           command: docs generate
           args: --ci
           since: ${{ steps.base.outputs.ref }}
@@ -167,7 +141,9 @@ jobs:
 
   release:
     name: release notes
-    if: github.event_name == 'release'
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       GRAVITY_TOKEN: ${{ secrets.GRAVITY_TOKEN }}
@@ -176,8 +152,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The repo secret is not configured yet on this public repository —
-      # skip with a notice instead of failing every run on an auth error.
       - name: Gate on token
         id: gate
         run: |
@@ -188,13 +162,27 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve release range
+        id: range
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to || github.ref_name }}
+        run: |
+          if [ -z "$FROM" ]; then
+            FROM="$(git describe --tags --abbrev=0 "${TO}^" 2>/dev/null || git rev-list --max-parents=0 "$TO" | tail -n1)"
+          fi
+          git rev-parse --verify --quiet "${FROM}^{commit}" >/dev/null
+          git rev-parse --verify --quiet "${TO}^{commit}" >/dev/null
+          echo "args=--ci --output proposal --from ${FROM} --to ${TO}" >> "$GITHUB_OUTPUT"
+
       - name: Release notes
         if: steps.gate.outputs.ready == 'true'
         uses: ./ci/github
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
-          api-url: ${{ vars.GRAVITY_API_URL || 'https://app.gravitydocs.io' }}
-          site: ${{ vars.GRAVITY_SITE }}
+          api-url: ${{ vars.GRAVITY_API_URL }}
+          version: ${{ github.sha }}
           command: release-notes
-          args: --ci --output proposal
+          args: ${{ steps.range.outputs.args }}
           continue-on-findings: "true"
