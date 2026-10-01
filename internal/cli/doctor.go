@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -40,6 +41,9 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 				fmt.Fprintf(out, "Default site: %s\n", *who.DefaultSiteSlug)
 			} else {
 				fmt.Fprintln(out, "Default site: (none)")
+			}
+			if who.APIURL != "" && strings.TrimRight(e.cfg.APIURL, "/") == config.LegacyAPIURL && who.APIURL != config.LegacyAPIURL {
+				fmt.Fprintf(out, "note: %s is the legacy API host; set apiUrl to %s (the platform's advertised API host)\n", config.LegacyAPIURL, who.APIURL)
 			}
 			fmt.Fprintf(out, "Space hierarchy (subspaces/home pages/collections): %s\n", featureState(who.Features[featureSpaceHierarchy]))
 			fmt.Fprintf(out, "Space metadata (declared space type/visibility): %s\n", featureState(who.Features[featureSpaceMetadata]))

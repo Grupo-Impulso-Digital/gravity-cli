@@ -13,7 +13,10 @@ import (
 )
 
 // DefaultAPIURL is the single source of the default Gravity API base URL.
-const DefaultAPIURL = "https://app.gravitydocs.io"
+const DefaultAPIURL = "https://api.gravitydocs.io"
+
+// LegacyAPIURL is the app host, which still proxies the API for older clients.
+const LegacyAPIURL = "https://app.gravitydocs.io"
 
 // Environment variable names recognized by the CLI.
 const (

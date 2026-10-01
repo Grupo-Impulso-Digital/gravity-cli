@@ -28,7 +28,7 @@ definitions:
         script:
           - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
           - export PATH="$PATH:$(go env GOPATH)/bin"
-          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravitydocs.io}"
+          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://api.gravitydocs.io}"
           - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
           # GRAVITY_TOKEN is injected from the secured repository variable.
           - gravity check docs --ci --format text
@@ -52,7 +52,7 @@ definitions:
         script:
           - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
           - export PATH="$PATH:$(go env GOPATH)/bin"
-          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravitydocs.io}"
+          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://api.gravitydocs.io}"
           - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
           # ping registers/refreshes this repo (branch, commit, manifest) so
           # attribution and coverage see the right revision.
@@ -66,7 +66,7 @@ definitions:
         script:
           - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
           - export PATH="$PATH:$(go env GOPATH)/bin"
-          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravitydocs.io}"
+          - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://api.gravitydocs.io}"
           - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
           # The incremental base is the previous SUCCESSFUL run's commit, never
           # HEAD~1 — a failed or skipped run must not leave a permanent gap.
@@ -98,6 +98,6 @@ pipelines:
           script:
             - go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
             - export PATH="$PATH:$(go env GOPATH)/bin"
-            - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://app.gravitydocs.io}"
+            - export GRAVITY_API_URL="${GRAVITY_API_URL:-https://api.gravitydocs.io}"
             - export GRAVITY_SITE="${GRAVITY_SITE:-docs}"
             - gravity release-notes --space changelog --ci --output proposal || [ $? -eq 1 ]

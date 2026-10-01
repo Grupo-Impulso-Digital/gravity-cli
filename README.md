@@ -91,7 +91,9 @@ Connection values are resolved with this precedence (**highest first**):
 CI sets environment variables, so env always wins over committed files. In CI
 the only required input is the `GRAVITY_TOKEN` secret — everything else can live
 in `.gravity.yaml`. The API URL falls back to a built-in default when nothing
-sets it.
+sets it: `https://api.gravitydocs.io`, the hosted API. `https://app.gravitydocs.io`
+(the web app) still proxies the API for older configs; `https://gravitydocs.io`
+is the marketing site and serves no API.
 
 **The token is a secret and lives only in the environment or the user file.**
 A `token:` committed to `.gravity.yaml` is rejected with an error — never
@@ -102,7 +104,7 @@ silently honored.
 ```yaml
 version: 1
 site: docs
-apiUrl: https://app.gravitydocs.io
+apiUrl: https://api.gravitydocs.io
 product:
   slug: acme-platform   # a product can span several repos sharing one site
   repo: billing-api     # this repo's unique name within the product
@@ -186,7 +188,7 @@ spaces:
 
 ```yaml
 token: sk_live_xxx
-apiUrl: https://app.gravitydocs.io
+apiUrl: https://api.gravitydocs.io
 ```
 
 ## Commands

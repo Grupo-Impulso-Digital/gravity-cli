@@ -9,7 +9,7 @@ inputs:
   api-url:
     description: "Gravity API base URL. Defaults to the hosted platform; override for self-hosted."
     required: false
-    default: "https://app.gravitydocs.io"
+    default: "https://api.gravitydocs.io"
   site:
     description: "Site slug to operate on. Optional when set in .gravity.yaml."
     required: false
