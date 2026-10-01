@@ -71,7 +71,11 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 				return Fail(CodeError, fmt.Errorf("fetch pages: %w", err))
 			}
 
-			res := verifyDocsBindings(repo.Root, pages, siteSlug, mappedRefs(e.proj))
+			myRemoteKey := ""
+			if ref := repoRefFor(cmd.Context(), repo, e.proj); ref != nil {
+				myRemoteKey = ref.RemoteKey
+			}
+			res := verifyDocsBindings(repo.Root, pages, siteSlug, mappedRefs(e.proj), myRemoteKey)
 
 			if useAI {
 				rng, err := repo.ResolveRange(cmd.Context(), from, to)
@@ -118,14 +122,24 @@ func mappedRefs(proj *config.Project) map[string]bool {
 	return refs
 }
 
-func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string, mapped map[string]bool) output.Result {
+func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string, mapped map[string]bool, myRemoteKey string) output.Result {
 	res := output.Result{Command: "check docs", Site: siteSlug}
 	verified := 0
+	foreign := 0
+	if !anyAttributed(pages) {
+		myRemoteKey = ""
+	}
 	type staleKey struct{ page, ref string }
 	staleBlocks := map[staleKey]int{}
 	staleChecks := map[staleKey]checks.BindingCheck{}
 	staleTypes := map[staleKey]string{}
 	for _, p := range pages {
+		if myRemoteKey != "" && !writtenByRepo(p, myRemoteKey) {
+			if hasBoundBlocks(p) {
+				foreign++
+			}
+			continue
+		}
 		for _, blk := range p.Blocks {
 			if blk.Ownership != "machine" && blk.Ownership != "hybrid" {
 				continue
@@ -137,7 +151,7 @@ func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string, mapp
 			}
 			verified++
 			if check.Stale {
-				k := staleKey{page: p.Slug, ref: check.Ref}
+				k := staleKey{page: pageLabel(p), ref: check.Ref}
 				staleBlocks[k]++
 				staleChecks[k] = check
 				staleTypes[k] = blk.Type
@@ -175,7 +189,35 @@ func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string, mapp
 		})
 	}
 	res.Notes = append(res.Notes, fmt.Sprintf("verified %d machine/hybrid block(s), skipped %d without a verifiable binding", verified, res.Skipped))
+	if foreign > 0 {
+		res.Notes = append(res.Notes, fmt.Sprintf("skipped %d page(s) with bound blocks that %s did not write (another repo's, or unattributed)", foreign, myRemoteKey))
+	}
 	return res
+}
+
+func anyAttributed(pages []api.Page) bool {
+	for _, p := range pages {
+		if p.RepoRemoteKey != nil && *p.RepoRemoteKey != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBoundBlocks(p api.Page) bool {
+	for _, blk := range p.Blocks {
+		if (blk.Ownership == "machine" || blk.Ownership == "hybrid") && blk.SourceBinding != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func pageLabel(p api.Page) string {
+	if p.SpaceSlug == "" {
+		return p.Slug
+	}
+	return p.SpaceSlug + "/" + p.Slug
 }
 
 func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, pages []api.Page, logw io.Writer, mctx *api.MessagesContext) ([]output.Finding, error) {
