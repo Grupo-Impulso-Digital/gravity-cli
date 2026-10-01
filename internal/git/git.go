@@ -63,6 +63,24 @@ func (r *Repo) LatestTag(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// TagBefore returns the most recent tag reachable from ref's first parent, so a
+// release checkout sitting on its own tag ranges from the previous one.
+func (r *Repo) TagBefore(ctx context.Context, ref string) (string, error) {
+	out, err := r.git(ctx, "describe", "--tags", "--abbrev=0", ref+"^")
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "No names found") ||
+			strings.Contains(msg, "cannot describe") ||
+			strings.Contains(msg, "No tags can describe") ||
+			strings.Contains(msg, "Not a valid object name") ||
+			strings.Contains(msg, "unknown revision") {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // FirstCommit returns the oldest commit hash reachable from HEAD.
 func (r *Repo) FirstCommit(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "rev-list", "--max-parents=0", "HEAD")
@@ -129,7 +147,7 @@ func (r *Repo) ResolveRange(ctx context.Context, from, to string) (Range, error)
 		rng.To = "HEAD"
 	}
 	if rng.From == "" {
-		tag, err := r.LatestTag(ctx)
+		tag, err := r.TagBefore(ctx, rng.To)
 		if err != nil {
 			return Range{}, err
 		}

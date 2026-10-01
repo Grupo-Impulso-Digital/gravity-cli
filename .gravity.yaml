@@ -1,23 +1,10 @@
-# Gravity docs config — read by gravity-cli in CI (.github/workflows/docs.yml:
-# checks on a PR, ping + sync + incremental `docs generate` on a push to main,
-# release-notes on a published release).
-# Committed on purpose. NEVER put a token here: GRAVITY_TOKEN is an org secret.
-#
-# This repo is a SATELLITE of the "gravity" product. Its developer docs live in
-# the `cli` subspace under the shared `developers` space; team-internal docs
-# file into the private `internal` space under a per-repo collection.
-#
-# It also doubles as the worked example of the v2 manifest — every optional
-# section below is exercised here rather than only in ci/README.md.
 version: 1
 site: gravity
-apiUrl: https://app.gravitydocs.io
+apiUrl: https://api.gravitydocs.io
 
 product:
   slug: gravity
   repo: cli
-  # No `role:` — this is a CLI, not a frontend/api/service/docs surface. The
-  # unit kind is pinned explicitly under discovery instead.
 
 spaces:
   default: cli
@@ -38,13 +25,7 @@ spaces:
       type: handbook
       visibility: private
 
-# Hand-maintained markdown, published verbatim. The README is developer-facing
-# on purpose — it fronts the `cli` subspace, not the customer docs space.
 documents:
-  - file: README.md
-    page: overview
-    title: Gravity CLI
-    ownership: hybrid
   - file: docs/platform-authoring-api.md
     space: internal
     page: platform-authoring-api

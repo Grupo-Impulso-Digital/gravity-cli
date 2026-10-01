@@ -235,3 +235,37 @@ func TestDiffAndShow(t *testing.T) {
 		t.Errorf("expected 3 tracked files, got %d: %v", len(files), files)
 	}
 }
+
+func TestResolveRangeOnATaggedHead(t *testing.T) {
+	dir := testRepo(t)
+	cmd := exec.Command("git", "tag", "v1.1.0")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("tag: %v\n%s", err, out)
+	}
+	ctx := context.Background()
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	rng, err := repo.ResolveRange(ctx, "", "")
+	if err != nil {
+		t.Fatalf("resolve range: %v", err)
+	}
+	if rng.From != "v1.0.0" {
+		t.Errorf("a release checkout on v1.1.0 must range from v1.0.0, got %q", rng.From)
+	}
+
+	first, err := repo.FirstCommit(ctx)
+	if err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+	rng, err = repo.ResolveRange(ctx, "", "v1.0.0")
+	if err != nil {
+		t.Fatalf("resolve range to v1.0.0: %v", err)
+	}
+	if rng.From != first {
+		t.Errorf("the first tag must range from the first commit %q, got %q", first, rng.From)
+	}
+}
