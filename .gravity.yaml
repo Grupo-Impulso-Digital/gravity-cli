@@ -1,10 +1,3 @@
-# Gravity docs config, read by gravity-cli in CI (.github/workflows/docs.yml).
-# Committed on purpose. NEVER put a token here: GRAVITY_TOKEN is a secret.
-#
-# Satellite repo of the "gravity" product: public developer pages live in the
-# `cli` subspace under `developers` and are hand-authored in the app. Only
-# team-internal markdown is mapped, into the private `internal` space under
-# this repo's collection. README.md stays the GitHub front door, unmapped.
 version: 1
 site: gravity
 apiUrl: https://api.gravitydocs.io
