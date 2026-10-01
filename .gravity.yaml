@@ -12,6 +12,14 @@ spaces:
   home: overview
   shared: [internal]
   declare:
+    - slug: docs
+      name: Product Docs
+      type: product-docs
+      visibility: public
+    - slug: gravity-cli
+      name: CLI
+      parent: docs
+      audiences: [users]
     - slug: developers
       name: Developers
       type: api-reference
@@ -24,7 +32,13 @@ spaces:
       name: Engineering Handbook
       type: handbook
       visibility: private
-
+    - slug: changelog
+      name: Changelog
+      type: release-notes
+      visibility: public
+    - slug: cli-releases
+      name: CLI
+      parent: changelog
 documents:
   - file: docs/platform-authoring-api.md
     space: internal
@@ -33,7 +47,7 @@ documents:
     ownership: hybrid
 
 releaseNotes:
-  space: changelog
+  space: cli-releases
 
 knowledge:
   namespace: gravity
