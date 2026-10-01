@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	yaml "go.yaml.in/yaml/v3"
 )
@@ -17,6 +18,27 @@ const DefaultAPIURL = "https://api.gravitydocs.io"
 
 // LegacyAPIURL is the app host, which still proxies the API for older clients.
 const LegacyAPIURL = "https://app.gravitydocs.io"
+
+// marketingHosts serve the public marketing site (its own worker). They answer
+// no API, MCP or LLM route, so pointing the CLI at them can only fail — with a
+// confusing 404 or an HTML page. The API lives on the app host (DefaultAPIURL).
+var marketingHosts = map[string]bool{
+	"gravitydocs.io":     true,
+	"www.gravitydocs.io": true,
+}
+
+// CheckAPIURL reports whether raw is usable as the Gravity API base URL: an
+// absolute http(s) URL that is not the marketing site.
+func CheckAPIURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("invalid API URL %q: must be an absolute http(s) URL", raw)
+	}
+	if marketingHosts[strings.ToLower(u.Hostname())] {
+		return fmt.Errorf("invalid API URL %q: %s is the marketing site and serves no API; use %s", raw, u.Hostname(), DefaultAPIURL)
+	}
+	return nil
+}
 
 // Environment variable names recognized by the CLI.
 const (
@@ -117,10 +139,7 @@ func setIf(dst *string, v string) {
 
 func (c Config) validate() error {
 	if c.APIURL != "" {
-		u, err := url.Parse(c.APIURL)
-		if err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") {
-			return fmt.Errorf("invalid API URL %q: must be an absolute http(s) URL", c.APIURL)
-		}
+		return CheckAPIURL(c.APIURL)
 	}
 	return nil
 }

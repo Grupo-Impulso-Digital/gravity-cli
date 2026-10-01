@@ -144,3 +144,29 @@ func TestUserCredentialsRoundTripAndRemove(t *testing.T) {
 		t.Errorf("file should be gone after remove, stat err = %v", statErr)
 	}
 }
+
+func TestCheckAPIURLRejectsMarketingSite(t *testing.T) {
+	for _, raw := range []string{
+		"https://gravitydocs.io",
+		"https://gravitydocs.io/api/v1",
+		"https://WWW.GravityDocs.io",
+		"http://gravitydocs.io:443",
+	} {
+		if err := config.CheckAPIURL(raw); err == nil || !strings.Contains(err.Error(), "marketing site") {
+			t.Errorf("config.CheckAPIURL(%q) = %v, want marketing-site error", raw, err)
+		}
+	}
+	for _, raw := range []string{config.DefaultAPIURL, "https://gravity.impulso-dev.com", "http://localhost:5175"} {
+		if err := config.CheckAPIURL(raw); err != nil {
+			t.Errorf("config.CheckAPIURL(%q) = %v, want nil", raw, err)
+		}
+	}
+}
+
+func TestResolveRejectsMarketingSiteFromEnv(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(config.EnvAPIURL, "https://gravitydocs.io")
+	if _, err := config.Resolve(config.Flags{}, t.TempDir()); err == nil || !strings.Contains(err.Error(), "marketing site") {
+		t.Fatalf("Resolve with apex GRAVITY_API_URL = %v, want marketing-site error", err)
+	}
+}
