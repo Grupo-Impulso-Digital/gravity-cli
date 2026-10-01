@@ -13,6 +13,7 @@ type WhoAmI struct {
 	DefaultSiteSlug  *string         `json:"defaultSiteSlug"`
 	KeyHint          string          `json:"keyHint"`
 	Features         map[string]bool `json:"features,omitempty"`
+	APIURL           string          `json:"apiUrl,omitempty"`
 }
 
 // WhoAmI calls GET /api/v1/whoami.

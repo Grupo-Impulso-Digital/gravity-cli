@@ -165,7 +165,7 @@ Inputs:
 | Input                  | Default                      | Notes                                                                |
 | ---------------------- | ---------------------------- | -------------------------------------------------------------------- |
 | `token`                | — (required)                 | `sk_live_…`, from a secret.                                          |
-| `api-url`              | `https://app.gravitydocs.io` | Override for self-hosted.                                            |
+| `api-url`              | `https://api.gravitydocs.io` | Override for self-hosted.                                            |
 | `site`                 | `""`                         | Optional when `.gravity.yaml` sets `site`.                           |
 | `command`              | `check docs`                 | `ping`, `repos`, `check api`, `check docs`, `sync`, `docs generate`, `coverage`, `release-notes`. |
 | `args`                 | `--ci --format github`       | Appended verbatim. Pass `""` for commands with no `--ci`/`--format` (`ping`, `repos`). |

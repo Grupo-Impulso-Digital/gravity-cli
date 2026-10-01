@@ -14,7 +14,7 @@
 # a deploy while a broken setup (exit 2) still must.
 
 variables:
-  GRAVITY_API_URL: "https://app.gravitydocs.io"
+  GRAVITY_API_URL: "https://api.gravitydocs.io"
   GRAVITY_SITE: "docs"
   LIVE_BRANCH: "main"
   # release-notes, `check docs --ai` and `--since` all walk git history; a
