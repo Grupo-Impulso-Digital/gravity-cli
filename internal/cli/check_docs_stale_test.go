@@ -120,6 +120,6 @@ func TestVerifyDocsBindings_UnattributedPlatformVerifiesEverything(t *testing.T)
 
 	res := verifyDocsBindings(root, pages, "acme", nil, "github.com/acme/api")
 	if len(res.Findings) != 1 {
-		t.Fatalf("a platform that attributes no page must keep the pre-attribution behaviour; got %+v", res.Findings)
+		t.Fatalf("a platform that attributes no page must keep the pre-attribution behavior; got %+v", res.Findings)
 	}
 }
