@@ -350,3 +350,29 @@ func TestUnitKeyCollisionFailsBeforeTheRun(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestParallelPassesKeepPlanOrder(t *testing.T) {
+	r := newRepo(t)
+	r.commit("init", map[string]string{"api/openapi.yaml": spec})
+	p := newPlatform(t)
+	second := refPass("partner-api", "")
+	second.Target.Space = &api.NamedRef{ID: "sp_2", Slug: "partner", Name: "Partner"}
+	third := refPass("same-space", "")
+	p.plan.Passes = []api.PlanPass{refPass("developer-api", ""), second, third}
+	opts := pushOpts()
+	opts.Parallel = 3
+	res, err := run.Execute(context.Background(), newEnv(t, p, r, manifest(t, "")).Env, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, ps := range res.Passes {
+		if ps.Status != api.StatusSucceeded {
+			t.Fatalf("pass %s = %+v", ps.Name, ps)
+		}
+		names = append(names, ps.Name)
+	}
+	if strings.Join(names, ",") != "developer-api,partner-api,same-space" || len(p.find("POST", "/changes")) != 3 {
+		t.Fatalf("names = %v", names)
+	}
+}
