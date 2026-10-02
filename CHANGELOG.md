@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.0.0 — Unreleased
+
+Clean break (R12): the v0.x command set and the v1 manifest are removed. This
+entry tracks milestone C1 (CLI core); `run`, `preview` and `check` land with
+the pass engine.
+
+### Added
+
+- New command tree: `login` (device flow, `--with-token`), `logout`, `whoami`,
+  `init` (connect + minimal `version: 2` manifest), `status`, `passes`
+  (`list`, `show`, `edit`), `explain`, `version`. `run`, `preview` and `check`
+  are registered and exit `2` until the pass engine ships.
+- Global flags `--profile`, `--api-url`, `--token`, `--manifest`, `-C`,
+  `--json` (one envelope on stdout), `--no-color`, `-q`, `-v`.
+- Profiles in `~/.config/gravity/profiles.yaml`; the v0.x `config.yaml` token
+  is copied once into profile `default` and the old file is never modified.
+- Manifest v2: strict parsing, embedded JSON Schema, did-you-mean for unknown
+  keys, `kind` required on every pass, v1 detection.
+- REST client for the CLI 1.0 contract (auth, repos, plan, status, runs,
+  content, bundle writes, inventory, hints, Nucleus, gateway run context),
+  error envelope with details, retries with backoff on `429`/`5xx`, versioned
+  `User-Agent` (`gravity-cli/<v> (<os>; <arch>)`).
+- CI provider detection (GitHub, GitLab, Bitbucket, Azure, Jenkins, CircleCI,
+  generic) with `GRAVITY_*` overrides.
+- Range resolution per trigger (watermarks, stale head, survey, release tags,
+  shallow-clone deepening) and the ChangeSet (commits, files, renames, unit
+  mapping through source refs, deterministic OpenAPI diff, removed/renamed
+  symbols).
+
+### Removed
+
+- `auth *`, `doctor`, `ping`, `repos`, `spaces`, `sync`, `docs *`,
+  `release-notes`, `check api|docs`, `coverage`, `capture`, `nucleus *`:
+  invoking one prints its replacement and exits `2`.
+- The global `--ci` and `--site` flags; CI mode follows `CI=true`.
+- The v1 manifest (`site`, `spaces`, `sources`, `documents`, ...): CLI 1.x
+  refuses it outside `gravity init`.
+
 ## v0.3.0 — Unreleased
 
 Stop-the-bleeding release for current v0.2 users: no new architecture, every

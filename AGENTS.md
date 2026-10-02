@@ -7,37 +7,41 @@ tool.
 
 ## Purpose
 
-`gravity` is a CI/pipeline companion for the Gravity docs platform. It generates
-release notes from git history, checks API-doc and docs-completeness drift
-against the checked-out repo, and authors doc blocks. It's a single static Go
-binary designed to run inside CI (GitHub Actions, GitLab, Bitbucket) and signal
-results through its exit code.
+`gravity` connects a repository to the Gravity docs platform and runs its
+documentation **passes** in CI. Code facts live in the repository
+(`.gravity.yaml`, manifest v2); editorial intent (targets, instructions,
+review) lives in the app. It is a single static Go binary that signals results
+through its exit code. The authoritative design is the platform repository's
+`docs/pipelines/spec.md` (CLI milestones C1-C4).
 
 ## Architecture
 
-One-way layering — dependencies always point downward. **The capability and
-foundation packages never import `internal/cli`.**
+One-way layering: dependencies point downward. **No package imports
+`internal/cli`.**
 
 ```
-cmd/gravity            entrypoint: signal-aware context
-  └─ internal/cli      cobra command tree, config resolution, exit codes (orchestration)
-       ├─ internal/api      HTTP client: REST endpoints + LLM gateway (Messages subset)
-       ├─ internal/agent    tool-using loop + sandboxed read-only git tools + submit tools
-       ├─ internal/checks   OpenAPI operation diff + source-binding hash verification
-       ├─ internal/docs     block authoring: OpenAPI→api blocks, Markdown→native blocks
-       ├─ internal/git      thin wrapper over the system `git` binary (os/exec)
-       ├─ internal/output   text / json / github findings formatters
-       ├─ internal/config   flag/env/file precedence + typed .gravity.yaml manifest
-       ├─ internal/prompts  system prompts for the release-notes/docs-gap/nucleus agents
-       ├─ internal/version  the single version variable (ldflags stamp, else build info)
-       └─ internal/pathsafe  repo-root path validation (leaf, stdlib-only)
+cmd/gravity              entrypoint: signal-aware context
+  └─ internal/cli        cobra command tree, global flags, exit codes (orchestration)
+       ├─ internal/ui         TTY / plain CI / --json envelope output
+       ├─ internal/auth       profiles.yaml, credential precedence, device login
+       ├─ internal/plan       plan fetch, manifest overlay, skip decisions
+       ├─ internal/changeset  range resolution, ChangeSet, OpenAPI diff, symbols, unit mapping
+       ├─ internal/ci         CI provider detection
+       ├─ internal/api        REST client for the CLI 1.0 contract + LLM gateway
+       ├─ internal/agent      tool-using loop + sandboxed read-only git tools + submit tools
+       ├─ internal/docs       OpenAPI -> api blocks, Markdown -> native blocks
+       ├─ internal/checks     OpenAPI parsing
+       ├─ internal/config     manifest v2 (embedded JSON Schema, strict parse, did-you-mean), v1 detection
+       ├─ internal/normalize  productSlug, apiUnitKey, canonical JSON (golden fixtures shared with the platform)
+       ├─ internal/git        thin wrapper over the system `git` binary
+       ├─ internal/glob       doublestar matching (leaf)
+       ├─ internal/version    the single version variable (ldflags stamp, else build info)
+       └─ internal/pathsafe   repo-root path validation (leaf, stdlib-only)
 ```
 
-`internal/cli` orchestrates: it resolves config into an `*api.Client` plus the
-loaded `.gravity.yaml`, then each command's `RunE` consumes that. Capability
-packages are independently testable and know nothing about cobra. `pathsafe` is
-a stdlib-only leaf imported by `agent`, `checks`, `config`, and `docs` — keep it
-dependency-free so it can never create an import cycle.
+`internal/cli` resolves credentials, the manifest and the repository, then each
+command's `RunE` calls the capability packages, which know nothing about cobra.
+`pathsafe` and `glob` are stdlib-only leaves.
 
 ## Build / Test / Lint
 
@@ -103,8 +107,9 @@ payload, generator stamps and the HTTP `User-Agent`.
   strings are lowercase and unpunctuated. No `panic` in non-test code.
 - **Exit-code contract** (`internal/cli/exit.go`): `0` success/no findings,
   `1` findings produced, `2` operational error (auth/network/bad input),
-  `3` license refusal. Commands return an `*ExitError`; never call `os.Exit`
-  inside a command.
+  `3` license refusal; precedence 3 > 2 > 1 > 0. Commands return an
+  `*ExitError` (with an `ErrCode` for the `--json` envelope); never call
+  `os.Exit` inside a command.
 - **License refusals** (`internal/api/license.go`): a 403 whose envelope code is
   `module_disabled` (with `module`) or `seat_limit` decodes to
   `*api.ModuleDisabledError` / `*api.SeatLimitError`, whose message tells the
@@ -112,86 +117,75 @@ payload, generator stamps and the HTTP `User-Agent`.
   `CodeFor` maps them to `3` from anywhere in the chain — so wrap with `%w`, never
   flatten one into a `Failf` string. The CLI never calls `/api/mcp`, so the
   JSON-RPC `MODULE_DISABLED` shape needs no handling here.
-- **Token-security boundary** (`internal/config`): a token may come *only* from
-  the `GRAVITY_TOKEN` env var or the user-level `~/.config/gravity/config.yaml`
-  (mode `0600`). A `token:` committed to `.gravity.yaml` is a loud error, never
-  honored. Don't add a code path that reads a token from the project file.
-- **Config precedence**: flags > env > `./.gravity.yaml` >
-  `~/.config/gravity/config.yaml`. Empty values never clobber a
-  lower-precedence one.
+- **Token-security boundary** (`internal/auth`): a token comes only from
+  `--token`, `GRAVITY_TOKEN` or a profile in `~/.config/gravity/profiles.yaml`
+  (mode `0600`). A `token:` anywhere in `.gravity.yaml` is a manifest error.
+  CLI 1.x never writes the v0.x `config.yaml`; it copies its token into the
+  profile `default` once and leaves the file untouched.
+- **Precedence**: token `--token` > `GRAVITY_TOKEN` > profile (`--profile` >
+  `GRAVITY_PROFILE` > current). API URL `--api-url` > `GRAVITY_API_URL` >
+  manifest `apiUrl` > profile `apiUrl` > default.
 - **Path safety**: any caller-supplied path that hits the filesystem or git goes
   through `internal/pathsafe` (rejects absolute paths and `..` escapes). Don't
   re-implement the check inline.
 - **One file per cobra command** in `internal/cli` (`newXxxCmd`, registered in
   `root.go`).
-- **Dependencies**: stdlib-first. The HTTP client and the Anthropic-style
-  Messages protocol are hand-rolled on `net/http` — no SDKs. Don't add a module
-  without a reason stated in the PR. The non-stdlib direct deps and their
-  justifications: `cobra` (command tree), `libopenapi` (spec parsing),
-  `goldmark` (Markdown parsing), `go.yaml.in/yaml/v3` (manifest), and
-  **`charmbracelet/huh`** — the sanctioned interactive-prompt library, used only
-  by `gravity init`'s wizard. Prefer `huh` over hand-rolled `bufio` prompting for
-  any new interactive flow.
+- **Dependencies**: stdlib-first. The HTTP client and the Messages protocol are
+  hand-rolled on `net/http`. Direct deps and their reasons: `cobra` (command
+  tree), `libopenapi` (spec parsing and the OpenAPI diff), `goldmark` (Markdown),
+  `go.yaml.in/yaml/v3` (manifest), `santhosh-tekuri/jsonschema/v6` (validating
+  the manifest against the embedded schema, as the spec requires). The init
+  wizard (C3) brings back `charmbracelet/huh`; re-pin
+  `charmbracelet/x/cellbuf` to `v0.0.15` then (see the v0.3 history).
 - **Testing**: stdlib `testing` + `httptest` mocks, table-driven where it fits.
   No live-server integration tests.
-- **Feature availability comes from `/whoami` features only**
-  (`env.gateFeature`): an unadvertised feature → notice + skip (exit `0`)
-  unless `--require`. A 404 is never a missing feature: `explainNotFound` turns
-  it into `site '<slug>' not found` / `space '<slug>' not found` with the
-  available slugs (exit `2`). `(*APIError).IsUnavailable()` only honours the
-  server's explicit `501` / `not_implemented` / `feature_disabled` /
-  `unknown_route` answers.
-- **CI mode** (`--ci`, or `CI=true`): never prompt, plain ASCII output
-  (`plainWriter`). Don't add a command-local `--ci` flag; it shadows the global.
-- **Manifest**: `.gravity.yaml` is decoded strictly (`config.ParseProject`); add a
-  key by adding the typed field. Retire a key through `removedKeys` so loads fail
-  clearly and `init --migrate` drops it. `init` renders the file from the typed
-  `config.Project` (`renderManifest`), so every field round-trips.
+- **Capabilities, not 404s**: server features come from `/whoami` (and
+  `connect.serverFeatures` / `plan.capabilities`). CLI 1.0 refuses a server
+  without `pipelines`. A `404` is always an error (`repo_not_connected` hints
+  `gravity init`), never "feature unavailable".
+- **Retries** (`internal/api`): `429` and `5xx` are retried three times with
+  exponential backoff from 1 s, honoring `Retry-After`; network errors are
+  retried for GET only. `lease_lost` and `run_not_running` stop a run without a
+  finish call (`api.StopsRun`).
+- **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
+  all human output on stderr. With `CI=true` or without a terminal, output is
+  plain ASCII and nothing prompts. There is no `--ci` flag in 1.x.
+- **Manifest** (`internal/config`): YAML is decoded to a generic tree, checked
+  for tokens and v1 shape, validated by friendly Go rules and the embedded JSON
+  Schema (byte-identical to the spec's, pinned by sha256 in
+  `manifest_test.go`), then decoded strictly into the typed `Manifest`. Add a
+  key in the spec's schema first, then the typed field. The manifest hash is
+  sha256 of its RFC 8785 canonical JSON.
 
 ## Recipes
 
-- **Add a command**: new `internal/cli/<name>.go` with `newXxxCmd(...) *cobra.Command`;
-  register it in `internal/cli/root.go`; resolve config/client via the existing
-  `env` helpers; return `*ExitError` for failures.
-- **Add a check**: put deterministic logic in `internal/checks` (pure, testable);
-  surface findings through `internal/output`; mirror an existing `_test.go`
-  (e.g. `binding_test.go`).
-- **Add an API endpoint**: add the typed request/response in the matching
-  `internal/api/*.go` file and a thin method on `Client` using `do`/`Get`/`Post`;
-  decode the standard error envelope; mock it with `httptest` (see
-  `rest_test.go`).
+- **Add a command**: new `internal/cli/<name>.go` with `newXxxCmd(a *app) *cobra.Command`;
+  register it in `internal/cli/root.go`; print through `a.ui`, return data with
+  `a.ui.Result(data)` for `--json`, and failures as `*ExitError`. Test it with
+  the fake platform in `internal/cli/harness_test.go`.
+- **Add an API endpoint**: typed request/response next to its siblings in
+  `internal/api` and a thin method on `Client`; add an `httptest` case to
+  `endpoints_test.go` built from the spec's JSON example.
+- **Change range or ChangeSet logic**: cover it with a scripted repository in
+  `internal/changeset` (`newScripted`), never a fixture checkout.
 
 ## Known limitations / deliberate decisions
 
+- **`run`, `preview` and `check` are registered but exit `2`** until the pass
+  engine (milestone C2). `init` is the minimal C1 version: it connects the
+  repository and writes `version: 2`; detection, questions, CI files and the v1
+  conversion arrive with C3.
+- **`ci/` templates and `.github/workflows/docs.yml` still target v0.x**; they
+  are rewritten with the 1.0 action (milestone C4).
 - **`read_file` reads at the end of the range under review** (`--to`, else
-  `HEAD`), not the working tree, so uncommitted-but-tracked edits aren't visible
-  to that one tool. This keeps it deterministic in CI (clean checkout) and
-  avoids reading untracked files; use `git_show` for other refs.
-- **`check api --openapi` "changed" detection compares the `summary` field.**
-  Param-level diffing is intentionally deferred — `params` is provider-defined
-  (`json.RawMessage`) and a naive structural diff would be noisy.
-- **No live integration tests** — server interactions are exercised via
-  `httptest` mocks.
-- **The agent loop uses `tool_choice: auto` until the last turn**, then forces
-  the terminal submit tool (`tool_choice: {type: tool}`); it also forces it once
-  after the model ends a turn without submitting and after the tool-call budget
-  runs out. Only if even the forced turn fails does the command report it could
-  not obtain a structured result (exit `2`).
-- **`gosec` is intentionally not enabled yet** — the git `exec.Command` and the
-  computed-path `os.ReadFile` sites are already sandboxed; revisit with targeted
-  excludes before turning it on.
-- **`charmbracelet/x/cellbuf` is pinned to `v0.0.15`** in `go.mod`. The
-  `golangci-lint` `tool` directive pulls in a newer `charmbracelet/x/ansi` than
-  `huh`'s `bubbletea`/`cellbuf` stack selects on its own, and the older `cellbuf`
-  is incompatible with that `ansi` API. The pin is the minimum `cellbuf` that
-  compiles against both; `go mod tidy` preserves it. Don't lower it.
+  `HEAD`), not the working tree, so the agent stays deterministic in CI.
+- **No live integration tests**: server interactions use `httptest` mocks.
+- **`gosec` is intentionally not enabled yet**; the git `exec.Command` and
+  computed-path reads are sandboxed.
 
 ## Pointers
 
-- [README.md](README.md) — install + per-command usage + exit codes.
-- [docs/platform-authoring-api.md](docs/platform-authoring-api.md) — the platform
-  authoring API contract.
-- [ci/](ci/) — composite Action / pipeline snippets for *downstream consumers*
-  of the CLI, plus the CI cadence contract ([ci/README.md](ci/README.md)). **Not**
-  this repo's own build CI (that's `.github/workflows/ci.yml`);
-  `.github/workflows/docs.yml` does dogfood the composite action from `ci/github`.
+- [README.md](README.md): install, commands, flags, exit codes.
+- The platform's `docs/pipelines/spec.md`: the REST contract, manifest schema
+  and CLI milestones.
+- [ci/](ci/): v0.x pipeline snippets for downstream consumers (rewritten in C4).
