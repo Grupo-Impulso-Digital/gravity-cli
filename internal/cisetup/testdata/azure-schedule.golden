@@ -28,5 +28,5 @@ steps:
     env:
       GRAVITY_TOKEN: $(GRAVITY_TOKEN)
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-      GRAVITY_API_URL: https://api.acme.test
+      GRAVITY_API_URL: 'https://api.acme.test'
 === paste: add it as the secret pipeline variable GRAVITY_TOKEN (Pipelines > Edit > Variables, keep this value secret)

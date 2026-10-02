@@ -23,5 +23,5 @@ jobs:
       - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
-          api-url: https://api.acme.test
+          api-url: 'https://api.acme.test'
 === paste: add it as the repository secret GRAVITY_TOKEN (Settings > Secrets and variables > Actions)

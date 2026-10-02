@@ -103,8 +103,34 @@ type data struct {
 	InstallURL string
 }
 
+var (
+	plainYAML   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9._/-]*$`)
+	plainShell  = regexp.MustCompile(`^[A-Za-z0-9._/:@%+,=-]+$`)
+	yamlKeyword = regexp.MustCompile(`^(?i:y|n|yes|no|on|off|true|false|null)$`)
+)
+
+func yamlQuote(s string) string {
+	if plainYAML.MatchString(s) && !yamlKeyword.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func shellQuote(s string) string {
+	if plainShell.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func groovyQuote(s string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(s) + "'"
+}
+
+var funcs = template.FuncMap{"yaml": yamlQuote, "sh": shellQuote, "groovy": groovyQuote}
+
 func render(name, text string, d data) string {
-	t := template.Must(template.New(name).Parse(text))
+	t := template.Must(template.New(name).Funcs(funcs).Parse(text))
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, d); err != nil {
 		return ""
@@ -284,7 +310,7 @@ func pasteHint(provider, webURL string) string {
 const githubTemplate = `name: Gravity
 on:
   push:
-    branches: [{{.Branch}}]
+    branches: [{{yaml .Branch}}]
   pull_request:
   release:
     types: [published]
@@ -307,7 +333,7 @@ jobs:
         with:
           token: ${{"{{"}} secrets.GRAVITY_TOKEN {{"}}"}}
 {{- if .APIURL}}
-          api-url: {{.APIURL}}
+          api-url: {{yaml .APIURL}}
 {{- end}}
 `
 
@@ -316,7 +342,7 @@ const gitlabTemplate = `gravity:
   variables:
     GIT_DEPTH: '0'
 {{- if .APIURL}}
-    GRAVITY_API_URL: {{.APIURL}}
+    GRAVITY_API_URL: {{yaml .APIURL}}
 {{- end}}
   before_script:
     - apk add --no-cache git curl
@@ -341,12 +367,12 @@ definitions:
           - apk add --no-cache git curl
           - curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
 {{- if .APIURL}}
-          - export GRAVITY_API_URL={{.APIURL}}
+          - {{yaml (print "export GRAVITY_API_URL=" (sh .APIURL))}}
 {{- end}}
           - gravity run
 pipelines:
   branches:
-    {{.Branch}}:
+    {{yaml .Branch}}:
       - step: *gravity
   pull-requests:
     '**':
@@ -362,7 +388,7 @@ pipelines:
             - apk add --no-cache git curl
             - curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
 {{- if .APIURL}}
-            - export GRAVITY_API_URL={{.APIURL}}
+            - {{yaml (print "export GRAVITY_API_URL=" (sh .APIURL))}}
 {{- end}}
             - GRAVITY_TRIGGER=schedule gravity run
 `
@@ -371,7 +397,7 @@ const bitbucketSnippet = `clone:
   depth: full
 pipelines:
   branches:
-    {{.Branch}}:
+    {{yaml .Branch}}:
       - step:
           name: Gravity
           image: alpine:3.20
@@ -379,7 +405,7 @@ pipelines:
             - apk add --no-cache git curl
             - curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
 {{- if .APIURL}}
-            - export GRAVITY_API_URL={{.APIURL}}
+            - {{yaml (print "export GRAVITY_API_URL=" (sh .APIURL))}}
 {{- end}}
             - gravity run
   pull-requests:
@@ -404,7 +430,7 @@ pipelines:
 
 const azureTemplate = `trigger:
   branches:
-    include: [{{.Branch}}]
+    include: [{{yaml .Branch}}]
   tags:
     include: ['v*']
 pr:
@@ -415,7 +441,7 @@ schedules:
   - cron: '0 6 * * 1'
     displayName: Gravity weekly
     branches:
-      include: [{{.Branch}}]
+      include: [{{yaml .Branch}}]
     always: true
 {{- end}}
 pool:
@@ -433,7 +459,7 @@ steps:
       GRAVITY_TOKEN: $(GRAVITY_TOKEN)
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 {{- if .APIURL}}
-      GRAVITY_API_URL: {{.APIURL}}
+      GRAVITY_API_URL: {{yaml .APIURL}}
 {{- end}}
 `
 
@@ -441,7 +467,7 @@ const jenkinsSnippet = `stage('Gravity') {
   environment {
     GRAVITY_TOKEN = credentials('gravity-token')
 {{- if .APIURL}}
-    GRAVITY_API_URL = '{{.APIURL}}'
+    GRAVITY_API_URL = {{groovy .APIURL}}
 {{- end}}
   }
   steps {
@@ -463,7 +489,7 @@ const circleSnippet = `jobs:
           command: $HOME/.local/bin/gravity run
 {{- if .APIURL}}
           environment:
-            GRAVITY_API_URL: {{.APIURL}}
+            GRAVITY_API_URL: {{yaml .APIURL}}
 {{- end}}
 workflows:
   gravity:
@@ -471,5 +497,5 @@ workflows:
 `
 
 const genericSnippet = `curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
-GRAVITY_TOKEN=<secret>{{if .APIURL}} GRAVITY_API_URL={{.APIURL}}{{end}} gravity run
+GRAVITY_TOKEN=<secret>{{if .APIURL}} GRAVITY_API_URL={{sh .APIURL}}{{end}} gravity run
 `

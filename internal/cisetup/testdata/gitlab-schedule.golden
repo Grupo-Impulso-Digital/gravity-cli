@@ -4,7 +4,7 @@ gravity:
   image: alpine:3.20
   variables:
     GIT_DEPTH: '0'
-    GRAVITY_API_URL: https://api.acme.test
+    GRAVITY_API_URL: 'https://api.acme.test'
   before_script:
     - apk add --no-cache git curl
     - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh

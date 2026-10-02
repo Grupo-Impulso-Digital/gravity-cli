@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -47,13 +49,20 @@ func golden(t *testing.T, name, got string) {
 	}
 }
 
+var webURLs = map[string]string{
+	GitHub:    "https://github.com/acme/billing-api",
+	GitLab:    "https://gitlab.com/acme/billing-api",
+	Bitbucket: "https://bitbucket.org/acme/billing-api",
+	Azure:     "https://dev.azure.com/acme/billing/_git/billing-api",
+}
+
 func TestTemplatesPerProvider(t *testing.T) {
 	for _, provider := range Providers {
 		for _, variant := range []struct {
 			name string
 			opts Options
 		}{
-			{"default", Options{DefaultBranch: "main", WebURL: "https://github.com/acme/billing-api"}},
+			{"default", Options{DefaultBranch: "main", WebURL: webURLs[provider]}},
 			{"schedule", Options{DefaultBranch: "trunk", Schedule: true, APIURL: "https://api.acme.test"}},
 		} {
 			t.Run(provider+"-"+variant.name, func(t *testing.T) {
@@ -229,5 +238,70 @@ func TestInstallerUnavailableOrFailing(t *testing.T) {
 	err := inst.Install(context.Background(), SecretName, "gr_repo_secret")
 	if err == nil || strings.Contains(err.Error(), "gr_repo_secret") {
 		t.Fatalf("install error must not echo the token: %v", err)
+	}
+}
+
+func collectStrings(v any, out *[]string) {
+	switch x := v.(type) {
+	case string:
+		*out = append(*out, x)
+	case []any:
+		for _, e := range x {
+			collectStrings(e, out)
+		}
+	case map[string]any:
+		for k, e := range x {
+			*out = append(*out, k)
+			collectStrings(e, out)
+		}
+	}
+}
+
+func TestTemplatesQuoteBranchAndAPIURL(t *testing.T) {
+	branch := "release/1,2]"
+	apiURL := "https://api.acme.test/x y'z"
+	for _, provider := range []string{GitHub, GitLab, Bitbucket, Azure, CircleCI} {
+		t.Run(provider, func(t *testing.T) {
+			p, err := Build(t.TempDir(), provider, Options{DefaultBranch: branch, Schedule: true, APIURL: apiURL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			docs := []string{p.Snippet}
+			for _, f := range p.Files {
+				docs = append(docs, f.Content)
+			}
+			var values []string
+			for _, doc := range docs {
+				var v any
+				if err := yaml.Unmarshal([]byte(doc), &v); err != nil {
+					t.Fatalf("invalid YAML: %v\n%s", err, doc)
+				}
+				collectStrings(v, &values)
+			}
+			hasBranch, hasURL := false, false
+			for _, v := range values {
+				hasBranch = hasBranch || v == branch
+				hasURL = hasURL || v == apiURL || v == "export GRAVITY_API_URL="+shellQuote(apiURL)
+			}
+			if !hasURL || (!hasBranch && provider != GitLab && provider != CircleCI) {
+				t.Fatalf("branch %v, api url %v in %q", hasBranch, hasURL, values)
+			}
+		})
+	}
+}
+
+func TestShellAndGroovyQuoting(t *testing.T) {
+	for in, want := range map[string]string{"https://api.acme.test": "https://api.acme.test", "a b": "'a b'", "it's": `'it'\''s'`} {
+		if got := shellQuote(in); got != want {
+			t.Fatalf("shellQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+	if got := groovyQuote(`a'b\c`); got != `'a\'b\\c'` {
+		t.Fatalf("groovyQuote = %s", got)
+	}
+	for in, want := range map[string]string{"main": "main", "yes": "'yes'", "1.0": "'1.0'", "a,b": "'a,b'"} {
+		if got := yamlQuote(in); got != want {
+			t.Fatalf("yamlQuote(%q) = %s, want %s", in, got, want)
+		}
 	}
 }

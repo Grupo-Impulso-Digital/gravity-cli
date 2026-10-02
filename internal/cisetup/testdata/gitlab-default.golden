@@ -17,4 +17,4 @@ gravity:
 === create .gitlab-ci.yml
 include:
   - local: .gitlab/gravity.yml
-=== paste: add it as the masked CI/CD variable GRAVITY_TOKEN at https://github.com/acme/billing-api/-/settings/ci_cd (Variables)
+=== paste: add it as the masked CI/CD variable GRAVITY_TOKEN at https://gitlab.com/acme/billing-api/-/settings/ci_cd (Variables)
