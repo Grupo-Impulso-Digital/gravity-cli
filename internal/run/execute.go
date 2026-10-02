@@ -504,7 +504,7 @@ func (s *runState) mapUnits(ctx context.Context) ([]api.IngestUnit, bool, error)
 	roles := Roles(m)
 	units := make([]api.IngestUnit, 0, len(out.Units))
 	for _, u := range out.Units {
-		units = append(units, api.IngestUnit{Key: u.Key, Kind: u.Kind, Title: u.Title, Summary: u.Summary, Audiences: u.Audiences, Roles: roles, SourceRefs: u.SourceRefs, Aliases: u.Aliases})
+		units = append(units, api.IngestUnit{Key: u.Key, Kind: u.Kind, Title: firstOf(u.Title, u.Key), Summary: u.Summary, Audiences: u.Audiences, Roles: roles, SourceRefs: u.SourceRefs, Aliases: u.Aliases})
 	}
 	return units, true, nil
 }

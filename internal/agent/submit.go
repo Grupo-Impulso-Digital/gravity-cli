@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
@@ -371,8 +372,15 @@ func SubmitAtomsTool() Tool {
 				return fmt.Errorf("atoms must be an array of objects: %w", err)
 			}
 			for i, a := range in.Atoms {
-				if strings.TrimSpace(a.Title) == "" || strings.TrimSpace(a.Body) == "" {
+				switch {
+				case strings.TrimSpace(a.Title) == "" || strings.TrimSpace(a.Body) == "":
 					return fmt.Errorf("atoms[%d] needs a title and a body", i)
+				case utf8.RuneCountInString(a.Title) > 200:
+					return fmt.Errorf("atoms[%d].title is longer than 200 characters", i)
+				case utf8.RuneCountInString(a.Body) > 8000:
+					return fmt.Errorf("atoms[%d].body is longer than 8000 characters", i)
+				case len(a.Tags) > 32:
+					return fmt.Errorf("atoms[%d] has more than 32 tags", i)
 				}
 			}
 			return nil
@@ -503,6 +511,12 @@ func ValidateUnits(raw json.RawMessage) error {
 			return fmt.Errorf("units[%d] (%s): kind %q must be one of %s", i, u.Key, u.Kind, strings.Join(unitKinds, ", "))
 		case len(u.SourceRefs) == 0:
 			return fmt.Errorf("units[%d] (%s) needs at least one sourceRef", i, u.Key)
+		case strings.TrimSpace(u.Title) == "":
+			return fmt.Errorf("units[%d] (%s) needs a title", i, u.Key)
+		case utf8.RuneCountInString(u.Title) > 300:
+			return fmt.Errorf("units[%d] (%s): title is longer than 300 characters", i, u.Key)
+		case len(u.Audiences) > 8:
+			return fmt.Errorf("units[%d] (%s) has more than 8 audiences", i, u.Key)
 		}
 		seen[u.Key] = true
 	}

@@ -1,6 +1,9 @@
 package api
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Memory scope types.
 const (
@@ -27,6 +30,27 @@ type MemoryScope struct {
 type MemorySource struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
+}
+
+// UnmarshalJSON accepts the request shape and the stored refType/refId shape.
+func (s *MemorySource) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type    string `json:"type"`
+		ID      string `json:"id"`
+		RefType string `json:"refType"`
+		RefID   string `json:"refId"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	s.Type, s.ID = raw.Type, raw.ID
+	if s.Type == "" {
+		s.Type = raw.RefType
+	}
+	if s.ID == "" {
+		s.ID = raw.RefID
+	}
+	return nil
 }
 
 // Memory is one Nucleus atom.

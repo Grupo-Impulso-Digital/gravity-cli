@@ -495,7 +495,7 @@ func TestNucleus(t *testing.T) {
 		t.Fatalf("recall = %+v", rec)
 	}
 
-	c, s = fixtureServer(t, 200, `{"outcome":"queued_for_review","atom":{"id":"mem_1","title":"Refund reasons","body":"old","status":"active"},"revisionId":"rev_1"}`)
+	c, s = fixtureServer(t, 200, `{"outcome":"queued_for_review","atom":{"id":"mem_1","title":"Refund reasons","body":"old","status":"active","sources":[{"refType":"commit","refId":"a1b2"}]},"revisionId":"rev_1"}`)
 	wr, err := c.WriteMemory(context.Background(), api.MemoryWrite{Title: "Refund reasons", Body: "new", Kind: "fact", Namespace: "product:acme-platform", RunID: "prun_1", Sources: []api.MemorySource{{Type: api.SourceCommit, ID: "a1b2"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -503,6 +503,12 @@ func TestNucleus(t *testing.T) {
 	expectRequest(t, s, "POST", "/api/v1/nucleus/memories")
 	if wr.Outcome != api.OutcomeQueuedForReview || wr.Atom.Body != "old" || wr.RevisionID != "rev_1" {
 		t.Fatalf("write = %+v", wr)
+	}
+	if src := wr.Atom.Sources; len(src) != 1 || src[0].Type != api.SourceCommit || src[0].ID != "a1b2" {
+		t.Fatalf("stored sources decode from refType/refId: %+v", src)
+	}
+	if got := s.body["sources"].([]any)[0].(map[string]any); got["type"] != "commit" || got["id"] != "a1b2" {
+		t.Fatalf("request sources = %v", got)
 	}
 }
 

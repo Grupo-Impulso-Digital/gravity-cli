@@ -78,6 +78,12 @@ func TestValidateUnitsAndFindings(t *testing.T) {
 	if err := agent.ValidateUnits(json.RawMessage(`{"units":[{"key":"Bad Key","kind":"feature","title":"x","sourceRefs":["a"]}]}`)); err == nil {
 		t.Fatal("bad key accepted")
 	}
+	if err := agent.ValidateUnits(json.RawMessage(`{"units":[{"key":"feature:billing","kind":"feature","title":" ","sourceRefs":["a"]}]}`)); err == nil {
+		t.Fatal("blank unit title accepted")
+	}
+	if err := agent.SubmitAtomsTool().Validate(json.RawMessage(`{"atoms":[{"title":"` + strings.Repeat("t", 201) + `","body":"x"}]}`)); err == nil {
+		t.Fatal("atom title over the platform limit accepted")
+	}
 	if err := agent.ReportFindingsTool().Validate(json.RawMessage(`{"findings":[{"verdict":"maybe","title":"x"}]}`)); err == nil {
 		t.Fatal("unknown verdict accepted")
 	}
