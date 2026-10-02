@@ -250,6 +250,9 @@ func (w *writes) ImportVerbatim(_ context.Context, _ string, req api.VerbatimReq
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.verbatim = append(w.verbatim, req)
+	if err := w.fail[req.File.Path]; err != nil {
+		return nil, err
+	}
 	return &api.VerbatimResult{Change: &api.Change{ID: fmt.Sprintf("chg_v%d", len(w.verbatim)), Op: api.OpImport, Status: "applied"}}, nil
 }
 
@@ -257,6 +260,9 @@ func (w *writes) DeleteVerbatim(_ context.Context, _ string, req api.VerbatimDel
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.deletions = append(w.deletions, req)
+	if err := w.fail[req.Path]; err != nil {
+		return nil, err
+	}
 	return &api.VerbatimResult{Change: &api.Change{ID: "chg_d", Op: api.OpDelete, Status: "applied"}}, nil
 }
 

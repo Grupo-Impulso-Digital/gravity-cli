@@ -186,6 +186,15 @@ deleted in the repository becomes a deletion proposal. `gravity check` flags a
 code change that contradicts a locked page, as a finding against the
 repository.
 
+Translations live next to their source: `rotation.fr.md` (or `.pt-BR.mdx`)
+beside `rotation.md`, or a file whose front matter says `lang: fr` and whose
+slug matches a source page. Each one is uploaded after every source page of the
+run as that page's French version, never as a page of its own, and is locked
+with it. A language the site has not enabled is skipped with a warning.
+Deleting the file removes that language version. `gravity preview` lists
+translations with their language and `gravity explain` names the translated
+files of a locked page.
+
 ## Several repositories, one product
 
 Products span repositories, and ownership moves: services split, features

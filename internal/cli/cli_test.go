@@ -501,9 +501,17 @@ func TestExplain(t *testing.T) {
 	h.platform.json("GET /api/v1/content/pages/pg_1", 200, `{"page":{"id":"pg_1","slug":"refunds","title":"Refunds","lock":{"repo":{"name":"billing-api","remoteKey":"github.com/acme/billing-api"},"pass":"handbook","path":"docs/refunds.md","branch":"main","url":"https://github.com/acme/billing-api/blob/main/docs/refunds.md","hash":"sha256:x"}},"blocks":[
 {"key":"guide:refunds:note","type":"prose","ownership":"human","position":0,"content":{"text":"x"}},
 {"key":"api:POST:/v1/refunds","type":"api","ownership":"machine","position":1,"content":{}}]}`)
+	if err := os.MkdirAll(filepath.Join(h.dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"docs/refunds.md", "docs/refunds.fr.md", "docs/refunds.pt-BR.md", "docs/refunds-old.fr.md"} {
+		h.write(f, "# x\n")
+	}
+	gitCmd(t, h.dir, "add", "-A")
+	gitCmd(t, h.dir, "commit", "-q", "-m", "docs")
 	expectCode(t, h, h.run("explain", "dev-portal/api/refunds"), 0)
 	out = h.stdout.String()
-	for _, want := range []string{"Locked: managed in billing-api/docs/refunds.md@main (pass handbook); edit it in the repository: https://github.com/acme/billing-api/blob/main/docs/refunds.md", "written in Gravity", "removed"} {
+	for _, want := range []string{"Locked: managed in billing-api/docs/refunds.md@main (pass handbook); edit it in the repository: https://github.com/acme/billing-api/blob/main/docs/refunds.md", "Translations from the repository: fr docs/refunds.fr.md, pt-BR docs/refunds.pt-BR.md", "written in Gravity", "removed"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
@@ -513,6 +521,9 @@ func TestExplain(t *testing.T) {
 	blocks := full["blocks"].([]any)
 	first := blocks[0].(map[string]any)
 	second := blocks[1].(map[string]any)
+	if tr := full["translations"].([]any); len(tr) != 2 || tr[0].(map[string]any)["language"] != "fr" || tr[0].(map[string]any)["path"] != "docs/refunds.fr.md" {
+		t.Fatalf("explain translations = %v", full["translations"])
+	}
 	if len(blocks) != 3 || first["key"] != "guide:refunds:note" || first["lastWriter"] != nil || second["lastWriter"].(map[string]any)["runId"] != "prun_1" || full["lock"] == nil {
 		t.Fatalf("explain json = %v", full)
 	}

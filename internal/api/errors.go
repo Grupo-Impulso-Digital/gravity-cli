@@ -41,6 +41,11 @@ const (
 	CodeUnsupportedMedia     = "unsupported_media_type"
 	CodeRateLimited          = "rate_limited"
 	CodeProviderError        = "provider_error"
+	CodeLanguageNotEnabled   = "language_not_enabled"
+	CodeSourceNotFound       = "source_not_found"
+	CodeSourceNotVerbatim    = "source_not_verbatim"
+	CodeSourcePending        = "source_pending_adoption"
+	CodeTranslationTaken     = "translation_taken"
 )
 
 // Sentinels matched by errors.Is against an *APIError.

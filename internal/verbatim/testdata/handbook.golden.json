@@ -3,8 +3,7 @@
     "docs/handbook/drafts/wip.md"
   ],
   "warnings": [
-    "docs/handbook/a/b/c/d/e/f/deep.md: nested deeper than 5 collections; flattened into a/b/c/d/e",
-    "docs/handbook/oncall/rotation.fr.md: skipped (lang fr); language versions of verbatim files are not imported by this CLI yet"
+    "docs/handbook/a/b/c/d/e/f/deep.md: nested deeper than 5 collections; flattened into a/b/c/d/e"
   ],
   "pages": [
     {
@@ -73,7 +72,15 @@
         "collectionPath": [
           "oncall"
         ],
-        "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac"
+        "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+        "translations": [
+          {
+            "path": "docs/handbook/oncall/rotation.fr.md",
+            "lang": "fr",
+            "title": "Rotation",
+            "hash": "sha256:87322dd075efc526ee95bdda0cb693ded7bad60fa1235a4d4e880a4e4b1474c1"
+          }
+        ]
       },
       "collectionTitles": {
         "oncall": "On-call"

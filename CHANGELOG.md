@@ -101,7 +101,9 @@ pipelines never pick it up by accident.
   `verbatim` (Markdown/MDX import with front matter, admonitions, GitHub
   alerts, MkDocs, details, MDX tabs, mermaid, tables, task lists, footnotes,
   images uploaded once per run, intra-repository links rewritten, folders to
-  collections, whole-page re-import on hash change, deletion proposals),
+  collections, whole-page re-import on hash change, deletion proposals,
+  translated files such as `guide.fr.md` or `lang: fr` uploaded as the
+  source page's language version after every source page),
   `changelog` (release pages and the Unreleased page), `nucleus` (namespaced,
   repository-tagged atoms), `check` (drift, coverage, claim verdicts, verbatim
   contradictions, PR notes) and `capture` (waits for the server Doc Agent run).

@@ -443,6 +443,51 @@ func TestBundleWrites(t *testing.T) {
 	}
 }
 
+func TestVerbatimTranslationWire(t *testing.T) {
+	c, s := fixtureServer(t, 201, `{"change":{"id":"chg_9","op":"import","status":"accepted","page":{"id":"pg_2","slug":"rotation","title":"On-call rotation"},"proposalId":null,"competing":false,"heldReason":null,"language":"fr","lock":{"kind":"repo","path":"docs/handbook/rotation.fr.md","branch":"main","hash":"sha256:f"},"translation":{"language":"fr","title":"Astreinte","slug":"astreinte","status":"live"}}}`)
+	vr, err := c.ImportVerbatim(context.Background(), "prun_1", api.VerbatimRequest{
+		RunPassID: "ppr_2", Language: "fr",
+		File:   api.VerbatimFile{Path: "docs/handbook/rotation.fr.md", Hash: "sha256:f", Branch: "main", CommitSHA: "a1b2"},
+		Page:   api.VerbatimPage{Slug: "rotation", Title: "Astreinte", CollectionPath: []string{"oncall"}},
+		Blocks: []api.ChangeBlock{{Key: "verbatim:1", Type: "prose", Ownership: api.OwnershipMachine, Content: map[string]any{"text": "Qui est d'astreinte"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectRequest(t, s, "POST", "/api/v1/runs/prun_1/verbatim")
+	page := s.body["page"].(map[string]any)
+	file := s.body["file"].(map[string]any)
+	if s.body["language"] != "fr" || page["slug"] != "rotation" || page["title"] != "Astreinte" || file["path"] != "docs/handbook/rotation.fr.md" || s.body["runPassId"] != "ppr_2" {
+		t.Fatalf("translation body = %v", s.body)
+	}
+	if langs, ok := s.body["languages"].([]any); !ok || len(langs) != 0 {
+		t.Fatalf("a translation never asks for auto-translation: %v", s.body["languages"])
+	}
+	if vr.Change.Language != "fr" || vr.Change.Translation == nil || vr.Change.Translation.Slug != "astreinte" || vr.Change.Lock.Path != "docs/handbook/rotation.fr.md" {
+		t.Fatalf("translation result = %+v", vr.Change)
+	}
+
+	c, s = fixtureServer(t, 200, `{"change":null,"status":"unchanged","page":{"id":"pg_2","slug":"rotation"}}`)
+	if _, err := c.ImportVerbatim(context.Background(), "prun_1", api.VerbatimRequest{RunPassID: "ppr_2", Page: api.VerbatimPage{Slug: "rotation"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := s.body["language"]; present {
+		t.Fatalf("a source import carries no language: %v", s.body)
+	}
+
+	c, _ = fixtureServer(t, 422, `{"error":{"code":"language_not_enabled","message":"The site has no de translation"}}`)
+	_, err = c.ImportVerbatim(context.Background(), "prun_1", api.VerbatimRequest{RunPassID: "ppr_2", Language: "de", Page: api.VerbatimPage{Slug: "rotation"}})
+	if !api.HasCode(err, api.CodeLanguageNotEnabled) || api.IsLicenseError(err) {
+		t.Fatalf("language_not_enabled = %v", err)
+	}
+
+	c, _ = fixtureServer(t, 201, `{"change":{"id":"chg_d","op":"delete","status":"accepted","language":"fr","page":{"id":"pg_2","slug":"rotation"},"proposalId":null,"competing":false,"heldReason":null}}`)
+	dr, err := c.DeleteVerbatim(context.Background(), "prun_1", api.VerbatimDeleteRequest{RunPassID: "ppr_2", Path: "docs/handbook/rotation.fr.md", Reason: "Translation file deleted"})
+	if err != nil || dr.Change.Language != "fr" {
+		t.Fatalf("translation delete = %+v %v", dr, err)
+	}
+}
+
 func TestInventory(t *testing.T) {
 	c, s := fixtureServer(t, 200, `{"product":{"id":"prod_1","slug":"acme-platform","nucleusNamespace":"product:acme-platform"},"units":[{"key":"api:post:/v1/refunds","kind":"api","title":"Create a refund","status":"active","primaryRepo":{"id":"cr_1","name":"billing-api","remoteKey":"github.com/acme/billing-api"},"contributors":[{"repo":{"id":"cr_1","name":"billing-api","remoteKey":"github.com/acme/billing-api"},"role":"implements","active":true,"sourceRefs":["src/server/refunds/**"],"lastSeenAt":"t","lastSeenSha":"a1b2"}],"bindings":[{"pageId":"pg_1","pageSlug":"refunds","siteSlug":"dev-portal","spaceSlug":"api","blockKey":null}],"handoffs":[{"id":"ho_1","role":"implements","from":"gateway","to":"billing-api","status":"detected","detectedAt":"t"}]}],"nextCursor":null}`)
 	inv, err := c.Inventory(context.Background(), api.InventoryQuery{Product: "acme-platform", Kind: "api", Unit: "api:post:/v1/refunds", IncludeInactive: true, Limit: 50})

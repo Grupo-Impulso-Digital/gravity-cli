@@ -305,6 +305,31 @@ func TestPreviewShowsWorkingTreeDiffWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestPreviewShowsTranslatedVerbatimFiles(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_user_dev"
+	h.write(".gravity.yaml", "version: 2\n")
+	if err := os.MkdirAll(filepath.Join(h.dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.write("docs/rotation.md", "# On-call rotation\n\nWho is on call.\n")
+	h.write("docs/rotation.fr.md", "# Astreinte\n\nQui est d'astreinte.\n")
+	gitCmd(t, h.dir, "add", "-A")
+	gitCmd(t, h.dir, "commit", "-q", "-m", "docs")
+	pass := referencePlanPass("verbatim")
+	pass["name"] = "handbook"
+	pass["options"] = map[string]any{"files": []any{map[string]any{"include": "docs/**"}}}
+	h.pipelineRoutes(t, pipelinePlan(t, pass))
+	expectCode(t, h, h.run("preview", "--committed"), 0)
+	out := h.stdout.String()
+	if !strings.Contains(out, "import handbook rotation (On-call rotation): docs/rotation.md") || !strings.Contains(out, "import handbook rotation (Astreinte) [fr]: docs/rotation.fr.md") {
+		t.Fatalf("preview output:\n%s\nstderr: %s", out, h.stderr.String())
+	}
+	if strings.Contains(out, "rotation-fr") {
+		t.Fatalf("a translation is never its own page:\n%s", out)
+	}
+}
+
 func TestCheckFromPlansAgainstTheDefaultBranch(t *testing.T) {
 	h := newHarness(t)
 	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"

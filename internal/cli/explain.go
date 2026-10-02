@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/verbatim"
 )
 
 type explainBlock struct {
@@ -18,11 +22,17 @@ type explainBlock struct {
 	History    []api.ProvenanceEntry `json:"history"`
 }
 
+type explainTranslation struct {
+	Language string `json:"language"`
+	Path     string `json:"path"`
+}
+
 type explainData struct {
-	Page   api.ResolvedPage `json:"page"`
-	Title  string           `json:"title"`
-	Lock   *api.PageLock    `json:"lock"`
-	Blocks []explainBlock   `json:"blocks"`
+	Page         api.ResolvedPage     `json:"page"`
+	Title        string               `json:"title"`
+	Lock         *api.PageLock        `json:"lock"`
+	Translations []explainTranslation `json:"translations"`
+	Blocks       []explainBlock       `json:"blocks"`
 }
 
 func newExplainCmd(a *app) *cobra.Command {
@@ -69,6 +79,7 @@ func newExplainCmd(a *app) *cobra.Command {
 					data.Lock = content.Page.Lock
 				}
 			}
+			data.Translations = a.localTranslations(ctx, data.Lock)
 			if block != "" {
 				var only []explainBlock
 				for _, b := range data.Blocks {
@@ -87,6 +98,38 @@ func newExplainCmd(a *app) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&block, "block", "", "show the full history of one block key")
 	return cmd
+}
+
+func (a *app) localTranslations(ctx context.Context, lock *api.PageLock) []explainTranslation {
+	out := []explainTranslation{}
+	if lock == nil || lock.Path == "" {
+		return out
+	}
+	dir, err := a.workdir()
+	if err != nil {
+		return out
+	}
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		return out
+	}
+	if lock.Repo != nil && lock.Repo.RemoteKey != "" {
+		remote, _ := repo.RemoteURL(ctx)
+		if remote == "" || git.NormalizeRemoteKey(remote) != lock.Repo.RemoteKey {
+			return out
+		}
+	}
+	files, err := repo.ListFiles(ctx, path.Join(path.Dir(lock.Path), "*"))
+	if err != nil {
+		return out
+	}
+	stem := strings.TrimSuffix(lock.Path, path.Ext(lock.Path))
+	for _, f := range files {
+		if s, lang, ok := verbatim.SuffixLang(f); ok && s == stem && f != lock.Path {
+			out = append(out, explainTranslation{Language: lang, Path: f})
+		}
+	}
+	return out
 }
 
 func mergeProvenance(prov *api.PageProvenance, content *api.PageContent) []explainBlock {
@@ -173,6 +216,13 @@ func (a *app) printExplain(d explainData, full bool) {
 	p.Println("%s  %s/%s/%s", p.Bold(firstNonEmpty(d.Title, d.Page.PageSlug)), d.Page.SiteSlug, d.Page.SpaceSlug, d.Page.PageSlug)
 	if d.Lock != nil {
 		p.Println("%s", lockLine(d.Lock))
+	}
+	if len(d.Translations) > 0 {
+		var parts []string
+		for _, t := range d.Translations {
+			parts = append(parts, t.Language+" "+t.Path)
+		}
+		p.Println("Translations from the repository: %s", strings.Join(parts, ", "))
 	}
 	if len(d.Blocks) == 0 {
 		p.Println("No pipeline has written this page yet.")

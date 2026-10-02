@@ -92,6 +92,16 @@ type Change struct {
 	Adopted       bool              `json:"adopted,omitempty"`
 	Lock          *PageLock         `json:"lock,omitempty"`
 	PendingLock   *PageLock         `json:"pendingLock,omitempty"`
+	Language      string            `json:"language,omitempty"`
+	Translation   *TranslationRef   `json:"translation,omitempty"`
+}
+
+// TranslationRef is the language plane a translated verbatim file wrote.
+type TranslationRef struct {
+	Language string `json:"language"`
+	Title    string `json:"title,omitempty"`
+	Slug     string `json:"slug,omitempty"`
+	Status   string `json:"status,omitempty"`
 }
 
 // ProposeChange calls POST /api/v1/runs/{runId}/changes.
@@ -124,20 +134,22 @@ type VerbatimPage struct {
 	CollectionTitles map[string]string `json:"collectionTitles,omitempty"`
 }
 
-// VerbatimRequest is the body of POST /api/v1/runs/{runId}/verbatim.
+// VerbatimRequest is the body of POST /api/v1/runs/{runId}/verbatim; Language marks a translated file of the page Page.Slug.
 type VerbatimRequest struct {
 	RunPassID string        `json:"runPassId"`
 	File      VerbatimFile  `json:"file"`
 	Page      VerbatimPage  `json:"page"`
 	Blocks    []ChangeBlock `json:"blocks"`
 	Languages []string      `json:"languages"`
+	Language  string        `json:"language,omitempty"`
 }
 
 // VerbatimResult is the response of a verbatim import or deletion.
 type VerbatimResult struct {
-	Change *Change  `json:"change"`
-	Status string   `json:"status,omitempty"`
-	Page   *PageRef `json:"page,omitempty"`
+	Change   *Change  `json:"change"`
+	Status   string   `json:"status,omitempty"`
+	Page     *PageRef `json:"page,omitempty"`
+	Language string   `json:"language,omitempty"`
 }
 
 // Unchanged reports whether the platform skipped the write.

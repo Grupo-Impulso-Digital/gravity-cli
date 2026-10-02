@@ -12,12 +12,13 @@ import (
 )
 
 type previewPage struct {
-	Pass  string `json:"pass"`
-	Op    string `json:"op"`
-	Page  string `json:"page"`
-	Title string `json:"title,omitempty"`
-	Diff  string `json:"diff,omitempty"`
-	Note  string `json:"note,omitempty"`
+	Pass     string `json:"pass"`
+	Op       string `json:"op"`
+	Page     string `json:"page"`
+	Title    string `json:"title,omitempty"`
+	Language string `json:"language,omitempty"`
+	Diff     string `json:"diff,omitempty"`
+	Note     string `json:"note,omitempty"`
 }
 
 type previewData struct {
@@ -129,11 +130,11 @@ func (a *app) previewPages(ctx context.Context, s *pipelineSession, res *engine.
 			out = append(out, pg)
 		}
 		for _, req := range rec.Verbatim {
-			pg := previewPage{Pass: p.Name, Op: api.OpImport, Page: req.Page.Slug, Title: req.Page.Title, Note: req.File.Path}
+			pg := previewPage{Pass: p.Name, Op: api.OpImport, Page: req.Page.Slug, Title: req.Page.Title, Language: req.Language, Note: req.File.Path}
 			if withDiff {
 				var current *api.PageContent
 				if space := spaceOf(res, p.Name); space != "" {
-					if c, err := s.client.PageBySlug(ctx, space, req.Page.Slug, api.PageQuery{State: "draft", Format: "json"}); err == nil {
+					if c, err := s.client.PageBySlug(ctx, space, req.Page.Slug, api.PageQuery{State: "draft", Language: req.Language, Format: "json"}); err == nil {
 						current = c
 					}
 				}
@@ -164,6 +165,9 @@ func (a *app) printPreview(res *engine.Result, info *repoInfo, data previewData,
 		title := pg.Page
 		if pg.Title != "" && pg.Title != pg.Page {
 			title += " (" + pg.Title + ")"
+		}
+		if pg.Language != "" {
+			title += " [" + pg.Language + "]"
 		}
 		p.Println("%s %s %s: %s", p.Bold(pg.Op), pg.Pass, title, pg.Note)
 		if format == "diff" && pg.Diff != "" {
