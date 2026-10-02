@@ -397,6 +397,7 @@ type PlanPass struct {
 	Prompt        *PromptRef     `json:"prompt,omitempty"`
 	Watermark     *Watermark     `json:"watermark,omitempty"`
 	Hints         []PlanHint     `json:"hints,omitempty"`
+	DetachedPaths []string       `json:"detachedPaths,omitempty"`
 }
 
 // PlanRepo is the repository section of a plan.

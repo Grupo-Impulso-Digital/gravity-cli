@@ -88,3 +88,9 @@ func comparePre(a, b string) int {
 	}
 	return strings.Compare(a, b)
 }
+
+// SemverCore returns the major, minor and patch numbers of a version tag.
+func SemverCore(tag string) ([3]int, bool) {
+	v, ok := parseSemver(tag)
+	return v.core, ok
+}

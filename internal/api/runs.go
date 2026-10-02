@@ -259,7 +259,7 @@ type Finding struct {
 
 // Note is a soft claim note of a pass report.
 type Note struct {
-	Verdict string   `json:"verdict"`
+	Verdict string   `json:"verdict,omitempty"`
 	Title   string   `json:"title"`
 	Page    *PageRef `json:"page,omitempty"`
 }

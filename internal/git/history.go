@@ -402,3 +402,18 @@ func (r *Repo) FetchBranch(ctx context.Context, remote, branch string) error {
 	_, err := r.git(ctx, "fetch", "--quiet", remote, "+refs/heads/"+branch+":refs/remotes/"+remote+"/"+branch)
 	return err
 }
+
+// UntrackedFiles lists untracked files that are not ignored.
+func (r *Repo) UntrackedFiles(ctx context.Context) ([]string, error) {
+	out, err := r.git(ctx, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" && !strings.HasSuffix(p, "/") {
+			files = append(files, p)
+		}
+	}
+	return files, nil
+}

@@ -309,6 +309,12 @@ func (rs *Resolver) pullRequest(ctx context.Context, in RangeInput) (Range, erro
 	if err != nil {
 		return Range{}, err
 	}
+	if in.PRTarget == "" && in.PRBase != "" {
+		base, err := rs.Repo.ResolveRef(ctx, in.PRBase)
+		if err == nil {
+			return Range{Kind: api.RangePR, Base: base, Head: head}, nil
+		}
+	}
 	if in.PRTarget == "" {
 		r, err := rs.survey(ctx, head, in, "")
 		if err != nil {
@@ -424,4 +430,12 @@ func short(sha string) string {
 		return sha[:7]
 	}
 	return sha
+}
+
+// LatestTag returns the newest tag matching pattern that is an ancestor of head (other than head itself), or nil.
+func (rs *Resolver) LatestTag(ctx context.Context, head, pattern string) (*git.TagInfo, error) {
+	if pattern == "" {
+		pattern = DefaultTagPattern
+	}
+	return rs.latestTagBefore(ctx, head, pattern)
 }
