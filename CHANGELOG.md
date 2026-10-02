@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.3.1 — Unreleased
+
+Pins every 0.x pipeline to major 0 before CLI 1.0 ships (milestone C0.1). CLI
+1.0 refuses v0.x manifests and commands, so a pipeline that installs `latest`
+would break the day 1.0 is published.
+
+### Action required
+
+- GitHub Actions: reference the action as
+  `Grupo-Impulso-Digital/gravity-cli/ci/github@v0` (not `@main`, not a
+  branch). `@v0` now moves with every 0.x release.
+- GitLab and Bitbucket: copy the updated template, or set
+  `GRAVITY_CLI_VERSION` to `0` (or a release such as `v0.3.1`) if you set it
+  to `latest`.
+- Scripts calling `install.sh` or `install.ps1` with `GRAVITY_VERSION=latest`
+  should use `GRAVITY_VERSION=0`.
+
+### Changed
+
+- `install.sh` and `install.ps1` default to `GRAVITY_VERSION=0` and resolve a
+  major version (`0`, `v0`) to the newest release of that major; `latest`,
+  `v0.3.1` and `0.3.1` still work. `GRAVITY_RESOLVE_ONLY=1` prints the
+  resolved tag without installing.
+- The GitHub action's `version` input defaults to `0` and resolves it through
+  `install.sh`. The GitLab template and the Bitbucket pipe default
+  `GRAVITY_CLI_VERSION` to `0` and re-resolve a major version on every run.
+- The release workflow moves the `v<major>` tag (`v0`) on every non-prerelease
+  tag, so `ci/github@v0` exists and follows 0.x.
+
+### Fixed
+
+- A release range with no earlier tag starts at the root of history instead of
+  the first commit: the first commit's changes are included, and a tag on the
+  root commit no longer resolves to an empty `root..root` range.
+
 ## v0.3.0 — Unreleased
 
 Stop-the-bleeding release for current v0.2 users: no new architecture, every
