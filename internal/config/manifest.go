@@ -66,6 +66,14 @@ func (r *Roles) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// MarshalYAML writes a single role as a scalar.
+func (r Roles) MarshalYAML() (any, error) {
+	if len(r) == 1 {
+		return r[0], nil
+	}
+	return []string(r), nil
+}
+
 // Docs lists human-written documents passes may read as context.
 type Docs struct {
 	Include []string `yaml:"include,omitempty" json:"include,omitempty"`

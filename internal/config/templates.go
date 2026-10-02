@@ -44,3 +44,46 @@ var targetRequired = map[string]bool{
 func NeedsSpaceTarget(kind string) bool {
 	return targetRequired[kind]
 }
+
+// Template keys of the app catalog.
+const (
+	TemplateAPIReference      = "api-reference"
+	TemplateDeveloperGuide    = "developer-guide"
+	TemplateUserGuide         = "user-guide"
+	TemplateCustomerChangelog = "customer-changelog"
+	TemplateInternalChangelog = "internal-changelog"
+	TemplateRunbook           = "runbook"
+	TemplateNucleusFacts      = "nucleus-facts"
+	TemplateVerbatimDocs      = "verbatim-docs"
+)
+
+// TemplateSpaceTypes maps each template to the space type its target suggests ("" for none).
+var TemplateSpaceTypes = map[string][]string{
+	TemplateAPIReference:      {"api-reference"},
+	TemplateDeveloperGuide:    {"product-docs"},
+	TemplateUserGuide:         {"product-docs"},
+	TemplateCustomerChangelog: {"release-notes"},
+	TemplateInternalChangelog: {"release-notes"},
+	TemplateRunbook:           {"handbook"},
+	TemplateVerbatimDocs:      {"knowledge-base", "handbook"},
+}
+
+// TemplateTriggers are the default triggers of each template.
+var TemplateTriggers = map[string][]string{
+	TemplateAPIReference:      {TriggerPush, TriggerPR},
+	TemplateDeveloperGuide:    {TriggerPush, TriggerPR},
+	TemplateUserGuide:         {TriggerPush, TriggerPR},
+	TemplateCustomerChangelog: {TriggerPush, TriggerRelease},
+	TemplateInternalChangelog: {TriggerRelease},
+	TemplateRunbook:           {TriggerPush},
+	TemplateNucleusFacts:      {TriggerPush},
+	TemplateVerbatimDocs:      {TriggerPush},
+}
+
+// PassTriggers returns the pass's triggers, else its template's defaults.
+func PassTriggers(p Pass) []string {
+	if len(p.Triggers) > 0 {
+		return p.Triggers
+	}
+	return TemplateTriggers[p.Template]
+}

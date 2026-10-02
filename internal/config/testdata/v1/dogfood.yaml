@@ -1,0 +1,58 @@
+version: 1
+site: gravity
+apiUrl: https://api.gravitydocs.io
+
+product:
+  slug: gravity
+  repo: cli
+
+spaces:
+  default: cli
+  parent: developers
+  home: overview
+  shared: [internal]
+  declare:
+    - slug: developers
+      name: Developers
+      type: api-reference
+      visibility: public
+    - slug: cli
+      name: CLI
+      parent: developers
+      audiences: [developers]
+    - slug: internal
+      name: Engineering Handbook
+      type: handbook
+      visibility: private
+
+documents:
+  - file: docs/platform-authoring-api.md
+    space: internal
+    page: platform-authoring-api
+    title: Platform authoring API (CLI-side contract mirror)
+    ownership: hybrid
+
+releaseNotes:
+  space: changelog
+
+knowledge:
+  namespace: gravity
+
+discovery:
+  units: capability
+  exclude:
+    - dist/**
+    - '**/*_test.go'
+  entrypoints:
+    - cmd/gravity/main.go
+    - internal/cli/root.go
+    - internal/config/project.go
+  audiences:
+    default: [developers]
+
+i18n:
+  languages: [fr]
+
+coverage:
+  min: 0.7
+  require: [overview]

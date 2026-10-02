@@ -1,0 +1,11 @@
+version: 2
+passes:
+  - name: docs
+    kind: guides
+    template: user-guide
+    target: docs/guides
+    triggers: [push, pr]
+---
+mapped version: version: 2
+mapped site: prefix of every pass target (docs/...)
+mapped space: guides pass docs (user-guide) -> docs/guides
