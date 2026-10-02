@@ -1,6 +1,10 @@
 # Changelog
 
-## v0.3.1 — Unreleased
+## v0.3.0 — 2026-10-02
+
+Stop-the-bleeding release for current v0.2 users: no new architecture, every
+fix below is backward compatible with a valid v0.2 `.gravity.yaml` except the
+two removed keys (run `gravity init --migrate` to drop them).
 
 Pins every 0.x pipeline to major 0 before CLI 1.0 ships (milestone C0.1). CLI
 1.0 refuses v0.x manifests and commands, so a pipeline that installs `latest`
@@ -12,7 +16,7 @@ would break the day 1.0 is published.
   `Grupo-Impulso-Digital/gravity-cli/ci/github@v0` (not `@main`, not a
   branch). `@v0` now moves with every 0.x release.
 - GitLab and Bitbucket: copy the updated template, or set
-  `GRAVITY_CLI_VERSION` to `0` (or a release such as `v0.3.1`) if you set it
+  `GRAVITY_CLI_VERSION` to `0` (or a release such as `v0.3.0`) if you set it
   to `latest`.
 - Scripts calling `install.sh` or `install.ps1` with `GRAVITY_VERSION=latest`
   should use `GRAVITY_VERSION=0`.
@@ -21,28 +25,43 @@ would break the day 1.0 is published.
 
 - `install.sh` and `install.ps1` default to `GRAVITY_VERSION=0` and resolve a
   major version (`0`, `v0`) to the newest release of that major; `latest`,
-  `v0.3.1` and `0.3.1` still work. `GRAVITY_RESOLVE_ONLY=1` prints the
+  `v0.3.0` and `0.3.0` still work. `GRAVITY_RESOLVE_ONLY=1` prints the
   resolved tag without installing.
 - The GitHub action's `version` input defaults to `0` and resolves it through
   `install.sh`. The GitLab template and the Bitbucket pipe default
   `GRAVITY_CLI_VERSION` to `0` and re-resolve a major version on every run.
 - The release workflow moves the `v<major>` tag (`v0`) on every non-prerelease
   tag, so `ci/github@v0` exists and follows 0.x.
+- A licence refusal (`module_disabled`, `seat_limit`) exits `3` with a message
+  that names the module and says to ask an administrator, distinct from an auth
+  or network error (`2`).
+- `.gravity.yaml` is parsed strictly: an unknown key fails with its line and a
+  "did you mean" suggestion.
+- Removed manifest keys `sources[].generator` and `knowledge.scope` (neither was
+  ever used); they now fail with a clear message. `kind: code` is no longer
+  advertised by the scaffold.
+- `init --yes` detects OpenAPI specs and documentation Markdown (`README.md`,
+  `docs/**`) and maps them, skipping `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING*`,
+  `CODE_OF_CONDUCT*`, `LICENSE*`, `SECURITY*`, `CHANGELOG*`, `.github/**`,
+  `node_modules`, `vendor` and `dist`. The wizard no longer asks for the API URL
+  (pass `--api-url` for a self-hosted platform), explains what `role` does,
+  preselects only `README.md` and `docs/**`, and no longer creates spaces on the
+  platform — `sync` does. New `init --dry-run` prints the file without writing.
+- `--ci` is one global flag on every command, also switched on by `CI=true`:
+  never prompt, plain ASCII output without emoji or tree glyphs. The per-command
+  `--ci` flags are gone.
+- `--json` is accepted by every reporting command: new on `release-notes`,
+  `sync` and `docs generate`; a shorthand for `--format json` on `check`,
+  `coverage`, `capture` and `nucleus query`.
+- One version variable (`internal/version`), stamped at build time with a
+  `debug.ReadBuildInfo` fallback for `go install` builds, and sent in a
+  versioned `User-Agent` (`gravity-cli/<version> (<os>/<arch>)`).
 
 ### Fixed
 
 - A release range with no earlier tag starts at the root of history instead of
   the first commit: the first commit's changes are included, and a tag on the
   root commit no longer resolves to an empty `root..root` range.
-
-## v0.3.0 — Unreleased
-
-Stop-the-bleeding release for current v0.2 users: no new architecture, every
-fix below is backward compatible with a valid v0.2 `.gravity.yaml` except the
-two removed keys (run `gravity init --migrate` to drop them).
-
-### Fixed
-
 - `release-notes` posts into `releaseNotes.space` (default `changelog`) instead
   of `spaces.default`; `--space` overrides it (`GRAVITY_SPACE` does not apply).
   Before the agent runs, a missing target space is created as a
@@ -95,33 +114,6 @@ two removed keys (run `gravity init --migrate` to drop them).
   parser.
 - `docs generate --json` still prints its report when every planned page
   fails.
-
-### Changed
-
-- A licence refusal (`module_disabled`, `seat_limit`) exits `3` with a message
-  that names the module and says to ask an administrator, distinct from an auth
-  or network error (`2`).
-- `.gravity.yaml` is parsed strictly: an unknown key fails with its line and a
-  "did you mean" suggestion.
-- Removed manifest keys `sources[].generator` and `knowledge.scope` (neither was
-  ever used); they now fail with a clear message. `kind: code` is no longer
-  advertised by the scaffold.
-- `init --yes` detects OpenAPI specs and documentation Markdown (`README.md`,
-  `docs/**`) and maps them, skipping `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING*`,
-  `CODE_OF_CONDUCT*`, `LICENSE*`, `SECURITY*`, `CHANGELOG*`, `.github/**`,
-  `node_modules`, `vendor` and `dist`. The wizard no longer asks for the API URL
-  (pass `--api-url` for a self-hosted platform), explains what `role` does,
-  preselects only `README.md` and `docs/**`, and no longer creates spaces on the
-  platform — `sync` does. New `init --dry-run` prints the file without writing.
-- `--ci` is one global flag on every command, also switched on by `CI=true`:
-  never prompt, plain ASCII output without emoji or tree glyphs. The per-command
-  `--ci` flags are gone.
-- `--json` is accepted by every reporting command: new on `release-notes`,
-  `sync` and `docs generate`; a shorthand for `--format json` on `check`,
-  `coverage`, `capture` and `nucleus query`.
-- One version variable (`internal/version`), stamped at build time with a
-  `debug.ReadBuildInfo` fallback for `go install` builds, and sent in a
-  versioned `User-Agent` (`gravity-cli/<version> (<os>/<arch>)`).
 
 ### CI templates
 

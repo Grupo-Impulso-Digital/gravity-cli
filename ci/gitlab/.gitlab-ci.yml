@@ -16,7 +16,7 @@
 
 variables:
   LIVE_BRANCH: "main"
-  # "0" follows the newest 0.x release; pin a release (e.g. v0.3.1) for
+  # "0" follows the newest 0.x release; pin a release (e.g. v0.3.0) for
   # reproducible pipelines.
   GRAVITY_CLI_VERSION: "0"
   # release-notes, `check docs --ai` and `--since` all walk git history; a

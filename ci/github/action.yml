@@ -35,7 +35,7 @@ inputs:
     required: false
     default: "false"
   version:
-    description: "gravity CLI to install: a major version (0, the default, installs the newest 0.x release), a release tag such as v0.3.1, latest, or source (builds the CLI from this action's own checkout, for the CLI repo's own CI)."
+    description: "gravity CLI to install: a major version (0, the default, installs the newest 0.x release), a release tag such as v0.3.0, latest, or source (builds the CLI from this action's own checkout, for the CLI repo's own CI)."
     required: false
     default: "0"
 

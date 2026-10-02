@@ -31,7 +31,7 @@ definitions:
         script:
           - &install-gravity |
             # Prebuilt release binary (checksum-verified by the installer).
-            # Pin GRAVITY_CLI_VERSION (e.g. v0.3.1) as a repository variable
+            # Pin GRAVITY_CLI_VERSION (e.g. v0.3.0) as a repository variable
             # for reproducible pipelines; the default follows the newest 0.x release.
             VERSION="${GRAVITY_CLI_VERSION:-0}"
             if [ ! -x .gravity-bin/gravity ] || ! printf '%s' "$VERSION" | grep -Eq '^v?[0-9]+[.][0-9]+[.][0-9]+$'; then

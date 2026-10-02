@@ -200,7 +200,7 @@ Inputs:
 | `format`               | `github`                     | Appended as `--format` only for `check api`, `check docs`, `coverage` (unless `args` sets `--format`/`--json`). |
 | `since`                | `""`                         | Appended as `--since <ref>` for an incremental `docs generate`.      |
 | `continue-on-findings` | `false`                      | Exit `1` → success; exit `2`/`3` still fail.                         |
-| `version`              | `0`                          | A major version (`0`: the newest 0.x release), a release tag (`v0.3.1`) or `latest`; `source` builds from the action's own checkout (this repo's dogfood). |
+| `version`              | `0`                          | A major version (`0`: the newest 0.x release), a release tag (`v0.3.0`) or `latest`; `source` builds from the action's own checkout (this repo's dogfood). |
 
 The full three-trigger pipeline is
 [`.github/workflows/docs.yml`](../.github/workflows/docs.yml) in this repo —

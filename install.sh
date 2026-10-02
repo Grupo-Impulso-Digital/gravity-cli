@@ -57,7 +57,7 @@ resolve_tag() {
       ;;
     v[0-9]*.[0-9]*.[0-9]*) t="$GRAVITY_VERSION" ;;
     [0-9]*.[0-9]*.[0-9]*) t="v$GRAVITY_VERSION" ;;
-    *) err "GRAVITY_VERSION must be a major version (0), a release (v0.3.1) or latest; got '$GRAVITY_VERSION'" ;;
+    *) err "GRAVITY_VERSION must be a major version (0), a release (v0.3.0) or latest; got '$GRAVITY_VERSION'" ;;
   esac
   printf '%s\n' "$t"
 }

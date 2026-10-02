@@ -186,6 +186,18 @@ payload, generator stamps and the HTTP `User-Agent`.
   is incompatible with that `ansi` API. The pin is the minimum `cellbuf` that
   compiles against both; `go mod tidy` preserves it. Don't lower it.
 
+## Releasing
+
+- Releases are cut by `.github/workflows/auto-release.yml`. On every push to
+  `main` it reads the first `## vX.Y.Z` heading of `CHANGELOG.md`; when that
+  heading carries a date instead of `Unreleased` and the tag does not exist, it
+  tags the commit and runs `release.yml` (GoReleaser, then the `v<major>` tag
+  the GitHub action is pinned to). To ship, date the top section in the PR.
+- Pushing a `v*` tag by hand still runs `release.yml` directly.
+- A Homebrew tap or Scoop bucket failure (the `GORELEASER_TOKEN` PAT needs
+  contents:write on `homebrew-tap` and `scoop-bucket`) leaves a warning on the
+  run; the GitHub release and the major tag still ship.
+
 ## Pointers
 
 - [README.md](README.md) — install + per-command usage + exit codes.
