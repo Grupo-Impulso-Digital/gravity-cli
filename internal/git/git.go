@@ -4,7 +4,6 @@ package git
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -77,19 +76,6 @@ func (r *Repo) describeRelease(ctx context.Context, rev string) (string, error) 
 	return "", nil
 }
 
-// FirstCommit returns the oldest commit hash reachable from HEAD.
-func (r *Repo) FirstCommit(ctx context.Context) (string, error) {
-	out, err := r.git(ctx, "rev-list", "--max-parents=0", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	lines := strings.Fields(strings.TrimSpace(out))
-	if len(lines) == 0 {
-		return "", errors.New("repository has no commits")
-	}
-	return lines[len(lines)-1], nil
-}
-
 // CurrentBranch returns the checked-out branch name.
 func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "rev-parse", "--abbrev-ref", "HEAD")
@@ -131,12 +117,31 @@ type Range struct {
 	To   string
 }
 
-// String renders the range as git range notation.
+// String renders the range as git range notation; an empty From is the root of history.
 func (rg Range) String() string {
+	if rg.From == "" {
+		return rg.To
+	}
 	return rg.From + ".." + rg.To
 }
 
-// ResolveRange determines the effective range given optional from/to overrides.
+// Since names the range start for people and prompts.
+func (rg Range) Since() string {
+	if rg.From == "" {
+		return "the start of history"
+	}
+	return rg.From
+}
+
+// ToolArgs renders the range as git_log/git_diff tool arguments.
+func (rg Range) ToolArgs() string {
+	if rg.From == "" {
+		return fmt.Sprintf("to=%q", rg.To)
+	}
+	return fmt.Sprintf("from=%q, to=%q", rg.From, rg.To)
+}
+
+// ResolveRange determines the effective range given optional from/to overrides; with no earlier tag From stays empty, the root of history.
 func (r *Repo) ResolveRange(ctx context.Context, from, to string) (Range, error) {
 	rng := Range{From: from, To: to}
 	if rng.To == "" {
@@ -147,15 +152,7 @@ func (r *Repo) ResolveRange(ctx context.Context, from, to string) (Range, error)
 		if err != nil {
 			return Range{}, err
 		}
-		if tag != "" {
-			rng.From = tag
-		} else {
-			first, err := r.FirstCommit(ctx)
-			if err != nil {
-				return Range{}, err
-			}
-			rng.From = first
-		}
+		rng.From = tag
 	}
 	return rng, nil
 }
@@ -209,10 +206,17 @@ func (r *Repo) LogOneline(ctx context.Context, from, to string, maxCount int) (s
 	return r.git(ctx, args...)
 }
 
-// Diff returns the unified diff between from and to.
+// Diff returns the unified diff between from and to; an empty from diffs from the empty tree.
 func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) {
 	if to == "" {
 		to = "HEAD"
+	}
+	if from == "" {
+		empty, err := r.git(ctx, "hash-object", "-t", "tree", "--stdin")
+		if err != nil {
+			return "", err
+		}
+		from = strings.TrimSpace(empty)
 	}
 	args := []string{"diff", "--no-color", rangeArg(from, to)}
 	if path != "" {

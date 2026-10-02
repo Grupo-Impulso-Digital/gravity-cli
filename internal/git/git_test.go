@@ -122,19 +122,22 @@ func TestResolveRangeNoTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	first, err := repo.FirstCommit(ctx)
-	if err != nil {
-		t.Fatalf("first commit: %v", err)
-	}
 	rng, err := repo.ResolveRange(ctx, "", "")
 	if err != nil {
 		t.Fatalf("resolve range: %v", err)
 	}
-	if rng.From != first {
-		t.Errorf("with no tags, from should be first commit %q, got %q", first, rng.From)
+	if rng.From != "" {
+		t.Errorf("with no tags, from should be the root of history, got %q", rng.From)
 	}
 	if rng.To != "HEAD" {
 		t.Errorf("expected to=HEAD, got %q", rng.To)
+	}
+	commits, err := repo.Log(ctx, rng.From, rng.To, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 1 || commits[0].Subject != "initial" {
+		t.Errorf("the root commit belongs to the range: %+v", commits)
 	}
 }
 
@@ -257,16 +260,51 @@ func TestResolveRangeOnATaggedHead(t *testing.T) {
 		t.Errorf("a release checkout on v1.1.0 must range from v1.0.0, got %q", rng.From)
 	}
 
-	first, err := repo.FirstCommit(ctx)
-	if err != nil {
-		t.Fatalf("first commit: %v", err)
-	}
 	rng, err = repo.ResolveRange(ctx, "", "v1.0.0")
 	if err != nil {
 		t.Fatalf("resolve range to v1.0.0: %v", err)
 	}
-	if rng.From != first {
-		t.Errorf("the first tag must range from the first commit %q, got %q", first, rng.From)
+	if rng.From != "" {
+		t.Errorf("the first tag must range from the root of history, got %q", rng.From)
+	}
+}
+
+func TestResolveRangeTagOnTheRootCommit(t *testing.T) {
+	dir := t.TempDir()
+	run := gitRunner(t, dir)
+	run("init", "-q")
+	run("config", "commit.gpgsign", "false")
+	commitFile(t, run, dir, "a.txt")
+	run("tag", "v0.1.0")
+	ctx := context.Background()
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	rng, err := repo.ResolveRange(ctx, "", "")
+	if err != nil {
+		t.Fatalf("resolve range: %v", err)
+	}
+	if rng.From != "" || rng.String() != "HEAD" || rng.Since() != "the start of history" || rng.ToolArgs() != `to="HEAD"` {
+		t.Fatalf("a release on the root commit ranges over the whole history: %+v (%s)", rng, rng.String())
+	}
+	commits, err := repo.Log(ctx, rng.From, rng.To, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 1 || commits[0].Subject != "add a.txt" {
+		t.Fatalf("the root commit is the release: %+v", commits)
+	}
+	diff, err := repo.Diff(ctx, rng.From, rng.To, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "+++ b/a.txt") || !strings.Contains(diff, "+a.txt") {
+		t.Fatalf("the diff of the root release is the whole tree:\n%s", diff)
+	}
+	tagged, err := repo.Diff(ctx, "", "v0.1.0", "a.txt")
+	if err != nil || !strings.Contains(tagged, "+a.txt") {
+		t.Fatalf("diff from the root to a tag = %q, %v", tagged, err)
 	}
 }
 

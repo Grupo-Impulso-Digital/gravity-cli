@@ -120,7 +120,7 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 	}
 	cmd.Flags().StringVar(&site, "site", "", "site slug")
 	cmd.Flags().StringVar(&space, "space", "", "check only this space (default: this repo's pages)")
-	cmd.Flags().StringVar(&from, "from", "", "start git ref for the --ai diff (default: latest tag/first commit)")
+	cmd.Flags().StringVar(&from, "from", "", "start git ref for the --ai diff (default: latest tag, else the start of history)")
 	cmd.Flags().StringVar(&to, "to", "", "end git ref for the --ai diff (default: HEAD)")
 	cmd.Flags().BoolVar(&useAI, "ai", false, "run the AI docs-gap pass")
 	cmd.Flags().StringVar(&format, "format", output.FormatText, "text|json|github")
@@ -250,12 +250,12 @@ func runDocsGapAgent(ctx context.Context, client *api.Client, repo *git.Repo, rn
 	}
 	kickoff := fmt.Sprintf(
 		"Review the code changes between %s and %s for documentation gaps. "+
-			"Use git_diff(from=%q, to=%q) to see what changed. "+
+			"Use git_diff(%s) to see what changed. "+
 			"Here is the current text of this repository's documentation pages:\n\n%s\n\n"+
 			"Identify genuine gaps where code changed but docs did not. A page may describe behavior "+
 			"that another repository of the product implements; that is not a gap. "+
 			"Call report_findings when done.",
-		rng.From, rng.To, rng.From, rng.To, docsDigest(pages),
+		rng.Since(), rng.To, rng.ToolArgs(), docsDigest(pages),
 	)
 	if mctx != nil {
 		kickoff = enrichKickoff(ctx, client, mctx.Namespace, "docs gaps "+rng.String(), kickoff, mctx)

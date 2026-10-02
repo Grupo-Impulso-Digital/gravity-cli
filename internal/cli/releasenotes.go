@@ -122,7 +122,7 @@ overrides it. An empty commit range is a no-op that exits 0.`,
 		},
 	}
 	cmd.Flags().StringVar(&space, "space", "", "target space slug (default: releaseNotes.space from .gravity.yaml, else changelog)")
-	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag, or first commit)")
+	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag, else the start of history)")
 	cmd.Flags().StringVar(&to, "to", "", "end git ref (default: HEAD)")
 	cmd.Flags().StringVar(&output, "output", outputProposal, "proposal|file|stdout")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the structured notes without writing or posting")
@@ -225,9 +225,9 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 	}
 	kickoff := fmt.Sprintf(
 		"Generate release notes for the changes between %s and %s. "+
-			"Start by listing the commits with git_log(from=%q, to=%q), then inspect the diffs. "+
+			"Start by listing the commits with git_log(%s), then inspect the diffs. "+
 			"When finished, call submit_release_notes.",
-		rng.From, rng.To, rng.From, rng.To,
+		rng.Since(), rng.To, rng.ToolArgs(),
 	)
 	if mctx != nil {
 		kickoff = enrichKickoff(ctx, client, mctx.Namespace, "release notes "+rng.String(), kickoff, mctx)

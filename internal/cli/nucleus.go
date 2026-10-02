@@ -221,7 +221,7 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "knowledge namespace (default: config knowledge.namespace, else site)")
-	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag/first commit)")
+	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag, else the start of history)")
 	cmd.Flags().StringVar(&to, "to", "", "end git ref (default: HEAD)")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable nucleus as a hard error (exit 2)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print distilled memories without contributing them")
@@ -280,8 +280,8 @@ func runNucleusDistill(ctx context.Context, client *api.Client, repo *git.Repo, 
 	}
 	kickoff := fmt.Sprintf(
 		"Distill durable memories from the changes between %s and %s. "+
-			"Start with git_log(from=%q, to=%q), inspect the diffs, then call submit_atoms.",
-		rng.From, rng.To, rng.From, rng.To,
+			"Start with git_log(%s), inspect the diffs, then call submit_atoms.",
+		rng.Since(), rng.To, rng.ToolArgs(),
 	)
 	res, err := runner.Run(ctx, kickoff)
 	if err != nil {
