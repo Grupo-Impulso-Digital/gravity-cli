@@ -236,6 +236,36 @@ func truthy(v string) bool {
 	return false
 }
 
+// DefaultBranch returns the repository's default branch as the CI provider reports it, or "".
+func DefaultBranch(env Env) string {
+	if b := env.get("GRAVITY_DEFAULT_BRANCH"); b != "" {
+		return b
+	}
+	if b := env.get("CI_DEFAULT_BRANCH"); b != "" {
+		return b
+	}
+	if env.get("GITHUB_ACTIONS") != "true" {
+		return ""
+	}
+	p := env.get("GITHUB_EVENT_PATH")
+	if p == "" {
+		return ""
+	}
+	data, err := env.read(p)
+	if err != nil {
+		return ""
+	}
+	var event struct {
+		Repository struct {
+			DefaultBranch string `json:"default_branch"`
+		} `json:"repository"`
+	}
+	if json.Unmarshal(data, &event) != nil {
+		return ""
+	}
+	return event.Repository.DefaultBranch
+}
+
 func github(env Env) (Context, error) {
 	c := Context{Provider: GitHub, Event: env.get("GITHUB_EVENT_NAME"), HeadSHA: env.get("GITHUB_SHA"), Branch: env.get("GITHUB_REF_NAME")}
 	if server, repo := env.get("GITHUB_SERVER_URL"), env.get("GITHUB_REPOSITORY"); server != "" && repo != "" {

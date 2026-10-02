@@ -279,7 +279,10 @@ preview.
   prompts. On a terminal, prompts and live progress use the Charm libraries.
 - CI detection is overridable with `GRAVITY_TRIGGER`, `GRAVITY_BRANCH`,
   `GRAVITY_HEAD_SHA`, `GRAVITY_BASE_SHA`, `GRAVITY_PR`, `GRAVITY_TAG`,
-  `GRAVITY_RUN_URL`.
+  `GRAVITY_RUN_URL`. The default branch comes from `origin/HEAD`, else
+  `GRAVITY_DEFAULT_BRANCH`, GitLab's `CI_DEFAULT_BRANCH` or the GitHub event's
+  `repository.default_branch`; `gravity init` falls back to the checked-out
+  branch.
 
 Profiles live in `~/.config/gravity/profiles.yaml` (mode `0600`, honors
 `XDG_CONFIG_HOME`). A token in the v0.x `config.yaml` is copied once into the

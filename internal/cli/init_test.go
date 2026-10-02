@@ -204,6 +204,12 @@ func TestInitYesAsksNothing(t *testing.T) {
 	if strings.Contains(h.stdout.String(), "gr_repo_minted_secret") {
 		t.Fatal("the token never goes to the JSON document")
 	}
+	for _, c := range h.platform.find("POST", "/api/v1/repos/connect") {
+		repo := c.Body["repo"].(map[string]any)
+		if repo["defaultBranch"] == nil || repo["defaultBranch"] != repo["branch"] {
+			t.Fatalf("without origin/HEAD init registers the checked-out branch as default: %v", repo)
+		}
+	}
 }
 
 func TestInitNeedsTerminalOrYes(t *testing.T) {

@@ -247,7 +247,7 @@ func (a *app) inspectRepo(ctx context.Context) (*repoInfo, error) {
 		info.branch = b
 	}
 	info.head, _ = repo.ResolveRef(ctx, "HEAD")
-	info.defaultBranch = repo.DefaultBranch(ctx)
+	info.defaultBranch = firstNonEmpty(repo.DefaultBranch(ctx), ci.DefaultBranch(ci.Env{Getenv: a.env}))
 	info.webURL, info.provider = webURL(info.remoteKey)
 	return info, nil
 }

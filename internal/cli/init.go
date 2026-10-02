@@ -488,6 +488,7 @@ func (r *initRun) currentManifest() *config.Manifest {
 func (r *initRun) connectRequest(m *config.Manifest, dryRun bool) api.ConnectRequest {
 	c, _ := r.a.detectCI(r.ctx, r.info.repo)
 	req := r.a.connectRequest(r.info, m, api.ContextInit, origin(c), dryRun)
+	req.Repo.DefaultBranch = firstNonEmpty(req.Repo.DefaultBranch, r.info.branch)
 	if p := firstNonEmpty(r.o.product, r.product.Slug); p != "" && (m == nil || m.Product == "") {
 		req.Product = p
 	}

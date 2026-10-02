@@ -285,3 +285,25 @@ func TestBrokenGitHubEventFile(t *testing.T) {
 		t.Fatal("want error for a corrupt event file")
 	}
 }
+
+func TestDefaultBranchFromProviders(t *testing.T) {
+	read := func(string) ([]byte, error) {
+		return []byte(`{"repository":{"default_branch":"trunk"}}`), nil
+	}
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"github event":  {map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": "/e"}, "trunk"},
+		"gitlab":        {map[string]string{"GITLAB_CI": "true", "CI_DEFAULT_BRANCH": "develop"}, "develop"},
+		"override wins": {map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": "/e", "GRAVITY_DEFAULT_BRANCH": "main"}, "main"},
+		"unknown":       {map[string]string{}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := Env{Getenv: func(k string) string { return tc.env[k] }, ReadFile: read}
+			if got := DefaultBranch(env); got != tc.want {
+				t.Fatalf("DefaultBranch = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
