@@ -29,6 +29,7 @@ func TestVerbatimImportsChangedFilesUploadsImagesAndProposesDeletions(t *testing
 	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_out", Slug: "outage", Title: "Outage", Lock: &api.PageLock{Pass: "handbook", Path: "docs/handbook/outage.md", Hash: outageHash}}})
 	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_old", Slug: "old", Title: "Old", Lock: &api.PageLock{Pass: "handbook", Path: "docs/handbook/old.md", Hash: "sha256:x"}}})
 	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_other", Slug: "other", Title: "Other", Lock: &api.PageLock{Pass: "another-pass", Path: "docs/x.md", Hash: "sha256:y"}}})
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_foreign", Slug: "foreign", Title: "Foreign", Lock: &api.PageLock{Pass: "handbook", Repo: &api.RepoRef{RemoteKey: "github.com/acme/other"}, Path: "docs/handbook/gone.md", Hash: "sha256:z"}}})
 	w := &writes{}
 	rep, err := passes.Verbatim{}.Run(context.Background(), input(t, r, fake, verbatimPass(), manifest(), "", head, api.ModeWrite), sink(w))
 	if err != nil {
@@ -307,5 +308,46 @@ func TestCapturePollsTheDocAgentRun(t *testing.T) {
 	}
 	if _, err := (passes.Capture{}).Run(context.Background(), in, &passes.Recorder{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCheckDoesNotFlagRemovedOperationsAnotherRepoOwns(t *testing.T) {
+	r := newRepo(t)
+	base := r.commit("spec v1", map[string]string{"api/openapi.yaml": specV1})
+	head := r.commit("spec v2", map[string]string{"api/openapi.yaml": specV2})
+	fake := newFakeAPI()
+	v1 := apiBlocks(t, specV1)
+	moved := pageBlock(v1["api:GET:/v1/refunds"])
+	moved.Provenance = &api.BlockProvenance{Repo: "billing-api"}
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_ref", Slug: "refunds", Title: "Refunds", Units: []string{"api:get:/v1/refunds"}}, Blocks: []api.PageBlock{moved}})
+	yes := true
+	fake.inventory = []api.Unit{{Key: "api:get:/v1/refunds", Kind: "api", Contributors: []api.Contributor{
+		{Repo: api.RepoRef{RemoteKey: "github.com/acme/billing-api"}, Role: api.RoleImplements, Active: &yes},
+		{Repo: api.RepoRef{RemoteKey: "github.com/acme/refunds-svc", Name: "refunds-svc"}, Role: api.RoleImplements, Active: &yes},
+	}}}
+	pp := planPass(config.KindCheck, "gate", map[string]any{"claims": false})
+	in := input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
+	in.Plan.Passes = []api.PlanPass{pp, planPass(config.KindReference, "developer-api", nil)}
+	rep, err := passes.Check{}.Run(context.Background(), in, &passes.Recorder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.Code == passes.CodeDriftRemoved {
+			t.Fatalf("a unit another repository implements is still true: %+v", f)
+		}
+	}
+	if rep.Failing || len(rep.Notes) != 1 || !strings.Contains(rep.Notes[0].Title, "refunds-svc") {
+		t.Fatalf("failing=%v notes=%+v", rep.Failing, rep.Notes)
+	}
+	fake.inventory[0].Contributors = fake.inventory[0].Contributors[:1]
+	in = input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
+	in.Plan.Passes = []api.PlanPass{pp, planPass(config.KindReference, "developer-api", nil)}
+	rep, err = passes.Check{}.Run(context.Background(), in, &passes.Recorder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Findings) != 1 || rep.Findings[0].Code != passes.CodeDriftRemoved || rep.Findings[0].UnitKey != "api:get:/v1/refunds" {
+		t.Fatalf("with no other owner the removal is drift: %+v", rep.Findings)
 	}
 }

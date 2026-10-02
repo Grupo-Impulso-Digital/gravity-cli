@@ -16,13 +16,11 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/plan"
 )
 
 // Pass is one pass kind.
 type Pass interface {
 	Kind() string
-	Touched(ctx context.Context, in Input) (touched bool, skipReason string)
 	Run(ctx context.Context, in Input, out Sink) (Report, error)
 }
 
@@ -91,7 +89,7 @@ func (in Input) ReadFile(ctx context.Context, p string) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	if in.Range.Head == "" {
-		full, err := pathsafe.Resolve(in.Repo.Root, clean)
+		full, err := pathsafe.ResolveInRoot(in.Repo.Root, clean)
 		if err != nil {
 			return nil, false, err
 		}
@@ -247,12 +245,6 @@ func (in Input) Audiences() []string { return in.Pass.Audiences }
 
 // Languages returns the translation languages requested by the pass.
 func (in Input) Languages() []string { return in.StringsOption("languages") }
-
-// Touched applies the zero-cost scope skip rules of the pass.
-func Touched(in Input) (bool, string) {
-	d := plan.Decide(in.Pass, in.Range, in.ChangeSet, in.Manifest)
-	return d.Run, d.Skip
-}
 
 // Units is the set of product unit keys the platform knows, safe for concurrent passes.
 type Units struct {

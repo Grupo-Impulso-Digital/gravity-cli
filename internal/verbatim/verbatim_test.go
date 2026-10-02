@@ -238,3 +238,29 @@ func TestBlobURLShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestRawHTMLAndUnsafeLinksAreNeutralized(t *testing.T) {
+	src := "<div>\n<p>&lt;script&gt;alert(1)&lt;/script&gt; and <a href=\"JavaScript:alert(1)\">x</a> and <code>&lt;div&gt;</code></p>\n</div>\n\nSee [y](javascript:alert(2)) and [ok](https://example.com) and ![i](data:image/svg+xml,boom).\n"
+	doc := verbatim.Convert([]byte(src), verbatim.Options{Path: "x.md"})
+	var all strings.Builder
+	for _, blk := range doc.Blocks {
+		if c, ok := blk.Content.(map[string]any); ok && c["text"] != nil {
+			text, _ := c["text"].(string)
+			all.WriteString(text + "\n")
+		}
+	}
+	out := all.String()
+	for _, bad := range []string{"<script", "javascript:", "JavaScript:", "data:image"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("output keeps %q:\n%s", bad, out)
+		}
+	}
+	for _, want := range []string{"&lt;script>alert(1)&lt;/script>", "[x](#)", "`<div>`", "[y](#)", "[ok](https://example.com)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if len(doc.Warnings) != 3 {
+		t.Errorf("warnings = %v", doc.Warnings)
+	}
+}

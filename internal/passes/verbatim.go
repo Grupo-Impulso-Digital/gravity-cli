@@ -20,9 +20,6 @@ type Verbatim struct{}
 // Kind is verbatim.
 func (Verbatim) Kind() string { return config.KindVerbatim }
 
-// Touched applies the verbatim skip rule: one of its mapped files changed, or a survey.
-func (Verbatim) Touched(_ context.Context, in Input) (bool, string) { return Touched(in) }
-
 // DefaultMaxAssetBytes is the upload limit when the plan does not say.
 const DefaultMaxAssetBytes = 10 << 20
 
@@ -84,7 +81,7 @@ func (Verbatim) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	}
 	locked := map[string]api.TreePage{}
 	for _, p := range tree.Pages {
-		if p.Lock != nil && p.Lock.Pass == in.Pass.Name {
+		if lockedToPass(p.Lock, in.Pass.Name, in.Info) {
 			locked[p.Lock.Path] = p
 		}
 	}

@@ -32,9 +32,6 @@ type Reference struct{}
 // Kind is reference.
 func (Reference) Kind() string { return config.KindReference }
 
-// Touched applies the reference skip rule: one of its spec files changed, or a survey.
-func (Reference) Touched(_ context.Context, in Input) (bool, string) { return Touched(in) }
-
 // SpecSource is one OpenAPI source of a reference pass.
 type SpecSource struct {
 	Path       string `json:"path"`
@@ -85,13 +82,36 @@ func ResolveSpecs(ctx context.Context, in Input, sources []SpecSource) ([]SpecFi
 	if err != nil {
 		return nil, nil, err
 	}
+	var baseFiles []string
+	if in.Range.Base != "" {
+		baseFiles, _ = in.Repo.FilesAt(ctx, in.Range.Base)
+	}
+	atHead := map[string]bool{}
+	for _, f := range files {
+		atHead[f] = true
+	}
 	var out []SpecFile
 	var warnings []string
 	seen := map[string]bool{}
+	baseOps := func(f string) ([]checks.OperationDetail, string) {
+		if in.Range.Base == "" {
+			return nil, ""
+		}
+		before, ok, err := in.Repo.FileAt(ctx, in.Range.Base, f)
+		if err != nil || !ok {
+			return nil, ""
+		}
+		ops, err := docs.Operations(before)
+		if err != nil {
+			return nil, ""
+		}
+		ops, _ = documentable(ops)
+		return ops, specTitle(before)
+	}
 	for _, src := range sources {
 		pattern := strings.TrimPrefix(src.Path, "./")
 		for _, f := range files {
-			if seen[f] || f != pattern && (!glob.HasMeta(pattern) || !glob.Match(pattern, f)) {
+			if seen[f] || !specMatch(pattern, f) {
 				continue
 			}
 			seen[f] = true
@@ -107,18 +127,42 @@ func ResolveSpecs(ctx context.Context, in Input, sources []SpecSource) ([]SpecFi
 				warnings = append(warnings, fmt.Sprintf("%s: %v", f, err))
 				continue
 			}
-			sf := SpecFile{SpecSource: src, File: f, Title: specTitle(data), Ops: ops}
-			if in.Range.Base != "" {
-				if before, ok, err := in.Repo.FileAt(ctx, in.Range.Base, f); err == nil && ok {
-					if baseOps, err := docs.Operations(before); err == nil {
-						sf.Base = baseOps
-					}
-				}
+			ops, dropped := documentable(ops)
+			for _, op := range dropped {
+				warnings = append(warnings, fmt.Sprintf("%s: %s %s skipped: api blocks have no %s method", f, strings.ToUpper(op.Method), op.Path, strings.ToUpper(op.Method)))
 			}
-			out = append(out, sf)
+			before, _ := baseOps(f)
+			out = append(out, SpecFile{SpecSource: src, File: f, Title: specTitle(data), Ops: ops, Base: before})
+		}
+		for _, f := range baseFiles {
+			if seen[f] || atHead[f] || !specMatch(pattern, f) {
+				continue
+			}
+			seen[f] = true
+			if before, title := baseOps(f); len(before) > 0 {
+				out = append(out, SpecFile{SpecSource: src, File: f, Title: title, Base: before})
+			}
 		}
 	}
 	return out, warnings, nil
+}
+
+func specMatch(pattern, f string) bool {
+	return f == pattern || glob.HasMeta(pattern) && glob.Match(pattern, f)
+}
+
+var blockMethods = map[string]bool{"get": true, "post": true, "put": true, "patch": true, "delete": true, "head": true, "options": true}
+
+func documentable(ops []checks.OperationDetail) (keep, dropped []checks.OperationDetail) {
+	keep = ops[:0:0]
+	for _, op := range ops {
+		if blockMethods[strings.ToLower(op.Method)] {
+			keep = append(keep, op)
+		} else {
+			dropped = append(dropped, op)
+		}
+	}
+	return keep, dropped
 }
 
 func specTitle(data []byte) string {

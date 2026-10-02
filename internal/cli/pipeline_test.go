@@ -221,7 +221,7 @@ func TestCheckCommandIsThePullRequestGate(t *testing.T) {
 	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
 	driftFixture(t, h)
 	githubPR(t, h, 42)
-	gh := newFakeGitHub(t, map[string]any{"id": 5, "body": "<!-- gravity:doc-impact repo=github.com/acme/billing-api -->\nold"})
+	gh := newFakeGitHub(t, map[string]any{"id": 5, "body": "<!-- gravity:doc-impact repo=github.com/acme/billing-api -->\nold", "user": map[string]any{"login": "github-actions[bot]", "type": "Bot"}})
 	h.env["GITHUB_TOKEN"] = "ghs_test"
 	h.env["GITHUB_API_URL"] = gh.srv.URL
 

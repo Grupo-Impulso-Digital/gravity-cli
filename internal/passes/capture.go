@@ -23,9 +23,6 @@ type Capture struct{}
 // Kind is capture.
 func (Capture) Kind() string { return config.KindCapture }
 
-// Touched applies the capture skip rule.
-func (Capture) Touched(_ context.Context, in Input) (bool, string) { return Touched(in) }
-
 var finalCapture = map[string]bool{"succeeded": true, "completed": true, "failed": true, "cancelled": true, "error": true} //nolint:misspell // platform status value
 
 // Run waits for the Doc Agent run the platform starts for this pass run, then reports it.

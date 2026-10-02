@@ -19,10 +19,16 @@ type GitHub struct {
 	HTTP  *http.Client
 }
 
+type ghUser struct {
+	Login string `json:"login"`
+	Type  string `json:"type"`
+}
+
 type ghComment struct {
 	ID      int64  `json:"id"`
 	Body    string `json:"body"`
 	HTMLURL string `json:"html_url"`
+	User    ghUser `json:"user"`
 }
 
 func (g GitHub) client() *http.Client {
@@ -78,6 +84,23 @@ func (g GitHub) do(ctx context.Context, method, url string, body, out any) error
 // Upsert updates the comment carrying marker, or creates one when create is true; it returns the comment URL ("" when nothing was posted).
 func (g GitHub) Upsert(ctx context.Context, pr int, marker, body string, create bool) (string, error) {
 	var existing *ghComment
+	self, selfKnown := "", false
+	ours := func(c ghComment) bool {
+		if !strings.Contains(c.Body, marker) {
+			return false
+		}
+		if c.User.Type == "Bot" {
+			return true
+		}
+		if !selfKnown {
+			selfKnown = true
+			var me ghUser
+			if err := g.do(ctx, http.MethodGet, g.base()+"/user", nil, &me); err == nil {
+				self = me.Login
+			}
+		}
+		return self != "" && c.User.Login == self
+	}
 	for page := 1; page <= 10 && existing == nil; page++ {
 		var comments []ghComment
 		url := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=100&page=%d", g.base(), g.Repo, pr, page)
@@ -85,7 +108,7 @@ func (g GitHub) Upsert(ctx context.Context, pr int, marker, body string, create 
 			return "", err
 		}
 		for i := range comments {
-			if strings.Contains(comments[i].Body, marker) {
+			if ours(comments[i]) {
 				existing = &comments[i]
 				break
 			}

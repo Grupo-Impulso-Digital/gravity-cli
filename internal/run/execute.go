@@ -209,6 +209,7 @@ func (s *runState) passes(ctx context.Context) []PassResult {
 				base.Status = api.StatusFailed
 				base.Error = "run stopped"
 				results[i] = base
+				s.emit(base)
 				return
 			}
 			results[i] = s.runPass(ctx, pp, rp, base)

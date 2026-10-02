@@ -210,3 +210,24 @@ func TestNoBaseURL(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestStartRunRetriesReplayTheSameClientKeyAndBody(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(data))
+		if len(bodies) < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = io.WriteString(w, `{"run":{"id":"prun_1"}}`)
+	}))
+	defer srv.Close()
+	c, _ := newTestClient(srv.URL)
+	if _, err := c.StartRun(context.Background(), "", api.StartRunRequest{ClientKey: "ck_1", Trigger: "push"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 3 || bodies[0] != bodies[1] || bodies[1] != bodies[2] || !strings.Contains(bodies[0], `"clientKey":"ck_1"`) {
+		t.Fatalf("bodies = %q", bodies)
+	}
+}

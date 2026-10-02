@@ -11,6 +11,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/glob"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
@@ -53,9 +54,6 @@ type Check struct{}
 
 // Kind is check.
 func (Check) Kind() string { return config.KindCheck }
-
-// Touched applies the check skip rule (never skipped on pull requests).
-func (Check) Touched(_ context.Context, in Input) (bool, string) { return Touched(in) }
 
 // FailOn returns the categories whose findings fail the check.
 func FailOn(in Input) []string {
@@ -172,7 +170,7 @@ func ownRoles(in Input) map[string]map[string]bool {
 			if c.Active != nil && !*c.Active {
 				continue
 			}
-			if c.Repo.RemoteKey == in.Info.RemoteKey || c.Repo.RemoteKey == "" && c.Repo.Name == in.Info.Name {
+			if isThisRepo(c.Repo, in.Info) {
 				if out[u.Key] == nil {
 					out[u.Key] = map[string]bool{}
 				}
@@ -252,12 +250,76 @@ func checkDrift(ctx context.Context, in Input, rep *Report) error {
 				case ours && b.SourceBinding.Kind == "cli":
 					rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityWarning, Code: CodeDrift, Title: fmt.Sprintf("%s: %s was written by gravity v0.x", p.Title, b.Key), Detail: "The next reference run rewrites it with an endpoint binding.", Page: ref, BlockKey: b.Key, UnitKey: op.unit})
 				case !ours && blockIsOurs(b, in, roles):
-					rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityError, Code: CodeDriftRemoved, Title: fmt.Sprintf("%s documents %s, which this repository no longer defines", p.Title, b.Key), Page: ref, BlockKey: b.Key, UnitKey: firstUnit(b.Units)})
+					units := blockUnits(b)
+					if owners := otherOwners(in, units); len(owners) > 0 {
+						rep.Notes = append(rep.Notes, api.Note{Title: fmt.Sprintf("%s documents %s, which this repository no longer defines; %s now owns it", p.Title, b.Key, strings.Join(owners, ", ")), Page: ref})
+						continue
+					}
+					rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityError, Code: CodeDriftRemoved, Title: fmt.Sprintf("%s documents %s, which this repository no longer defines", p.Title, b.Key), Page: ref, BlockKey: b.Key, UnitKey: firstUnit(units)})
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func isThisRepo(r api.RepoRef, info RepoInfo) bool {
+	return r.RemoteKey == info.RemoteKey || r.RemoteKey == "" && r.Name == info.Name
+}
+
+func lockedToPass(lock *api.PageLock, pass string, info RepoInfo) bool {
+	if lock == nil || lock.Pass != pass {
+		return false
+	}
+	if lock.Repo == nil {
+		return true
+	}
+	if lock.Repo.ID != "" && info.ID != "" {
+		return lock.Repo.ID == info.ID
+	}
+	return isThisRepo(*lock.Repo, info)
+}
+
+func blockUnits(b api.PageBlock) []string {
+	if len(b.Units) > 0 || b.SourceBinding == nil || b.SourceBinding.Kind != "endpoint" {
+		return b.Units
+	}
+	method, path, ok := strings.Cut(b.SourceBinding.Ref, " ")
+	if !ok || method == "" || path == "" {
+		return nil
+	}
+	return []string{normalize.APIUnitKey(method, path)}
+}
+
+func otherOwners(in Input, units []string) []string {
+	if in.Plan == nil || len(units) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	for _, u := range units {
+		want[u] = true
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, u := range in.Plan.Inventory.Units {
+		if !want[u.Key] {
+			continue
+		}
+		for _, c := range u.Contributors {
+			if c.Active != nil && !*c.Active || isThisRepo(c.Repo, in.Info) {
+				continue
+			}
+			if c.Role != api.RoleImplements && c.Role != api.RoleDeclares {
+				continue
+			}
+			if label := c.Repo.Label(); label != "" && !seen[label] {
+				seen[label] = true
+				out = append(out, label)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func blockIsOurs(b api.PageBlock, in Input, roles map[string]map[string]bool) bool {
@@ -402,7 +464,7 @@ func claimPages(ctx context.Context, in Input) ([]claimPage, error) {
 		}
 		added := 0
 		for _, p := range tree.Pages {
-			if p.Lock == nil || p.Lock.Pass != pp.Name || added == 4 {
+			if !lockedToPass(p.Lock, pp.Name, in.Info) || added == 4 {
 				continue
 			}
 			if seen[p.ID] {

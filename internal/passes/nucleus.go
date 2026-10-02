@@ -18,9 +18,6 @@ type Nucleus struct{}
 // Kind is nucleus.
 func (Nucleus) Kind() string { return config.KindNucleus }
 
-// Touched applies the nucleus skip rule.
-func (Nucleus) Touched(_ context.Context, in Input) (bool, string) { return Touched(in) }
-
 // Namespace is the Nucleus namespace a nucleus pass writes.
 func Namespace(in Input) string {
 	if ns := in.StringOption("namespace", ""); ns != "" {

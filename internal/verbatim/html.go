@@ -21,7 +21,36 @@ var (
 	tagRE         = regexp.MustCompile(`(?s)<[^>]+>`)
 	blankRunRE    = regexp.MustCompile(`\n{3,}`)
 	htmlAttrRE    = regexp.MustCompile(`(\w[\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	tagOpenRE     = regexp.MustCompile(`<([A-Za-z/!?])`)
 )
+
+func neutralizeTags(s string) string {
+	parts := strings.Split(s, "`")
+	for i := range parts {
+		if i%2 == 0 || i == len(parts)-1 {
+			parts[i] = tagOpenRE.ReplaceAllString(parts[i], "&lt;$1")
+		}
+	}
+	return strings.Join(parts, "`")
+}
+
+func unsafeURL(u string) bool {
+	clean := strings.Map(func(r rune) rune {
+		if r <= ' ' || r == 0x7f {
+			return -1
+		}
+		return r
+	}, html.UnescapeString(u))
+	scheme, _, ok := strings.Cut(strings.ToLower(clean), ":")
+	if !ok || strings.ContainsAny(scheme, "/?#") {
+		return false
+	}
+	switch scheme {
+	case "javascript", "vbscript", "data", "file":
+		return true
+	}
+	return false
+}
 
 func htmlAttrs(s string) map[string]string {
 	out := map[string]string{}
@@ -72,5 +101,5 @@ func (c *converter) htmlToMarkdown(raw string) string {
 	}
 	s = strings.Join(lines, "\n")
 	s = blankRunRE.ReplaceAllString(s, "\n\n")
-	return strings.TrimSpace(s)
+	return strings.TrimSpace(neutralizeTags(s))
 }

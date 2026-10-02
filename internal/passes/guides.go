@@ -26,9 +26,6 @@ type Guides struct{}
 // Kind is guides.
 func (Guides) Kind() string { return config.KindGuides }
 
-// Touched applies the guides skip rule.
-func (Guides) Touched(_ context.Context, in Input) (bool, string) { return Touched(in) }
-
 // Candidate is a page the change set may affect.
 type Candidate struct {
 	PageID  string   `json:"pageId"`

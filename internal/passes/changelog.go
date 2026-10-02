@@ -25,9 +25,6 @@ type Changelog struct{}
 // Kind is changelog.
 func (Changelog) Kind() string { return config.KindChangelog }
 
-// Touched applies the changelog skip rule: commits in range.
-func (Changelog) Touched(_ context.Context, in Input) (bool, string) { return Touched(in) }
-
 // NothingUnreleased is the Unreleased page body when every change shipped.
 const NothingUnreleased = "Nothing unreleased yet."
 

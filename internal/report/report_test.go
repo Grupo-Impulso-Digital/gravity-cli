@@ -127,3 +127,55 @@ func TestAppendFile(t *testing.T) {
 		t.Fatalf("%q", data)
 	}
 }
+
+func TestUpsertOnlyUpdatesItsOwnComment(t *testing.T) {
+	marker := report.Marker("r")
+	var patched []string
+	var posted int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			w.WriteHeader(http.StatusForbidden)
+		case r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode([]any{
+				map[string]any{"id": 1, "body": marker + "\nfake", "user": map[string]any{"login": "mallory", "type": "User"}},
+				map[string]any{"id": 7, "body": marker + "\nreal", "user": map[string]any{"login": "github-actions[bot]", "type": "Bot"}},
+			})
+		case r.Method == http.MethodPatch:
+			patched = append(patched, r.URL.Path)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 7, "html_url": "https://gh/c/7"})
+		case r.Method == http.MethodPost:
+			posted++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 9, "html_url": "https://gh/c/9"})
+		}
+	}))
+	defer srv.Close()
+	gh := report.GitHub{API: srv.URL, Token: "t", Repo: "acme/x"}
+	url, err := gh.Upsert(context.Background(), 3, marker, "body", true)
+	if err != nil || url != "https://gh/c/7" || len(patched) != 1 || !strings.HasSuffix(patched[0], "/comments/7") || posted != 0 {
+		t.Fatalf("url=%q err=%v patched=%v posted=%d", url, err, patched, posted)
+	}
+}
+
+func TestUpsertIgnoresAMarkerPostedBySomeoneElse(t *testing.T) {
+	marker := report.Marker("r")
+	var posted int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			_ = json.NewEncoder(w).Encode(map[string]any{"login": "ci-user", "type": "User"})
+		case r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode([]any{map[string]any{"id": 1, "body": marker, "user": map[string]any{"login": "mallory", "type": "User"}}})
+		case r.Method == http.MethodPatch:
+			t.Errorf("patched someone else's comment")
+		case r.Method == http.MethodPost:
+			posted++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 9, "html_url": "https://gh/c/9"})
+		}
+	}))
+	defer srv.Close()
+	gh := report.GitHub{API: srv.URL, Token: "t", Repo: "acme/x"}
+	if url, err := gh.Upsert(context.Background(), 3, marker, "body", true); err != nil || url != "https://gh/c/9" || posted != 1 {
+		t.Fatalf("url=%q err=%v posted=%d", url, err, posted)
+	}
+}

@@ -95,6 +95,10 @@ func (c *converter) warn(format string, args ...any) {
 }
 
 func (c *converter) link(dest string) string {
+	if unsafeURL(dest) {
+		c.warn("link %s uses a scheme that is not allowed; replaced with #", clipURL(dest))
+		return "#"
+	}
 	if c.opts.Link == nil {
 		return dest
 	}
@@ -102,6 +106,10 @@ func (c *converter) link(dest string) string {
 }
 
 func (c *converter) image(src string) (string, bool) {
+	if unsafeURL(src) {
+		c.warn("image %s uses a scheme that is not allowed; dropped", clipURL(src))
+		return "", false
+	}
 	if c.opts.Image == nil {
 		return src, src != ""
 	}
@@ -110,6 +118,13 @@ func (c *converter) image(src string) (string, bool) {
 		c.warn("image %s not found; dropped", src)
 	}
 	return u, ok
+}
+
+func clipURL(u string) string {
+	if len(u) > 40 {
+		return u[:40] + "…"
+	}
+	return u
 }
 
 func (c *converter) binding() *api.SourceBinding {

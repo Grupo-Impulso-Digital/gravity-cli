@@ -3,6 +3,7 @@ package passes_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
@@ -164,5 +165,56 @@ func TestReferencePerOperationDeletesRemovedPagesAndDryRunRecords(t *testing.T) 
 	}
 	if len(rec.Recorded().Changes) != len(w.changes) || len(rep.Impact) != len(w.changes) {
 		t.Fatalf("dry run must record the same changes: %d vs %d, impact %d", len(rec.Recorded().Changes), len(w.changes), len(rep.Impact))
+	}
+}
+
+const legacySpec = `openapi: 3.0.0
+info: {title: Legacy API, version: 1.0.0}
+paths:
+  /v1/old:
+    get:
+      tags: [Legacy]
+      summary: Old endpoint
+      responses: {'200': {description: ok}}
+`
+
+const traceSpec = specV2 + `  /v1/debug:
+    trace:
+      tags: [Charges]
+      summary: Trace
+      responses: {'200': {description: ok}}
+`
+
+func TestReferenceRemovesOperationsOfADeletedSpecAndSkipsTrace(t *testing.T) {
+	r := newRepo(t)
+	base := r.commit("specs", map[string]string{"api/openapi.yaml": specV2, "api/legacy.yaml": legacySpec})
+	head := r.commit("drop legacy", map[string]string{"api/openapi.yaml": traceSpec, "api/legacy.yaml": ""})
+	fake := newFakeAPI()
+	v2 := apiBlocks(t, specV2)
+	legacy := apiBlocks(t, legacySpec)
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_legacy", Slug: "legacy", Title: "Legacy"}, Blocks: []api.PageBlock{pageBlock(legacy["api:GET:/v1/old"])}})
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_ref", Slug: "refunds", Title: "Refunds"}, Blocks: []api.PageBlock{pageBlock(v2["api:POST:/v1/refunds"])}})
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_chg", Slug: "charges", Title: "Charges"}, Blocks: []api.PageBlock{pageBlock(v2["api:GET:/v1/charges"])}})
+	m := &config.Manifest{Version: 2, Code: &config.Code{OpenAPI: []string{"api/*.yaml"}}}
+	w := &writes{}
+	rep, err := passes.Reference{}.Run(context.Background(), input(t, r, fake, planPass(config.KindReference, "developer-api", nil), m, base, head, api.ModeWrite), sink(w))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.changes) != 1 {
+		t.Fatalf("only the legacy page changes: %+v", w.changes)
+	}
+	c := w.changes[0]
+	if c.Op != api.OpUpdate || c.Target.PageID != "pg_legacy" || len(c.RemoveBlockKeys) != 1 || c.RemoveBlockKeys[0] != "api:GET:/v1/old" {
+		t.Fatalf("operations of a deleted spec must be removed: %+v", c)
+	}
+	var traced bool
+	for _, warn := range rep.Warnings {
+		if strings.Contains(warn, "TRACE /v1/debug skipped") {
+			traced = true
+		}
+	}
+	if !traced {
+		t.Fatalf("a TRACE operation is skipped with a warning: %v", rep.Warnings)
 	}
 }
