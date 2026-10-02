@@ -19,7 +19,7 @@ One-way layering — dependencies always point downward. **The capability and
 foundation packages never import `internal/cli`.**
 
 ```
-cmd/gravity            entrypoint: signal-aware context + version wiring
+cmd/gravity            entrypoint: signal-aware context
   └─ internal/cli      cobra command tree, config resolution, exit codes (orchestration)
        ├─ internal/api      HTTP client: REST endpoints + LLM gateway (Messages subset)
        ├─ internal/agent    tool-using loop + sandboxed read-only git tools + submit tools
@@ -29,6 +29,7 @@ cmd/gravity            entrypoint: signal-aware context + version wiring
        ├─ internal/output   text / json / github findings formatters
        ├─ internal/config   flag/env/file precedence + typed .gravity.yaml manifest
        ├─ internal/prompts  system prompts for the release-notes/docs-gap/nucleus agents
+       ├─ internal/version  the single version variable (ldflags stamp, else build info)
        └─ internal/pathsafe  repo-root path validation (leaf, stdlib-only)
 ```
 
@@ -66,8 +67,11 @@ git tag v0.1.0 && git push origin v0.1.0   # → cross-compiled release
 That builds static binaries for `{linux,darwin,windows} × {amd64,arm64}`,
 uploads the archives + `checksums.txt` as GitHub Release assets, and publishes
 the Homebrew cask (`Grupo-Impulso-Digital/homebrew-tap`) and Scoop manifest
-(`Grupo-Impulso-Digital/scoop-bucket`). Version is stamped via `-X main.version={{.Version}}`,
-the same symbol the Makefile sets.
+(`Grupo-Impulso-Digital/scoop-bucket`). Version is stamped via
+`-X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{.Version}}`,
+the same symbol the Makefile sets; an unstamped `go install` build falls back to
+`debug.ReadBuildInfo`. That one variable feeds `gravity version`, the ping
+payload, generator stamps and the HTTP `User-Agent`.
 
 - **Validate config changes** with `goreleaser check`, and dry-run the whole
   pipeline with `goreleaser release --snapshot --clean --skip=publish` (writes
@@ -89,10 +93,11 @@ the same symbol the Makefile sets.
 
 ## Coding standard
 
-- **Comments explain *why*, not *what*.** Document contracts, security
-  rationale, and non-obvious decisions; don't narrate the code. Exported symbols
-  get a doc comment that starts with the symbol name (`revive`'s `exported` rule
-  enforces this).
+- **Code is comment-free.** Write no narrative or explanatory comments. Keep
+  only what tooling requires: the one-line package doc, a one-line doc comment
+  on exported symbols (`revive`'s `exported` rule), `//go:` directives, and
+  `//nolint:x // reason`. Never edit string literals that merely look like
+  comments (prompts, YAML templates).
 - **Errors.** `errors.New` for static messages; `fmt.Errorf("…: %w", err)` to
   wrap an underlying error (preserve the chain — `errorlint` guards it). Error
   strings are lowercase and unpunctuated. No `panic` in non-test code.
@@ -129,9 +134,19 @@ the same symbol the Makefile sets.
   any new interactive flow.
 - **Testing**: stdlib `testing` + `httptest` mocks, table-driven where it fits.
   No live-server integration tests.
-- **Greenfield degradation**: preview features (`capture`, `nucleus`) gate on
-  `(*APIError).IsUnavailable()` → notice + skip (exit `0`) unless `--require`.
-  Keep new preview features degrading the same way.
+- **Feature availability comes from `/whoami` features only**
+  (`env.gateFeature`): an unadvertised feature → notice + skip (exit `0`)
+  unless `--require`. A 404 is never a missing feature: `explainNotFound` turns
+  it into `site '<slug>' not found` / `space '<slug>' not found` with the
+  available slugs (exit `2`). `(*APIError).IsUnavailable()` only honours the
+  server's explicit `501` / `not_implemented` / `feature_disabled` /
+  `unknown_route` answers.
+- **CI mode** (`--ci`, or `CI=true`): never prompt, plain ASCII output
+  (`plainWriter`). Don't add a command-local `--ci` flag; it shadows the global.
+- **Manifest**: `.gravity.yaml` is decoded strictly (`config.ParseProject`); add a
+  key by adding the typed field. Retire a key through `removedKeys` so loads fail
+  clearly and `init --migrate` drops it. `init` renders the file from the typed
+  `config.Project` (`renderManifest`), so every field round-trips.
 
 ## Recipes
 
@@ -148,18 +163,20 @@ the same symbol the Makefile sets.
 
 ## Known limitations / deliberate decisions
 
-- **`read_file` reads from `HEAD`**, not the working tree, so uncommitted-but-
-  tracked edits aren't visible to that one tool. This keeps it deterministic in
-  CI (clean checkout) and avoids reading untracked files; use `git_show` for
-  other refs.
+- **`read_file` reads at the end of the range under review** (`--to`, else
+  `HEAD`), not the working tree, so uncommitted-but-tracked edits aren't visible
+  to that one tool. This keeps it deterministic in CI (clean checkout) and
+  avoids reading untracked files; use `git_show` for other refs.
 - **`check api --openapi` "changed" detection compares the `summary` field.**
   Param-level diffing is intentionally deferred — `params` is provider-defined
   (`json.RawMessage`) and a naive structural diff would be noisy.
 - **No live integration tests** — server interactions are exercised via
   `httptest` mocks.
-- **The agent loop uses `tool_choice: auto`** and trusts the model to call the
-  terminal submit tool; if it never does, the loop hits its cap and the command
-  reports it could not obtain a structured result (exit `2`).
+- **The agent loop uses `tool_choice: auto` until the last turn**, then forces
+  the terminal submit tool (`tool_choice: {type: tool}`); it also forces it once
+  after the model ends a turn without submitting and after the tool-call budget
+  runs out. Only if even the forced turn fails does the command report it could
+  not obtain a structured result (exit `2`).
 - **`gosec` is intentionally not enabled yet** — the git `exec.Command` and the
   computed-path `os.ReadFile` sites are already sandboxed; revisit with targeted
   excludes before turning it on.

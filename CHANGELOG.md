@@ -1,0 +1,90 @@
+# Changelog
+
+## v0.3.0 — Unreleased
+
+Stop-the-bleeding release for current v0.2 users: no new architecture, every
+fix below is backward compatible with a valid v0.2 `.gravity.yaml` except the
+two removed keys (run `gravity init --migrate` to drop them).
+
+### Fixed
+
+- `release-notes` posts into `releaseNotes.space` (default `changelog`) instead
+  of `spaces.default`; `--space` overrides it. `--output file` writes
+  `releaseNotes.changelog` (default `CHANGELOG.md`) unless `--changelog` is given.
+- `sync` honours `--space` and `GRAVITY_SPACE` as an override of
+  `spaces.default`; mappings with their own `space:` keep it.
+- A mistyped site is no longer "not yet available; skipping" with exit `0`: a
+  404 reports `site '<slug>' not found` (or `space '<slug>' not found`) with the
+  slugs you can use, and exits `2`. Feature availability comes only from the
+  features `/whoami` advertises.
+- Non-JSON error bodies (HTML gateway pages, plain text) are summarized to the
+  status and the page title or first line instead of being dumped.
+- Raw git stderr is humanized: `not a git repository — run inside your repo`,
+  `unknown git ref "<ref>" — … fetch full history`, `this repository has no
+  commits yet`.
+- An empty commit range is a clean no-op (`no commits in range …; nothing to
+  do`, exit `0`) for `release-notes`, `nucleus sync` and `check docs --ai`, and
+  spends no LLM call.
+- `check api` diffs the OpenAPI specs mapped under `sources[]` when `--openapi`
+  is absent, and both `check api` and `check docs` are scoped to this repo's
+  pages (attributed pages, else the spaces `.gravity.yaml` declares, else
+  `--space`). `check docs` never falls back to the whole site.
+- The docs-gap agent and the docs author receive the actual (bounded) text of
+  the pages they judge or rewrite, not just titles and block types.
+- The agent loop forces the terminal submit tool on its final turn, after the
+  model ends a turn without submitting, and after the tool-call budget runs out,
+  so a run no longer ends empty-handed at its cap.
+- The docs-plan phase gets a 16k-token output budget (was 4k, which truncated
+  large inventories).
+- `read_file` reads files at the end of the range under review (`--to`) instead
+  of always at `HEAD`.
+- `doctor` and `auth status` no longer print `(unset) (unset)`; unset values say
+  `not set` and how to set them.
+- `init --migrate` is lossless: `spaces.declare`, `discovery`, `i18n`,
+  `coverage`, `knowledge`, collections and document versions all survive. It
+  converts the legacy top-level `space:` and reports every key it drops.
+- `init` no longer sets `releaseNotes.space` to the docs space.
+
+### Changed
+
+- A licence refusal (`module_disabled`, `seat_limit`) exits `3` with a message
+  that names the module and says to ask an administrator, distinct from an auth
+  or network error (`2`).
+- `.gravity.yaml` is parsed strictly: an unknown key fails with its line and a
+  "did you mean" suggestion.
+- Removed manifest keys `sources[].generator` and `knowledge.scope` (neither was
+  ever used); they now fail with a clear message. `kind: code` is no longer
+  advertised by the scaffold.
+- `init --yes` detects OpenAPI specs and documentation Markdown (`README.md`,
+  `docs/**`) and maps them, skipping `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING*`,
+  `CODE_OF_CONDUCT*`, `LICENSE*`, `SECURITY*`, `CHANGELOG*`, `.github/**`,
+  `node_modules`, `vendor` and `dist`. The wizard no longer asks for the API URL
+  (pass `--api-url` for a self-hosted platform), explains what `role` does,
+  preselects only `README.md` and `docs/**`, and no longer creates spaces on the
+  platform — `sync` does. New `init --dry-run` prints the file without writing.
+- `--ci` is one global flag on every command, also switched on by `CI=true`:
+  never prompt, plain ASCII output without emoji or tree glyphs. The per-command
+  `--ci` flags are gone.
+- `--json` is accepted by every reporting command: new on `release-notes`,
+  `sync` and `docs generate`; a shorthand for `--format json` on `check`,
+  `coverage`, `capture` and `nucleus query`.
+- One version variable (`internal/version`), stamped at build time with a
+  `debug.ReadBuildInfo` fallback for `go install` builds, and sent in a
+  versioned `User-Agent` (`gravity-cli/<version> (<os>/<arch>)`).
+
+### CI templates
+
+- The GitHub composite action downloads the prebuilt release binary through
+  `install.sh` (`version` input, default `latest`, cached per release) instead of
+  installing Go and building on every run. `--format` is appended only for
+  `check api`, `check docs` and `coverage`; `api-url` and `site` default to empty
+  so `.gravity.yaml` wins. `version: source` builds from the action checkout.
+- The GitLab and Bitbucket templates stop hardcoding `GRAVITY_SITE`,
+  `GRAVITY_API_URL` and `--space changelog`, install the release binary, and
+  move the `docs-synced` marker after a successful generate so later runs stay
+  incremental.
+
+## v0.2.2
+
+- Reject the marketing site as the API URL.
+- Default to the API host, `api.gravitydocs.io`.

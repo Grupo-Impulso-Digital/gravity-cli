@@ -71,7 +71,7 @@ gravity auth login --token sk_live_xxx
 
 # 2. Configure ./.gravity.yaml for this repo with the interactive wizard
 #    (detects OpenAPI specs + Markdown docs and offers to map them).
-#    Use --yes for a non-interactive scaffold in CI.
+#    --yes detects and maps them without asking; --dry-run previews the file.
 gravity init
 
 # 3. Verify config, token, and gateway model
@@ -83,6 +83,7 @@ gravity doctor
 Connection values are resolved with this precedence (**highest first**):
 
 1. **flags** — `--token`, `--api-url`, `--site`, `--space`, ...
+   (`--space` and `GRAVITY_SPACE` override `spaces.default`)
 2. **environment** — `GRAVITY_TOKEN`, `GRAVITY_API_URL`, `GRAVITY_SITE`,
    `GRAVITY_SPACE`, `GRAVITY_KNOWLEDGE_NAMESPACE`
 3. **project file** — `./.gravity.yaml`
@@ -104,16 +105,29 @@ silently honored.
 ```yaml
 version: 1
 site: docs
-apiUrl: https://api.gravitydocs.io
 product:
   slug: acme-platform   # a product can span several repos sharing one site
   repo: billing-api     # this repo's unique name within the product
 spaces:
   default: billing-api
-# sources:   — OpenAPI/code → machine-owned, drift-locked doc blocks
-# documents: — Markdown files → pages or releases
-# knowledge: — nucleus memory namespace shared across the product's repos
+sources:                # OpenAPI specs -> machine-owned, drift-locked api blocks
+  - source: openapi/openapi.yaml
+    kind: openapi
+    page: api-reference
+documents:              # Markdown files -> pages or releases
+  - file: README.md
+    page: overview
+releaseNotes:           # optional; these are the defaults
+  space: changelog
+  changelog: CHANGELOG.md
+# knowledge.namespace — nucleus memory namespace shared across the product's repos
 ```
+
+The file is parsed **strictly**: an unknown key is an error that names its line
+and suggests the key you probably meant (`unknown key "relaseNotes" — did you
+mean "releaseNotes"?`). Keys removed in v0.3 (`sources[].generator`,
+`knowledge.scope`) fail with a clear message; `gravity init --migrate` drops them
+for you. `apiUrl` is only needed for a self-hosted platform.
 
 #### Multi-repo products: subspaces, shared spaces, home pages
 
@@ -200,22 +214,25 @@ diffs, and emit structured, user-facing notes grouped into sections
 (Added/Changed/Fixed/Removed/Security/Breaking).
 
 ```bash
-# Default: latest tag..HEAD, post a draft + proposal, print the review URL
-gravity release-notes --site docs --space changelog
+# Default: latest tag..HEAD, post a draft + proposal into releaseNotes.space
+gravity release-notes
 
 # Explicit range, just print markdown
 gravity release-notes --from v1.2.0 --to HEAD --output stdout
 
-# Prepend to CHANGELOG.md
+# Prepend to releaseNotes.changelog (default CHANGELOG.md)
 gravity release-notes --output file
 
 # Preview the structured notes without writing or posting
 gravity release-notes --dry-run
 ```
 
-Key flags: `--site`, `--space` (default `changelog`), `--from`, `--to`,
-`--output proposal|file|stdout` (default `proposal`), `--dry-run`, `--title`,
-`--ci`.
+Key flags: `--site`, `--space` (default: `releaseNotes.space`, else
+`changelog` — never `spaces.default`), `--from`, `--to`,
+`--output proposal|file|stdout` (default `proposal`), `--changelog` (default:
+`releaseNotes.changelog`, else `CHANGELOG.md`), `--dry-run`, `--title`, `--json`.
+An empty commit range prints `no commits in range …; nothing to do` and exits `0`
+without spending an LLM call.
 
 The model finishes by calling the `submit_release_notes` tool; `--output
 proposal` POSTs to the platform and prints the review URL (it creates a **draft
@@ -226,37 +243,48 @@ proposal` POSTs to the platform and prints the review URL (it creates a **draft
 Pull the documented API blocks for the site and compare them to the source.
 
 ```bash
-# Diff against an OpenAPI spec
-gravity check api --site docs --openapi openapi.yaml --format github
+# Diff every OpenAPI spec mapped under sources[] in .gravity.yaml
+gravity check api --format github
 
-# No spec: verify each block's source-binding hash against the repo file
-gravity check api --site docs
+# Diff one spec of your choice instead
+gravity check api --openapi openapi.yaml
+
+# No spec mapped: verify each block's source-binding hash against the repo file
+gravity check api
 ```
 
-- **With `--openapi`**: builds the set of spec operations (method+path) and
-  diffs them against the documented blocks, producing `undocumented` (in spec,
-  not in docs), `orphaned` (in docs, not in spec), and `changed` (summary
-  differs) findings.
-- **Without `--openapi`**: for each block whose `sourceBinding` has a `hash` and
-  a `ref` that resolves to a file in the repo, recompute the file's sha256 and
+- **With specs** (the `sources[]` OpenAPI mappings, or `--openapi`): builds the
+  set of spec operations (method+path) and diffs them against the documented
+  blocks of that spec's page, producing `undocumented` (in spec, not in docs),
+  `orphaned` (in docs, not in spec), and `changed` (summary differs) findings.
+- **Without any spec**: for each block whose `sourceBinding` has a `hash` and a
+  `ref` that resolves to a file in the repo, recompute the file's sha256 and
   flag `stale` on mismatch. Blocks without a verifiable binding are **skipped
   and counted** (never silently).
+- **Scope**: only this repo's blocks — the pages the platform attributes to it,
+  or, before any attribution exists, the spaces `.gravity.yaml` declares
+  (`--space` overrides). Another repo's API blocks are never reported as orphans.
 
-Flags: `--site`, `--openapi <path>`, `--ci`, `--format text|json|github`.
+Flags: `--site`, `--space`, `--openapi <path>`, `--format text|json|github`, `--json`.
 
 ### `gravity check docs`
 
-Pull published page snapshots and verify machine/hybrid blocks whose source
+Pull this repo's page snapshots and verify machine/hybrid blocks whose source
 binding has a `hash` + repo-resident `ref`, flagging stale mismatches. With
-`--ai`, additionally run the docs-gap agent over the `from..to` diff plus a
-digest of the current docs; deterministic and AI findings are merged.
+`--ai`, additionally run the docs-gap agent over the `from..to` diff plus the
+(bounded) text of this repo's pages; deterministic and AI findings are merged.
 
 ```bash
-gravity check docs --site docs
-gravity check docs --site docs --ai --from v1.2.0 --to HEAD
+gravity check docs
+gravity check docs --ai --from v1.2.0 --to HEAD
 ```
 
-Flags: `--site`, `--from`, `--to`, `--ai`, `--ci`, `--format text|json|github`.
+Only this repo's pages are checked: the ones the platform attributes to it, or,
+before any attribution exists, the spaces `.gravity.yaml` declares (`--space`
+overrides). It never falls back to the whole site; with neither attribution nor
+a manifest it exits `2` and says so. An empty `--ai` range skips the AI pass.
+
+Flags: `--site`, `--space`, `--from`, `--to`, `--ai`, `--format text|json|github`, `--json`.
 
 ### `gravity spaces`
 
@@ -321,8 +349,13 @@ Like every write path, `sync` creates a **draft + open proposal** and never
 publishes. Authoring exits `0` (ok) or `2` (error) — findings (`1`) stay
 exclusive to `check`.
 
+`--space <slug>` (or `GRAVITY_SPACE`) overrides `spaces.default`: every mapping
+that names no space of its own lands there; mappings with an explicit `space:`
+keep it. `--json` prints the plan and results as JSON (human progress goes to
+stderr); with `--dry-run` it prints the payloads that would be posted.
+
 Flags: `--only api|docs`, `--page <slug>`, `--space <slug>`,
-`--output proposal|stdout` (default `proposal`), `--dry-run`, `--ci`.
+`--output proposal|stdout` (default `proposal`), `--dry-run`, `--json`.
 
 ### `gravity docs generate` (preview)
 
@@ -388,8 +421,13 @@ look at).
 
 Flags: `--audiences <list>` (default all three), `--since <ref>`,
 `--units <kinds>`, `--no-inventory`, `--page <slug>`, `--space`, `--site`,
-`--output proposal|stdout`, `--dry-run`, `--require`, `--ci`, `--save <file>`,
-`--from <file>` (replay a saved set with no AI cost).
+`--output proposal|stdout`, `--dry-run`, `--require`, `--save <file>`,
+`--from <file>` (replay a saved set with no AI cost), `--json`.
+
+The author pass sees the current text of each page it rewrites (bounded per
+block and per page), the plan pass has a 16k-token output budget, and every
+agent is forced to call its submit tool on its final turn instead of running
+out of turns empty-handed.
 
 ### `gravity coverage`
 
@@ -399,7 +437,7 @@ Report how much of what this repo says it contains is actually documented.
 
 ```bash
 gravity coverage                      # this repo, text report
-gravity coverage --min 0.8 --ci       # fail CI below 80%
+gravity coverage --min 0.8            # fail CI below 80%
 gravity coverage --all --format json  # every repo publishing to the site
 gravity coverage --kind service       # only backend services
 gravity coverage --repo github.com/Acme/orbit-web   # a sibling repo
@@ -417,11 +455,13 @@ site is its own problem. The bar comes from `coverage.min` in `.gravity.yaml`
 unless `--min` overrides it, and every slug in `coverage.require` must exist on
 the site. Below the bar is a warning finding, a missing required page is an error
 finding; both exit `1`. Exit `0` at or above the bar, `2` on auth/network/config.
-Gated on the platform's `coverage` capability: absent, it reports that and exits
-`0` (`--require` to fail).
+Gated on the platform's `coverage` capability as advertised by `/whoami`: absent,
+it reports that and exits `0` (`--require` to fail). A 404 is never read as a
+missing feature — a mistyped site exits `2` with `site '<slug>' not found` and
+the slugs you can use.
 
 Flags: `--site <slug>`, `--repo <remoteKey>`, `--kind feature|service|system|api|capability`,
-`--min <0..1>`, `--all`, `--format text|json|github`, `--ci`, `--require`.
+`--min <0..1>`, `--all`, `--format text|json|github`, `--json`, `--require`.
 
 ### `gravity capture`
 
@@ -465,17 +505,25 @@ generation, strictly best-effort — it can never break those commands.
 
 ### Other commands
 
-- `gravity version` — print the version.
+- `gravity version` — print the version (the release stamp, or the module
+  version for a `go install` build). The same version travels in every request's
+  `User-Agent` (`gravity-cli/<version> (<os>/<arch>)`).
 - `gravity init` — write `.gravity.yaml` for this repo. Runs an interactive
-  wizard (connection, product/multi-repo identity, spaces) that **detects OpenAPI
-  specs and Markdown docs in the repo and offers to map them**, so `gravity sync`
-  has real `sources`/`documents` to author. When you're signed in (token via
-  `gravity auth login` or `GRAVITY_TOKEN`) it **lists your sites and the chosen
-  site's spaces to pick from** instead of typing them, and creates any new space
-  you name right away (idempotent); offline it falls back to free-text entry. Use
-  `--yes` (or a non-interactive shell) for flags/env without prompting (no network
-  calls); `--migrate` upgrades a legacy file in place, preserving its mappings.
-  Refuses to clobber an existing file unless `--force`.
+  wizard (site, product/multi-repo identity and role, default space) that
+  **detects OpenAPI specs and documentation Markdown and offers to map them**, so
+  `gravity sync` has real `sources`/`documents` to author: `README.md` and
+  `docs/**` are preselected, other Markdown is offered unticked, and
+  `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING*`, `CODE_OF_CONDUCT*`, `LICENSE*`,
+  `SECURITY*`, `CHANGELOG*`, `.github/**`, `node_modules`, `vendor` and `dist`
+  are never offered. When you're signed in it **lists your sites and the chosen
+  site's spaces to pick from**; offline it falls back to free-text entry. It
+  never creates anything on the platform — `gravity sync` creates the spaces.
+  `--yes` (or `--ci`, or a non-interactive shell) skips the questions and maps
+  what detection found (no network calls); `--dry-run` prints the file instead of
+  writing it; `--migrate` upgrades an existing file in place **losslessly**
+  (every section survives; keys removed in v0.3 are dropped and reported). The
+  API URL is recorded only when you pass `--api-url` (self-hosted). Refuses to
+  clobber an existing file unless `--force`.
 - `gravity auth login` — store the token in `~/.config/gravity/config.yaml`
   (`0600`). Pass `--token <sk>` (or set `GRAVITY_TOKEN`), or run it bare on a
   terminal to be prompted with **hidden input** so the secret never lands in your
@@ -488,8 +536,9 @@ generation, strictly best-effort — it can never break those commands.
 - `gravity auth logout` — remove the stored credentials file (clear or rotate the
   token); warns if `GRAVITY_TOKEN` is still set in the environment.
 - `gravity doctor` — validate `.gravity.yaml`, print the resolved configuration
-  (and where each value came from), then check token/org/model/provider-key via
-  `/whoami` + `/llm/v1/config`. Exits `2` on a config, auth, or network failure.
+  (and where each value came from, or `not set — <how to set it>`), then check
+  token/org/model/provider-key via `/whoami` + `/llm/v1/config`. Exits `2` on a
+  config, auth, or network failure.
 - `gravity ping` — send a one-shot setup handshake to `/api/v1/setup/ping` so the
   Gravity web app (after guiding you through install + `gravity init`) can confirm
   the token works, **and register this repo against the site it publishes to**. It
@@ -518,13 +567,25 @@ generation, strictly best-effort — it can never break those commands.
 | ---- | -------- |
 | `0`  | success / no findings |
 | `1`  | findings (drift, gaps, stale bindings, coverage below the bar) |
-| `2`  | error (auth, network, bad input) |
+| `2`  | error (auth, network, bad input, unknown site or space) |
 | `3`  | license refusal — the workspace's licence doesn't include the module this command needs (`module_disabled`, e.g. the `cli` module) or its seats are used up (`seat_limit`). The message names the module; ask a workspace administrator. |
+
+Errors read as sentences, not dumps: a non-JSON error page is summarized to its
+status and title or first line, git failures are humanized (`not a git
+repository — run inside your repo`, `unknown git ref "v9" — … fetch full
+history`), and an empty commit range is a no-op that exits `0`.
 
 ## CI
 
 See [`ci/README.md`](ci/README.md) for ready-to-use GitHub Actions, GitLab CI,
-and Bitbucket Pipelines snippets. `GRAVITY_TOKEN` is the secret.
+and Bitbucket Pipelines snippets. `GRAVITY_TOKEN` is the secret; everything else
+comes from `.gravity.yaml`.
+
+`--ci` is a global flag every command accepts, and it turns on by itself when
+`CI=true` (every major CI sets it): no prompts, plain ASCII output with no emoji
+or tree glyphs. `--json` is accepted by every reporting command (`ping`,
+`repos`, `spaces`, `release-notes`, `sync`, `docs generate`, `check`, `coverage`,
+`capture`, `nucleus query`).
 
 ## Development
 
