@@ -4,8 +4,6 @@ import (
 	"errors"
 
 	"github.com/spf13/cobra"
-
-	engine "github.com/Grupo-Impulso-Digital/gravity-cli/internal/run"
 )
 
 var failOnCategories = map[string]bool{"drift": true, "coverage": true, "claims": true, "verbatim": true}
@@ -41,7 +39,7 @@ func newCheckCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := engine.Execute(ctx, a.runEnv(s), s.opts)
+			res, err := a.execute(ctx, s)
 			if res != nil && res.Plan != nil {
 				a.printRun(res, s.info)
 			}

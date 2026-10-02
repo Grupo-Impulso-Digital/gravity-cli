@@ -15,6 +15,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/auth"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ci"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/cisetup"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/plan"
@@ -45,6 +46,17 @@ type app struct {
 	configure   func(*api.Client)
 	sleep       func(context.Context, time.Duration) error
 	ui          *ui.Printer
+
+	prompts      ui.Prompter
+	secretRunner cisetup.Runner
+	clock        func() time.Time
+}
+
+func (a *app) now() time.Time {
+	if a.clock != nil {
+		return a.clock()
+	}
+	return time.Now()
 }
 
 func newApp() *app {

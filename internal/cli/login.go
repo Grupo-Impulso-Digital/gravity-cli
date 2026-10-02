@@ -36,8 +36,9 @@ func newLoginCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Sign in with your browser (device flow) and store a profile",
-		Long:  "Sign in with your browser: gravity shows a code, you approve it in the Gravity app, and the token is stored in ~/.config/gravity/profiles.yaml.\nUse --with-token to store a token read from stdin instead (for example a repository token on a dev machine).",
-		Args:  cobra.NoArgs,
+		Long: "Sign in with your browser: gravity shows a code, opens the approval page, waits for you to approve it in the Gravity app, and stores the token in ~/.config/gravity/profiles.yaml (one profile per organization).\n" +
+			"Headless: --token <token> (or --with-token, reading it from stdin) verifies a token and stores it instead, for example a repository token on a dev machine.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			data, err := a.login(cmd.Context(), o)
 			if err != nil {
@@ -68,9 +69,16 @@ func (a *app) login(ctx context.Context, o loginOptions) (*loginData, error) {
 	}
 	var prof auth.Profile
 	var org *api.OrgRef
-	if o.withToken {
-		prof, org, err = a.loginWithToken(ctx, creds)
-	} else {
+	switch {
+	case a.gf.token != "":
+		prof, org, err = a.loginWithToken(ctx, creds, a.gf.token)
+	case o.withToken:
+		var token string
+		if token, err = readToken(a.stdin); err != nil {
+			return nil, Fail(CodeError, err)
+		}
+		prof, org, err = a.loginWithToken(ctx, creds, token)
+	default:
 		prof, org, err = a.deviceLogin(ctx, creds, o)
 	}
 	if err != nil {
@@ -102,10 +110,9 @@ func (a *app) login(ctx context.Context, o loginOptions) (*loginData, error) {
 	}, nil
 }
 
-func (a *app) loginWithToken(ctx context.Context, creds auth.Credentials) (auth.Profile, *api.OrgRef, error) {
-	token, err := readToken(a.stdin)
-	if err != nil {
-		return auth.Profile{}, nil, Fail(CodeError, err)
+func (a *app) loginWithToken(ctx context.Context, creds auth.Credentials, token string) (auth.Profile, *api.OrgRef, error) {
+	if auth.TokenKindOf(token) == "" {
+		return auth.Profile{}, nil, Failf(CodeError, "that does not look like a Gravity token (gr_user_, gr_repo_ or sk_live_)")
 	}
 	creds.Token = token
 	who, err := a.client(creds).WhoAmI(ctx)
@@ -153,6 +160,7 @@ func readToken(r io.Reader) (string, error) {
 func (a *app) deviceLogin(ctx context.Context, creds auth.Credentials, o loginOptions) (auth.Profile, *api.OrgRef, error) {
 	creds.Token = ""
 	client := a.client(creds)
+	var wait *ui.Progress
 	poll, err := auth.DeviceLogin(ctx, client, auth.DeviceLoginOptions{
 		Org: o.org,
 		Prompt: func(start *api.DeviceStart) {
@@ -162,16 +170,30 @@ func (a *app) deviceLogin(ctx context.Context, creds auth.Credentials, o loginOp
 			}
 			a.ui.Always("Your code: %s", a.ui.Bold(start.UserCode))
 			a.ui.Always("Approve it at %s", url)
+			opened := false
 			if !o.noBrowser && a.ui.Interactive() && a.openBrowser != nil {
-				if err := a.openBrowser(url); err == nil {
-					a.ui.Always("Opened your browser. Waiting for approval…")
-					return
+				opened = a.openBrowser(url) == nil
+			}
+			if a.ui.Interactive() {
+				wait = a.ui.StartProgress("", true)
+				label := "Waiting for approval…"
+				if opened {
+					label = "Opened your browser. Waiting for approval…"
 				}
+				wait.Begin(wait.Add(label))
+				return
+			}
+			if opened {
+				a.ui.Always("Opened your browser. Waiting for approval…")
+				return
 			}
 			a.ui.Always("Waiting for approval…")
 		},
 		Sleep: a.sleeper(),
 	})
+	if wait != nil {
+		wait.Stop()
+	}
 	if err != nil {
 		if errors.Is(err, api.ErrDeviceDenied) || errors.Is(err, api.ErrDeviceExpired) {
 			return auth.Profile{}, nil, Fail(CodeError, err)

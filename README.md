@@ -13,10 +13,11 @@ changes of one run are reviewed in the app as one bundle.
 > prints its replacement and exits `2`. Keep using gravity v0.3 until your
 > pipeline is migrated.
 
-> **This build is milestone C2 (passes).** `login`, `logout`, `whoami`,
-> `init` (minimal), `status`, `passes`, `explain`, `version`, `run`, `preview`
-> and `check` work end to end. The setup wizard (C3) and the 1.0 CI templates
-> (C4) are still to come.
+> **This build is milestone C3 (setup UX).** `login`, `logout`, `whoami`,
+> `init` (detection, at most three questions, CI wiring, token and secret),
+> `status`, `passes`, `explain`, `version`, `run`, `preview` and `check` work
+> end to end. The 1.0 GitHub action and per-provider PR comments (C4) are still
+> to come.
 
 ## Install
 
@@ -63,8 +64,9 @@ make build      # -> ./bin/gravity
 
 ```bash
 gravity login           # browser device flow; stores a profile in ~/.config/gravity/profiles.yaml
-gravity init            # connect this repository and write a minimal .gravity.yaml
-gravity status          # auth, product, passes, targets, watermarks, runs, health
+gravity init            # detect, suggest passes, write .gravity.yaml + the CI file, install the token
+gravity preview         # what every pass would write for your working tree
+gravity status          # auth, product, passes, targets, watermarks, runs, health, capability warnings
 gravity passes          # which passes apply to this branch and trigger
 gravity passes show developer-api
 ```
@@ -100,17 +102,70 @@ their local passes as an overlay (`gravity passes` marks them `repo (local)`).
 
 | Command | Purpose |
 | ------- | ------- |
-| `gravity login` | Device flow: shows a code, opens the approval page, stores the token. `--org`, `--no-browser`, `--with-token` (reads a token from stdin). |
+| `gravity login` | Device flow: shows a code, opens the approval page, waits for approval, stores the token in a profile named after the organization. `--org`, `--profile`, `--no-browser`; headless: `--token <token>` or `--with-token` (reads it from stdin). |
 | `gravity logout` | Revokes the current user token and removes its profile. `--all`. |
 | `gravity whoami` | Principal, organization, other organizations, token kind, scopes, expiry, API URL, profile. |
-| `gravity init` | Connects the repository (`POST /api/v1/repos/connect`) and writes `version: 2` when there is no manifest. `--product`, `--dry-run`. Never commits or pushes. |
-| `gravity status` | One view of the repository. `--runs N`, `--check` (exit `1` when health is not `live`). |
+| `gravity init` | Connects the repository in at most three questions (see below). `--yes`, `--product`, `--passes-as-code`, `--app-passes`, `--ci github\|gitlab\|bitbucket\|azure\|jenkins\|circleci\|none`, `--no-secret`, `--dry-run`, `--repo <id>`. Never commits or pushes. |
+| `gravity status` | One view of the repository: auth and profile, connection, manifest, passes with targets, locked flags, watermarks and last runs, recent runs, open bundles, tokens, health and capability warnings (expiring token, missing module, missing scopes, no AI provider). `--runs N`, `--check` (exit `1` when health is not `live`). |
 | `gravity passes` | `list` (default), `show <name>`, `edit <name>`. `--trigger`, `--branch`. |
 | `gravity explain <page>` | Provenance of every block of a page (page id, `site/space/page` or viewer URL). `--block <key>`. |
 | `gravity run` | The pipeline: plan, ranges, zero-cost scope skips, one leased run, passes, finish. `--pass`, `--trigger`, `--branch`, `--from`, `--to`, `--note`, `--dry-run`, `--lease-timeout`, `--parallel`, `--no-comment`, `--strict`. |
 | `gravity preview` | Every pass as a dry run over your working tree (or `--committed`): the pages that would change, the instructions the app composes, the cost. `--format text\|diff\|json`, `--open`. Never writes. |
 | `gravity check` | The pull request gate: check passes (or built-in drift and coverage) plus every pass's doc impact. Step summary, GitHub annotations and the PR comment (when `GITHUB_TOKEN` is set or `--comment`). `--fail-on`, `--annotate`. |
 | `gravity version` | Version, commit, build date, Go version, platform (also `--version`). |
+
+### `gravity init`
+
+```
+$ gravity init
+✓ Signed in as dave@acme.io · Acme
+✓ github.com/acme/billing-api · TypeScript · OpenAPI 3.1.0 (42 operations) · Next.js UI (18 routes) · 31 Markdown docs · GitHub Actions
+? Product › Acme Platform (gateway connected)                                   [1]
+? What should this repository keep up to date?   site: Developer Portal          [2]
+  ✓ Developer Portal › API        reference  ← OpenAPI api/openapi.yaml (42 operations)
+  ✓ Developer Portal › Guides     guides     ← Next.js routes in app (18)
+  ✓ Developer Portal › Changelog  changelog  ← tags v* (12 releases)  [new space]
+    Developer Portal › Handbook   verbatim   ← docs/handbook (9 files)  [new space]
+  ✓ Nucleus memory                nucleus
+    Change site… (now Developer Portal)
+Preview   (every file with its full content, passes, new spaces, token scopes, secret)
+? Write these and wire CI? › Write + set the secret (gh) · Write files only · Cancel   [3]
+✓ Connected billing-api with 4 passes        Try it now:  gravity preview
+```
+
+- Detection is local: the git remote, languages, OpenAPI/Swagger documents,
+  UI routes (Next.js, TanStack, React Router, SvelteKit, Nuxt/Vue, Angular),
+  server routes and cobra commands, Markdown folders, runbooks, release tags
+  and `CHANGELOG.md`, the CI provider, and an existing `.gravity.yaml`.
+- The product question is skipped when `--product`, the manifest or the
+  existing registration decides it; with no product in the organization a new
+  one is created silently. A repository that already has passes in the app
+  (or `--repo <id>`) skips straight to the write question.
+- Passes are registered in the app (editable there) unless you pass
+  `--passes-as-code`, which declares them in `.gravity.yaml` instead (locked
+  as "managed in repo" in the app). Targets the server flags are marked
+  "(needs approval)".
+- A v1 `.gravity.yaml` replaces the passes question with its conversion
+  report; the v2 file is written in place (passes-as-code, or `--app-passes`)
+  and the original is kept as `.gravity.v1.yaml.bak`. Converted verbatim
+  passes adopt the pages v0.x already synced.
+- The repository token carries exactly the scopes its passes need. It is
+  installed with `gh secret set` / `glab variable set` (on stdin, never in
+  argv) when that CLI is signed in to the remote's host, otherwise printed
+  once on stderr with where to paste it. CI files: GitHub
+  `.github/workflows/gravity.yml`, GitLab `.gitlab/gravity.yml` plus an
+  `include:` in `.gitlab-ci.yml`, Bitbucket `bitbucket-pipelines.yml`, Azure
+  `azure-pipelines.gravity.yml`; Jenkins and CircleCI snippets are printed.
+  Existing files are never overwritten.
+- `--yes` accepts every suggestion (required without a terminal);
+  `--dry-run` stops after the preview. A developer without
+  `docs.repos.manage` is told how to get the repository pre-registered instead
+  of being asked questions.
+
+On a terminal, prompts use `charmbracelet/huh` (`ACCESSIBLE=1` switches to its
+line-based mode), and `init`, `run`, `preview` and `check` show live per-step
+progress and a summary card with links. `--json`, `CI=true`, `NO_COLOR` and
+non-terminals get plain output.
 
 ### Global flags
 
@@ -180,12 +235,15 @@ no separate install. Contributor standards and architecture conventions live in
 ```
 cmd/gravity            entrypoint (signal-aware context)
 internal/cli           cobra command tree, global flags, output modes, exit codes
-internal/ui            output for terminals, CI logs and the --json envelope
+internal/ui            output for terminals, CI logs and the --json envelope; huh prompts, bubbletea progress, summary cards
 internal/auth          profiles.yaml, credential precedence, device login
-internal/config        manifest v2: strict parsing, embedded JSON Schema, did-you-mean, v1 detection
+internal/config        manifest v2: strict parsing, embedded JSON Schema, did-you-mean, v1 detection and conversion, token scopes
 internal/config/legacy v1 manifest model (input of the v1 conversion)
 internal/api           REST client for the CLI 1.0 contract + LLM gateway, error envelope, retries
 internal/ci            CI provider detection (GitHub, GitLab, Bitbucket, Azure, Jenkins, CircleCI, generic)
+internal/detect        local repository detection for init
+internal/setup         init suggestions: product ranking, target site, pass templates, spaces to create
+internal/cisetup       CI file templates per provider, gh/glab secret installers
 internal/plan          plan fetch, manifest overlay (the repository wins on declared passes), skip decisions
 internal/changeset     range resolution per trigger, ChangeSet, OpenAPI diff, symbols, unit mapping
 internal/normalize     product slugs, API unit keys, canonical JSON (shared golden fixtures)

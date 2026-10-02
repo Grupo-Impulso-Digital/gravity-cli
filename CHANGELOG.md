@@ -3,9 +3,34 @@
 ## v1.0.0 — Unreleased
 
 Clean break (R12): the v0.x command set and the v1 manifest are removed. This
-entry tracks milestones C1 (CLI core) and C2 (passes).
+entry tracks milestones C1 (CLI core), C2 (passes) and C3 (setup UX).
 
 ### Added
+
+- `gravity init` (C3): local detection (remote, languages, OpenAPI documents,
+  UI and server routes, docs folders, runbooks, releases, CI provider), at most
+  three questions (product, passes with the target site chosen inside the
+  question, write), a preview of every file, app-first pass registration or
+  `--passes-as-code`, missing spaces created through `createTargets`, a
+  repository token minted with exactly the scopes of its passes, the CI file
+  for GitHub, GitLab, Bitbucket or Azure (snippets for Jenkins and CircleCI),
+  and the secret installed with `gh`/`glab` on stdin or printed once to paste.
+  `--yes`, `--ci`, `--no-secret`, `--dry-run`, `--repo`, `--app-passes`.
+  A developer without `docs.repos.manage` gets the pre-registration hint
+  without being asked anything.
+- One-shot v1 conversion inside `gravity init`: every live v1 key is mapped or
+  reported, converted verbatim passes carry `adopt: true` and per-file
+  slug/title overrides, the original is kept as `.gravity.v1.yaml.bak`, and
+  converting the output again is a no-op.
+- `gravity status` adds the profile and token expiry, locked (repo-managed)
+  passes, and capability warnings: expiring or expired token, missing modules,
+  missing token scopes, no AI provider, server features a pass needs.
+- `gravity login --token <token>` stores a token headlessly; the device flow
+  shows a spinner while it waits for approval.
+- Terminal UI: `charmbracelet/huh` prompts (accessible mode with
+  `ACCESSIBLE=1`), live per-step progress (`bubbletea`) for `init`, `run`,
+  `preview` and `check`, and a summary card with links (`lipgloss`). Plain
+  output for `--json`, `CI=true`, `NO_COLOR` and non-terminals.
 
 - `gravity run`: connect, plan (dry runs overlay the branch's manifest by
   hash), per-pass ranges with `stale_head`, one ChangeSet per distinct base,
@@ -41,7 +66,7 @@ entry tracks milestones C1 (CLI core) and C2 (passes).
   a warning.
 
 - New command tree: `login` (device flow, `--with-token`), `logout`, `whoami`,
-  `init` (connect + minimal `version: 2` manifest), `status`, `passes`
+  `init`, `status`, `passes`
   (`list`, `show`, `edit`), `explain`, `version`.
 - Global flags `--profile`, `--api-url`, `--token`, `--manifest`, `-C`,
   `--json` (one envelope on stdout), `--no-color`, `-q`, `-v`.
@@ -81,7 +106,7 @@ entry tracks milestones C1 (CLI core) and C2 (passes).
   invoking one prints its replacement and exits `2`.
 - The global `--ci` and `--site` flags; CI mode follows `CI=true`.
 - The v1 manifest (`site`, `spaces`, `sources`, `documents`, ...): CLI 1.x
-  refuses it outside `gravity init`.
+  refuses it outside `gravity init`, which converts it.
 
 ## v0.3.0 — Unreleased
 

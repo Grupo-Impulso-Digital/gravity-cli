@@ -109,7 +109,7 @@ func TestManifestAPIURLNeverReceivesProfileToken(t *testing.T) {
 	delete(h.env, "GRAVITY_API_URL")
 	writeProfiles(t, h.config, "version: 2\ncurrent: acme\nprofiles:\n  acme:\n    apiUrl: https://api.gravitydocs.io\n    token: gr_user_secret\n    tokenKind: user\n")
 	h.write(".gravity.yaml", "version: 2\napiUrl: "+h.platform.srv.URL+"\n")
-	for _, args := range [][]string{{"status"}, {"passes"}, {"init"}, {"whoami"}, {"explain", "p_1"}} {
+	for _, args := range [][]string{{"status"}, {"passes"}, {"init", "--yes"}, {"whoami"}, {"explain", "p_1"}} {
 		expectCode(t, h, h.run(args...), 2)
 		if !strings.Contains(h.stderr.String(), "token was issued by https://api.gravitydocs.io") || !strings.Contains(h.stderr.String(), ".gravity.yaml apiUrl") {
 			t.Fatalf("%v stderr = %s", args, h.stderr.String())
@@ -509,80 +509,6 @@ func TestExplain(t *testing.T) {
 	expectCode(t, h, h.run("explain", "pg_1", "--block", "missing"), 2)
 }
 
-func TestInitDryRunAndWrite(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	expectCode(t, h, h.run("init", "--dry-run", "--product", "acme-platform"), 0)
-	if _, err := os.Stat(filepath.Join(h.dir, ".gravity.yaml")); !os.IsNotExist(err) {
-		t.Fatal("--dry-run must not write")
-	}
-	if !strings.Contains(h.stdout.String(), "+ .gravity.yaml (2 lines)") || !strings.Contains(h.stdout.String(), "product: acme-platform") {
-		t.Fatalf("preview = %s", h.stdout.String())
-	}
-	conn := h.platform.find("POST", "/api/v1/repos/connect")
-	if len(conn) != 1 || conn[0].Body["dryRun"] != true || conn[0].Body["context"].(map[string]any)["trigger"] != "init" || conn[0].Body["product"] != "acme-platform" {
-		t.Fatalf("connect = %+v", conn)
-	}
-	expectCode(t, h, h.run("init", "--product", "acme-platform"), 0)
-	data, err := os.ReadFile(filepath.Join(h.dir, ".gravity.yaml"))
-	if err != nil || string(data) != "version: 2\nproduct: acme-platform\n" {
-		t.Fatalf("manifest = %q %v", data, err)
-	}
-	conn = h.platform.find("POST", "/api/v1/repos/connect")
-	if len(conn) != 3 || conn[2].Body["dryRun"] != false {
-		t.Fatalf("connect calls = %d", len(conn))
-	}
-	if !strings.Contains(h.stdout.String(), "Connected billing-api to Acme Platform with 2 passes") {
-		t.Fatalf("out = %s", h.stdout.String())
-	}
-	if out, err := os.ReadFile(filepath.Join(h.dir, ".gravity.yaml")); err != nil || len(out) == 0 {
-		t.Fatal(err)
-	}
-	if _, err := config.Load(filepath.Join(h.dir, ".gravity.yaml")); err != nil {
-		t.Fatalf("written manifest must be valid: %v", err)
-	}
-}
-
-func TestInitWritesNothingWhenConnectFails(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	h.platform.handle("POST /api/v1/repos/connect", func(w http.ResponseWriter, _ *http.Request, body map[string]any) {
-		if body["dryRun"] == true {
-			_, _ = io.WriteString(w, connectBody)
-			return
-		}
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, `{"error":{"code":"forbidden","message":"Not allowed"}}`)
-	})
-	expectCode(t, h, h.run("init"), 2)
-	if _, err := os.Stat(filepath.Join(h.dir, ".gravity.yaml")); !os.IsNotExist(err) {
-		t.Fatal("a failed connect leaves no manifest behind")
-	}
-}
-
-func TestInitRefusesWithoutPermission(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	h.platform.json("GET /api/v1/whoami", 200, strings.Replace(whoamiUser, `"docs.read","docs.write","docs.repos.manage","docs.repos.tokens"`, `"docs.read"`, 1))
-	expectCode(t, h, h.run("init"), 2)
-	if !strings.Contains(h.stderr.String(), "can't connect repositories in Acme (role: editor)") {
-		t.Fatalf("stderr = %s", h.stderr.String())
-	}
-	if len(h.platform.find("POST", "/api/v1/repos/connect")) != 0 {
-		t.Fatal("no connect without permission")
-	}
-}
-
-func TestInitV1Manifest(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	h.write(".gravity.yaml", "site: docs\n")
-	expectCode(t, h, h.run("init", "--json"), 2)
-	if e := h.envelope()["error"].(map[string]any); e["code"] != "manifest_v1" {
-		t.Fatalf("error = %v", e)
-	}
-}
-
 func TestRemovedCommandsPoint(t *testing.T) {
 	h := newHarness(t)
 	cases := map[string]string{
@@ -647,56 +573,6 @@ func approveDevice(h *harness) {
 	h.platform.json("POST /api/v1/auth/device/poll", 200, `{"status":"approved","token":"gr_user_device","tokenKind":"user","expiresAt":"2026-12-30T12:00:00Z","organization":{"id":"org_1","slug":"acme","name":"Acme"},"user":{"id":"u","email":"dave@acme.io"},"apiUrl":"`+h.platform.srv.URL+`"}`)
 }
 
-func TestInitInteractiveLoginNeverFollowsManifestAPIURL(t *testing.T) {
-	h := newHarness(t)
-	h.terminal = true
-	delete(h.env, "GRAVITY_API_URL")
-	approveDevice(h)
-	h.write(".gravity.yaml", "version: 2\napiUrl: "+h.platform.srv.URL+"\n")
-	expectCode(t, h, h.run("init"), 2)
-	if !strings.Contains(h.stderr.String(), "gravity login --api-url "+h.platform.srv.URL) {
-		t.Fatalf("stderr = %s", h.stderr.String())
-	}
-	if len(h.platform.requests) != 0 {
-		t.Fatalf("no request may reach the manifest host without opt-in: %+v", h.platform.requests)
-	}
-	expectCode(t, h, h.run("init", "--json"), 2)
-	if e := h.envelope()["error"].(map[string]any); !strings.Contains(e["message"].(string), "not signed in") {
-		t.Fatalf("non-interactive error = %v", e)
-	}
-	if len(h.platform.requests) != 0 {
-		t.Fatalf("requests = %+v", h.platform.requests)
-	}
-
-	expectCode(t, h, h.run("login", "--api-url", h.platform.srv.URL), 0)
-	if len(h.platform.find("POST", "/api/v1/auth/device/start")) != 1 {
-		t.Fatal("an explicit --api-url opts in to that host")
-	}
-	expectCode(t, h, h.run("init"), 0)
-	if reqs := h.platform.find("GET", "/api/v1/whoami"); len(reqs) != 1 || reqs[0].Token != "gr_user_device" {
-		t.Fatalf("whoami = %+v", reqs)
-	}
-	if len(h.platform.find("POST", "/api/v1/auth/device/start")) != 1 {
-		t.Fatal("init reuses the stored profile")
-	}
-}
-
-func TestInitInteractiveSignsIn(t *testing.T) {
-	h := newHarness(t)
-	h.terminal = true
-	approveDevice(h)
-	expectCode(t, h, h.run("init", "--product", "acme-platform"), 0)
-	if len(h.platform.find("POST", "/api/v1/auth/device/start")) != 1 || len(h.opened) != 1 {
-		t.Fatalf("init signs in through the device flow: opened %v", h.opened)
-	}
-	if reqs := h.platform.find("GET", "/api/v1/whoami"); len(reqs) != 1 || reqs[0].Token != "gr_user_device" {
-		t.Fatalf("whoami = %+v", reqs)
-	}
-	if data, err := os.ReadFile(filepath.Join(h.dir, ".gravity.yaml")); err != nil || string(data) != "version: 2\nproduct: acme-platform\n" {
-		t.Fatalf("manifest = %q %v", data, err)
-	}
-}
-
 func TestLogoutIgnoresAPIURLFlag(t *testing.T) {
 	h := newHarness(t)
 	writeProfiles(t, h.config, "version: 2\ncurrent: default\nprofiles:\n  default:\n    token: gr_user_old\n    tokenKind: user\n")
@@ -708,4 +584,20 @@ func TestLogoutIgnoresAPIURLFlag(t *testing.T) {
 	if len(h.bases) != 1 || h.bases[0] != config.DefaultAPIURL {
 		t.Fatalf("logout targeted %v", h.bases)
 	}
+}
+
+func TestLoginWithTokenFlagIsHeadless(t *testing.T) {
+	h := newHarness(t)
+	expectCode(t, h, h.run("login", "--token", "gr_user_flag", "--profile", "ci"), 0)
+	data, err := os.ReadFile(filepath.Join(h.config, "profiles.yaml"))
+	if err != nil || !strings.Contains(string(data), "gr_user_flag") || !strings.Contains(string(data), "current: ci") {
+		t.Fatalf("profiles = %s %v", data, err)
+	}
+	if reqs := h.platform.find("GET", "/api/v1/whoami"); len(reqs) != 1 || reqs[0].Token != "gr_user_flag" {
+		t.Fatalf("the token is verified first: %+v", reqs)
+	}
+	if len(h.platform.find("POST", "/api/v1/auth/device/start")) != 0 {
+		t.Fatal("no device flow with --token")
+	}
+	expectCode(t, h, h.run("login", "--token", "nope"), 2)
 }

@@ -118,6 +118,23 @@ func TestRunCommandWritesAndPrintsPasses(t *testing.T) {
 	}
 }
 
+func TestRunOnATerminalShowsLiveProgressAndASummaryCard(t *testing.T) {
+	h := newHarness(t)
+	h.terminal = true
+	h.env["NO_COLOR"] = "1"
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	h.commitSpec(t)
+	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
+	expectCode(t, h, h.run("run"), 0)
+	out := h.stdout.String()
+	for _, want := range []string{"developer-api  reference → dev-portal/api", "Gravity run finished", "1 pass ran, 0 skipped, 0 failed", "Review bundle", "https://app.gravitydocs.io/app/repos/runs/prun_1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in\n%s", want, out)
+		}
+	}
+}
+
 func githubPR(t *testing.T, h *harness, number int) {
 	t.Helper()
 	head := gitCmd(t, h.dir, "rev-parse", "HEAD")

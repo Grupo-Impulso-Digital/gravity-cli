@@ -5,22 +5,31 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/auth"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
 )
 
 type statusData struct {
-	Whoami    whoamiData          `json:"whoami"`
-	Repo      api.ConnectedRepo   `json:"repo"`
-	Manifest  *statusManifest     `json:"manifest"`
-	Effective api.Effective       `json:"effective"`
-	Status    *api.Status         `json:"status"`
-	Siblings  []api.Sibling       `json:"siblings"`
-	Outcome   api.ManifestOutcome `json:"connect"`
+	Whoami       whoamiData          `json:"whoami"`
+	Repo         api.ConnectedRepo   `json:"repo"`
+	Manifest     *statusManifest     `json:"manifest"`
+	Effective    api.Effective       `json:"effective"`
+	Status       *api.Status         `json:"status"`
+	Siblings     []api.Sibling       `json:"siblings"`
+	Outcome      api.ManifestOutcome `json:"connect"`
+	Capabilities []capabilityWarning `json:"capabilityWarnings"`
+}
+
+type capabilityWarning struct {
+	Code    string `json:"code"`
+	Pass    string `json:"pass,omitempty"`
+	Message string `json:"message"`
 }
 
 type statusManifest struct {
@@ -36,6 +45,7 @@ type session struct {
 	client   *api.Client
 	who      *api.WhoAmI
 	whoData  whoamiData
+	creds    auth.Credentials
 }
 
 func (a *app) openSession(ctx context.Context, allowV1 bool) (*session, error) {
@@ -74,6 +84,7 @@ func (a *app) openSession(ctx context.Context, allowV1 bool) (*session, error) {
 		return nil, err
 	}
 	s.who = who
+	s.creds = creds
 	s.whoData = whoamiSummary(who, creds)
 	return s, nil
 }
@@ -110,12 +121,13 @@ func newStatusCmd(a *app) *cobra.Command {
 			if data.Siblings == nil {
 				data.Siblings = []api.Sibling{}
 			}
+			data.Capabilities = capabilityWarnings(s, conn, a.statusPlan(ctx, s, conn), a.now())
 			if s.manifest != nil {
 				data.Manifest = &statusManifest{Path: s.manifest.Path, Hash: s.manifest.Hash}
 			} else if s.v1 {
 				data.Manifest = &statusManifest{Path: config.ManifestFileName, V1: true}
 			}
-			a.printStatus(s, conn, st)
+			a.printStatus(s, conn, st, data.Capabilities)
 			if check && st.Health.Status != api.HealthLive {
 				reason := ""
 				if len(st.Health.Reasons) > 0 {
@@ -145,7 +157,91 @@ func healthMark(status string) string {
 	return ui.MarkFail
 }
 
-func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status) {
+func (a *app) statusPlan(ctx context.Context, s *session, conn *api.ConnectResponse) *api.Plan {
+	q := api.PlanQuery{Repo: repoParam(s.who, s.info), Trigger: config.TriggerPush, Branch: firstNonEmpty(conn.Manifest.AuthoritativeBranch, s.info.defaultBranch, s.info.branch), Mode: api.ModeDry}
+	if s.manifest != nil {
+		q.ManifestHash = s.manifest.Hash
+	}
+	p, err := s.client.Plan(ctx, q)
+	if err != nil {
+		a.ui.Debugf("status plan: %v", err)
+		return nil
+	}
+	return p
+}
+
+var aiKinds = map[string]bool{config.KindGuides: true, config.KindChangelog: true, config.KindNucleus: true}
+
+func usesLLM(p api.PlanPass) bool {
+	switch {
+	case aiKinds[p.Kind]:
+		return true
+	case p.Kind == config.KindReference:
+		v, _ := p.Options["prose"].(bool)
+		return v
+	case p.Kind == config.KindCheck:
+		v, ok := p.Options["claims"].(bool)
+		return !ok || v
+	}
+	return false
+}
+
+func capabilityWarnings(s *session, conn *api.ConnectResponse, plan *api.Plan, now time.Time) []capabilityWarning {
+	out := []capabilityWarning{}
+	add := func(code, pass, msg string) {
+		out = append(out, capabilityWarning{Code: code, Pass: pass, Message: msg})
+	}
+	if exp := s.whoData.Token.ExpiresAt; exp != nil && *exp != "" {
+		if t, err := time.Parse(time.RFC3339, *exp); err == nil {
+			switch left := t.Sub(now); {
+			case left <= 0:
+				add("token_expired", "", "the token expired on "+t.Format("2006-01-02")+"; run `gravity login` again")
+			case left < 14*24*time.Hour:
+				add("token_expiring", "", fmt.Sprintf("the token expires in %d days (%s); run `gravity login` to renew it", int(left.Hours()/24)+1, t.Format("2006-01-02")))
+			}
+		}
+	}
+	passes := conn.Effective.Passes
+	if plan != nil && len(plan.Passes) > 0 {
+		passes = plan.Passes
+	}
+	modules := s.who.Modules
+	features := s.who.Features
+	if plan != nil {
+		if plan.Capabilities.Modules != nil {
+			modules = plan.Capabilities.Modules
+		}
+		if plan.Capabilities.Features != nil {
+			features = plan.Capabilities.Features
+		}
+	}
+	needLLM := []string{}
+	for _, p := range passes {
+		if !p.Enabled {
+			continue
+		}
+		switch {
+		case p.Kind == config.KindNucleus && modules != nil && !modules["memory"]:
+			add("module_disabled", p.Name, "pass "+p.Name+" needs the memory module, which this organization does not have")
+		case p.Kind == config.KindCapture && modules != nil && !modules["agent"]:
+			add("module_disabled", p.Name, "pass "+p.Name+" needs the agent module, which this organization does not have")
+		case p.Kind == config.KindVerbatim && !features["verbatim-lock"]:
+			add("feature_unavailable", p.Name, "pass "+p.Name+" imports verbatim pages, which this Gravity server does not support yet")
+		}
+		if p.SkipReason == api.SkipScopeMissing {
+			add("scope_missing", p.Name, "pass "+p.Name+" needs token scopes "+strings.Join(p.MissingScopes, ", ")+"; mint a token with them in the app")
+		}
+		if usesLLM(p) {
+			needLLM = append(needLLM, p.Name)
+		}
+	}
+	if plan != nil && !plan.Capabilities.LLM.Configured && len(needLLM) > 0 {
+		add("llm_not_configured", "", "no AI provider is configured for this organization; "+strings.Join(needLLM, ", ")+" cannot write until an admin adds one in the app")
+	}
+	return out
+}
+
+func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status, warnings []capabilityWarning) {
 	p := a.ui
 	product := firstNonEmpty(st.Product.Name, st.Product.Slug, conn.Repo.Product.Name)
 	p.Println("%s %s → %s   %s health: %s", p.Bold("Gravity ·"), firstNonEmpty(st.Repo.Name, s.info.name), product, p.Mark(healthMark(st.Health.Status)), st.Health.Status)
@@ -153,12 +249,30 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status)
 		p.Println("    %s", r)
 	}
 	rows := [][]string{}
+	org := firstNonEmpty(s.whoData.Organization.Name, s.whoData.Organization.Slug)
+	signed := s.whoData.Token.Kind + " token"
 	if u := s.whoData.Principal; u != nil && u.User != nil {
-		rows = append(rows, []string{"Signed in", u.User.Email + " · " + firstNonEmpty(s.whoData.Organization.Name, s.whoData.Organization.Slug) + " · " + s.whoData.Token.Kind + " token"})
+		signed = u.User.Email + " · " + org + " · " + signed
 	} else {
-		rows = append(rows, []string{"Token", s.whoData.Token.Kind + " token · " + firstNonEmpty(s.whoData.Organization.Name, s.whoData.Organization.Slug)})
+		signed += " · " + org
 	}
-	rows = append(rows, []string{"Repository", s.info.remoteKey + " · " + orDash(firstNonEmpty(st.Repo.AppURL, conn.Repo.AppURL))})
+	if s.whoData.Profile != "" {
+		signed += " · profile " + s.whoData.Profile
+	} else {
+		signed += " · from " + s.whoData.Token.Source
+	}
+	if exp := s.whoData.Token.ExpiresAt; exp != nil && *exp != "" {
+		signed += " · expires " + strings.SplitN(*exp, "T", 2)[0]
+	}
+	rows = append(rows, []string{"Auth", signed})
+	connection := s.info.remoteKey
+	if st.Repo.LastConnectAt != "" {
+		connection += " · last connect " + st.Repo.LastConnectAt
+	}
+	rows = append(rows, []string{"Repository", connection})
+	if link := firstNonEmpty(st.Repo.AppURL, conn.Repo.AppURL); link != "" {
+		rows = append(rows, []string{"App", link})
+	}
 	switch {
 	case s.manifest != nil:
 		state := "stored in Gravity"
@@ -187,10 +301,12 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status)
 	p.Table("  ", rows)
 
 	approve := map[string]string{}
+	locked := map[string]bool{}
 	for _, ep := range conn.Effective.Passes {
 		if ep.Target.ApproveURL != "" {
 			approve[ep.Name] = ep.Target.ApproveURL
 		}
+		locked[ep.Name] = ep.Locked
 	}
 	if len(st.Passes) == 0 {
 		p.Println("No passes yet. Add them in the app: %s", orDash(firstNonEmpty(st.Repo.AppURL, conn.Repo.AppURL)))
@@ -222,7 +338,11 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status)
 			if sp.LastRun != nil {
 				last = sp.LastRun.Status + " " + sp.LastRun.At
 			}
-			prow = append(prow, []string{p.Mark(mark), sp.Name, sp.Kind, orDash(sp.Target.Ref), sp.Source, wm, last, note})
+			source := "app"
+			if sp.Source == "manifest" || locked[sp.Name] {
+				source = "repo (locked)"
+			}
+			prow = append(prow, []string{p.Mark(mark), sp.Name, sp.Kind, orDash(sp.Target.Ref), source, wm, last, note})
 		}
 		p.Table("  ", prow)
 	}
@@ -248,6 +368,12 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status)
 		}
 		p.Println("%s", p.Bold("Tokens"))
 		p.Table("  ", trow)
+	}
+	if len(warnings) > 0 {
+		p.Println("%s", p.Bold("Capabilities"))
+		for _, w := range warnings {
+			p.Println("  %s %s", p.Mark(ui.MarkWarn), w.Message)
+		}
 	}
 	if len(conn.Siblings) > 0 {
 		names := make([]string, 0, len(conn.Siblings))

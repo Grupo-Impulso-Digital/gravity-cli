@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/cisetup"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -48,6 +50,13 @@ func newPlatform(t *testing.T) *platform {
 		p.mu.Lock()
 		p.requests = append(p.requests, request{Method: r.Method, Path: r.URL.Path, Query: r.URL.Query(), Body: body, Token: strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")})
 		h, ok := p.routes[r.Method+" "+r.URL.Path]
+		if !ok {
+			for key, route := range p.routes {
+				if prefix, wild := strings.CutSuffix(key, "*"); wild && strings.HasPrefix(r.Method+" "+r.URL.Path, prefix) {
+					h, ok = route, true
+				}
+			}
+		}
 		p.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if !ok {
@@ -104,6 +113,27 @@ type harness struct {
 	stderr   bytes.Buffer
 	opened   []string
 	bases    []string
+	prompts  *countingPrompter
+	secrets  cisetup.Runner
+}
+
+type countingPrompter struct {
+	inner  ui.Prompter
+	titles []string
+}
+
+func (c *countingPrompter) Select(title, description string, choices []ui.Choice, def string) (string, error) {
+	c.titles = append(c.titles, title)
+	return c.inner.Select(title, description, choices, def)
+}
+
+func (c *countingPrompter) MultiSelect(title, description string, choices []ui.Choice, selected []string) ([]string, error) {
+	c.titles = append(c.titles, title)
+	return c.inner.MultiSelect(title, description, choices, selected)
+}
+
+func noSecretTools(context.Context, io.Reader, string, ...string) ([]byte, error) {
+	return nil, errors.New("not installed")
 }
 
 type offline struct{}
@@ -143,7 +173,8 @@ func newHarness(t *testing.T) *harness {
 	p := newPlatform(t)
 	return &harness{
 		t: t, platform: p, dir: dir, config: filepath.Join(cfg, "gravity"),
-		env: map[string]string{"GRAVITY_API_URL": p.srv.URL},
+		env:     map[string]string{"GRAVITY_API_URL": p.srv.URL, "ACCESSIBLE": "1"},
+		secrets: noSecretTools,
 	}
 }
 
@@ -158,12 +189,16 @@ func (h *harness) run(args ...string) int {
 	h.t.Helper()
 	h.stdout.Reset()
 	h.stderr.Reset()
+	stdin := strings.NewReader(h.stdin)
+	h.prompts = &countingPrompter{inner: &ui.HuhPrompter{In: stdin, Out: &h.stderr, Accessible: true}}
 	a := &app{
-		stdin:    strings.NewReader(h.stdin),
-		stdout:   &h.stdout,
-		stderr:   &h.stderr,
-		terminal: h.terminal,
-		getenv:   func(k string) string { return h.env[k] },
+		prompts:      h.prompts,
+		secretRunner: h.secrets,
+		stdin:        stdin,
+		stdout:       &h.stdout,
+		stderr:       &h.stderr,
+		terminal:     h.terminal,
+		getenv:       func(k string) string { return h.env[k] },
 		openBrowser: func(u string) error {
 			h.opened = append(h.opened, u)
 			return nil
@@ -218,7 +253,7 @@ func (h *harness) golden(name string) {
 	}
 }
 
-const whoamiUser = `{"organizationId":"org_1","organizationName":"Acme","defaultSiteSlug":null,"keyHint":"x9Qa","features":{"pipelines":true,"device-auth":true},"apiUrl":"https://api.gravitydocs.io",
+const whoamiUser = `{"organizationId":"org_1","organizationName":"Acme","defaultSiteSlug":null,"keyHint":"x9Qa","features":{"pipelines":true,"device-auth":true,"machine-tokens":true},"apiUrl":"https://api.gravitydocs.io",
 "principal":{"kind":"user","user":{"id":"usr_1","email":"dave@acme.io","name":"Dave"},"role":"editor","permissions":["docs.read","docs.write","docs.repos.manage","docs.repos.tokens"]},
 "organization":{"id":"org_1","slug":"acme","name":"Acme"},
 "organizations":[{"id":"org_1","slug":"acme","name":"Acme","role":"editor"},{"id":"org_2","slug":"acme-labs","name":"Acme Labs","role":"admin"}],

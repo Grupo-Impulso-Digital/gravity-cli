@@ -214,6 +214,47 @@ func (a *app) runEnv(s *pipelineSession) *engine.Env {
 	}
 }
 
+func (a *app) execute(ctx context.Context, s *pipelineSession) (*engine.Result, error) {
+	env := a.runEnv(s)
+	if !a.ui.Interactive() {
+		return engine.Execute(ctx, env, s.opts)
+	}
+	prog := a.ui.StartProgress("", true)
+	defer prog.Stop()
+	steps := map[string]int{}
+	env.OnPlan = func(p *api.Plan) {
+		for _, pp := range p.Passes {
+			if _, ok := steps[pp.Name]; ok || !pp.Applies {
+				continue
+			}
+			label := pp.Name + "  " + pp.Kind
+			if pp.Target.Ref != "" {
+				label += " → " + pp.Target.Ref
+			}
+			i := prog.Add(label)
+			prog.Begin(i)
+			steps[pp.Name] = i
+		}
+	}
+	env.OnPass = func(r engine.PassResult) {
+		i, ok := steps[r.Name]
+		if !ok {
+			return
+		}
+		switch passMark(r) {
+		case ui.MarkFail:
+			prog.Fail(i, passOutcome(r))
+		case ui.MarkWarn:
+			prog.Warn(i, passOutcome(r))
+		case ui.MarkSkip:
+			prog.Skip(i, passOutcome(r))
+		default:
+			prog.Done(i, passOutcome(r))
+		}
+	}
+	return engine.Execute(ctx, env, s.opts)
+}
+
 func principalRepoID(who *api.WhoAmI) string {
 	if who != nil && who.Principal != nil && who.Principal.Repo != nil {
 		return who.Principal.Repo.ID
@@ -337,11 +378,50 @@ func (a *app) printRun(res *engine.Result, info *repoInfo) {
 			p.Println("  %s %s: %s", p.Mark(ui.MarkInfo), ps.Name, n.Title)
 		}
 	}
+	if p.Interactive() {
+		a.runCard(res)
+		return
+	}
 	if res.Mode == api.ModeWrite && res.Finish != nil && res.Finish.Bundle.Changes > 0 {
 		p.Println("Bundle: %d changes awaiting review → %s", res.Finish.Bundle.Changes, firstNonEmpty(res.Finish.Bundle.AppURL, res.Finish.Run.AppURL))
 	} else if res.Run != nil && res.Run.AppURL != "" {
 		p.Println("Run: %s", res.Run.AppURL)
 	}
+}
+
+func (a *app) runCard(res *engine.Result) {
+	ran, skipped, failed := 0, 0, 0
+	var cost float64
+	for _, ps := range res.Passes {
+		cost += ps.CostUSD
+		switch ps.Status {
+		case api.StatusFailed:
+			failed++
+		case api.StatusSkipped:
+			skipped++
+		default:
+			ran++
+		}
+	}
+	title := "Gravity run finished"
+	if res.Mode == api.ModeDry {
+		title = "Gravity dry run finished"
+	}
+	lines := []string{fmt.Sprintf("%s, %d skipped, %d failed · $%.2f", plural(ran, "pass ran", "passes ran"), skipped, failed, cost)}
+	var links []ui.Link
+	if res.Mode == api.ModeWrite && res.Finish != nil && res.Finish.Bundle.Changes > 0 {
+		lines = append(lines, fmt.Sprintf("%d changes awaiting review", res.Finish.Bundle.Changes))
+		links = append(links, ui.Link{Label: "Review bundle", URL: firstNonEmpty(res.Finish.Bundle.AppURL, res.Finish.Run.AppURL)})
+	}
+	if res.Run != nil && res.Run.AppURL != "" {
+		links = append(links, ui.Link{Label: "Run", URL: res.Run.AppURL})
+	}
+	for _, ps := range res.Passes {
+		if ps.ApproveURL != "" && ps.SkipReason == api.SkipTargetUnapproved {
+			links = append(links, ui.Link{Label: "Approve " + ps.Name, URL: ps.ApproveURL})
+		}
+	}
+	a.ui.Card(title, lines, links)
 }
 
 func findingMark(f api.Finding) string {

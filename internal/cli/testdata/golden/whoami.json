@@ -47,6 +47,7 @@
     "apiUrl": "http://platform.test",
     "features": {
       "device-auth": true,
+      "machine-tokens": true,
       "pipelines": true
     },
     "modules": {

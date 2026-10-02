@@ -22,7 +22,7 @@ One-way layering: dependencies point downward. **No package imports
 ```
 cmd/gravity              entrypoint: signal-aware context
   └─ internal/cli        cobra command tree, global flags, exit codes (orchestration)
-       ├─ internal/ui         TTY / plain CI / --json envelope output
+       ├─ internal/ui         TTY / plain CI / --json envelope output, huh prompts, bubbletea progress, lipgloss cards
        ├─ internal/auth       profiles.yaml, credential precedence, device login
        ├─ internal/plan       plan fetch, manifest overlay, skip decisions
        ├─ internal/run        run orchestration: plan/lease loop, heartbeat, ingest, passes, finish
@@ -32,11 +32,14 @@ cmd/gravity              entrypoint: signal-aware context
        ├─ internal/report     PR comment, step summary, annotations, page diffs
        ├─ internal/prompts    hosted pass prompts with baked fallbacks
        ├─ internal/changeset  range resolution, ChangeSet, OpenAPI diff, symbols, unit mapping
+       ├─ internal/setup      init suggestions: product ranking, target site, pass templates, spaces to create
+       │    └─ internal/detect  local repository detection (languages, specs, routes, docs, releases, CI files)
+       ├─ internal/cisetup    CI file templates per provider, gh/glab secret installers (token on stdin)
        ├─ internal/ci         CI provider detection
        ├─ internal/api        REST client for the CLI 1.0 contract + LLM gateway
        ├─ internal/docs       OpenAPI -> api blocks
        ├─ internal/checks     OpenAPI parsing
-       ├─ internal/config     manifest v2 (embedded JSON Schema, strict parse, did-you-mean), v1 detection
+       ├─ internal/config     manifest v2 (embedded JSON Schema, strict parse, did-you-mean), v1 detection + conversion, token scopes
        ├─ internal/normalize  productSlug, apiUnitKey, canonical JSON (golden fixtures shared with the platform)
        ├─ internal/git        thin wrapper over the system `git` binary
        ├─ internal/glob       doublestar matching (leaf)
@@ -142,9 +145,18 @@ payload, generator stamps and the HTTP `User-Agent`.
   hand-rolled on `net/http`. Direct deps and their reasons: `cobra` (command
   tree), `libopenapi` (spec parsing and the OpenAPI diff), `goldmark` (Markdown),
   `go.yaml.in/yaml/v3` (manifest), `santhosh-tekuri/jsonschema/v6` (validating
-  the manifest against the embedded schema, as the spec requires). The init
-  wizard (C3) brings back `charmbracelet/huh`; re-pin
-  `charmbracelet/x/cellbuf` to `v0.0.15` then (see the v0.3 history).
+  the manifest against the embedded schema, as the spec requires), and the
+  terminal UI the spec names (§11.1): `charmbracelet/huh` (init's prompts,
+  with an accessible line mode that also drives the scripted tests),
+  `charmbracelet/bubbletea` + `charmbracelet/bubbles` (the live per-step
+  progress of `init`, `login`, `run`, `preview`, `check`; bubbles only for its
+  spinner), `charmbracelet/lipgloss` + `muesli/termenv` (the summary card;
+  termenv to force an ASCII profile with `--no-color`). They are used only on a
+  terminal; `--json`, `CI=true` and non-terminals never start them. The UI
+  stack stays on the v1 lines already in the module cache (huh v1.0.0,
+  bubbletea v1.3.10, lipgloss v1.1.0), and `charmbracelet/x/cellbuf` is pinned
+  to `v0.0.15`: the version huh's stack selects is incompatible with the newer
+  `x/ansi` golangci-lint pulls in (see the v0.3 history).
 - **Testing**: stdlib `testing` + `httptest` mocks, table-driven where it fits.
   No live-server integration tests.
 - **Capabilities, not 404s**: server features come from `/whoami` (and
@@ -157,7 +169,18 @@ payload, generator stamps and the HTTP `User-Agent`.
   finish call (`api.StopsRun`).
 - **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
   all human output on stderr. With `CI=true` or without a terminal, output is
-  plain ASCII and nothing prompts. There is no `--ci` flag in 1.x.
+  plain ASCII and nothing prompts. There is no global `--ci` flag in 1.x
+  (`init --ci <provider>` picks the CI file to write). Prompts go through
+  `ui.Prompter` (huh; `ACCESSIBLE=1` or `TERM=dumb` selects its line mode);
+  long work goes through `ui.Progress`, which on a terminal redirects the
+  printer's output above its live view until `Stop`; summaries go through
+  `Printer.Card`.
+- **Init** (`internal/cli/init.go`, `initflow.go`): at most three questions
+  (product, passes with the site change inside the passes question, write);
+  the site sub-list and the re-asked passes question do not count. Without a
+  terminal `init` needs `--yes` (or `--dry-run`). Nothing is written before
+  the real connect succeeds; the repository token is printed only on stderr
+  and only when it was not installed; secret installers get it on stdin.
 - **Manifest** (`internal/config`): YAML is decoded to a generic tree, checked
   for tokens and v1 shape, validated by friendly Go rules and the embedded JSON
   Schema (byte-identical to the spec's, pinned by sha256 in
@@ -171,6 +194,12 @@ payload, generator stamps and the HTTP `User-Agent`.
   register it in `internal/cli/root.go`; print through `a.ui`, return data with
   `a.ui.Result(data)` for `--json`, and failures as `*ExitError`. Test it with
   the fake platform in `internal/cli/harness_test.go`.
+- **Change init**: script it with the harness's accessible prompter
+  (`h.terminal = true`, `h.stdin` holds one answer per line, `0` confirms a
+  multi-select) and assert the prompt titles in `h.prompts`; fake `gh`/`glab`
+  go on `PATH` with `h.secrets = cisetup.ExecRunner`. CI templates and v1
+  conversions are golden files (`go test ./internal/cisetup -update`,
+  `go test ./internal/config -update`).
 - **Add an API endpoint**: typed request/response next to its siblings in
   `internal/api` and a thin method on `Client`; add an `httptest` case to
   `endpoints_test.go` built from the spec's JSON example.
@@ -187,9 +216,10 @@ payload, generator stamps and the HTTP `User-Agent`.
 
 ## Known limitations / deliberate decisions
 
-- **`init` is the minimal C1 version**: it connects the repository and writes
-  `version: 2`; detection, questions, CI files and the v1 conversion arrive
-  with C3.
+- **Init writes CI files only when they do not exist**: an existing workflow,
+  `bitbucket-pipelines.yml` or a `.gitlab-ci.yml` with its own `include:` list
+  is kept and a snippet is printed instead. Jenkins and CircleCI always get a
+  snippet.
 - **The CLI never embeds instruction layers.** Every gateway call sends only
   the kind prompt (`internal/prompts`) and `context { runId, runPassId,
   purpose }`; the gateway composes the org/site/space/collection/pass/note

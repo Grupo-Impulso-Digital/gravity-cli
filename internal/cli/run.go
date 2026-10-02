@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
-	engine "github.com/Grupo-Impulso-Digital/gravity-cli/internal/run"
 )
 
 func newRunCmd(a *app) *cobra.Command {
@@ -26,7 +25,7 @@ func newRunCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := engine.Execute(ctx, a.runEnv(s), s.opts)
+			res, err := a.execute(ctx, s)
 			if res != nil && res.Plan != nil {
 				a.printRun(res, s.info)
 			}

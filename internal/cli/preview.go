@@ -47,7 +47,7 @@ func newPreviewCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := engine.Execute(ctx, a.runEnv(s), s.opts)
+			res, err := a.execute(ctx, s)
 			if err != nil {
 				if res != nil && res.Plan != nil {
 					a.printRun(res, s.info)

@@ -81,6 +81,7 @@ type Env struct {
 	Now       func() time.Time
 	NewKey    func() string
 	Generator string
+	OnPlan    func(*api.Plan)
 	OnPass    func(PassResult)
 }
 
@@ -239,6 +240,9 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 			return res, err
 		}
 		res.Plan = p
+		if env.OnPlan != nil {
+			env.OnPlan(p)
+		}
 		if env.Info.ID == "" {
 			env.Info.ID = p.Repo.ID
 		}
