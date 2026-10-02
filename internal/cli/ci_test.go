@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -93,6 +94,29 @@ func TestCIFlagMakesOutputPlain(t *testing.T) {
 	var buf bytes.Buffer
 	if _, err := plainWriter(&buf).Write([]byte("x 💭")); err != nil || buf.String() != "x " {
 		t.Errorf("plainWriter = %q, %v", buf.String(), err)
+	}
+}
+
+func TestCIModeFinalErrorLineIsPlain(t *testing.T) {
+	chdirTemp(t, t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CI", "")
+	root := NewRootCommand()
+	var errOut bytes.Buffer
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&errOut)
+	root.SetIn(strings.NewReader(""))
+	root.SetArgs([]string{"release-notes", "--ci", "--api-url", "http://127.0.0.1:1", "--token", "sk_live_x"})
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected an error outside a repository")
+	}
+	if _, ok := root.ErrOrStderr().(plainOut); !ok {
+		t.Fatalf("--ci must route stderr through the plain writer, got %T", root.ErrOrStderr())
+	}
+	PrintError(root.ErrOrStderr(), Failf(CodeError, "%s 💭 done", err))
+	if got := errOut.String(); got != "gravity: not a git repository — run inside your repo  done\n" {
+		t.Errorf("--ci final error line = %q", got)
 	}
 }
 

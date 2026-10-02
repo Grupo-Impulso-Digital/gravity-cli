@@ -3,7 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os"
+	"io"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
@@ -62,8 +62,8 @@ func CodeFor(err error) int {
 	return CodeError
 }
 
-// PrintError writes an error to stderr unless it is a silent findings exit.
-func PrintError(err error) {
+// PrintError writes an error to w unless it is a silent findings exit.
+func PrintError(w io.Writer, err error) {
 	if err == nil {
 		return
 	}
@@ -71,5 +71,5 @@ func PrintError(err error) {
 	if errors.As(err, &ee) && ee.Err == nil {
 		return
 	}
-	fmt.Fprintln(os.Stderr, "gravity: "+err.Error())
+	fmt.Fprintln(w, "gravity: "+err.Error())
 }

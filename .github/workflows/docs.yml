@@ -164,12 +164,13 @@ jobs:
           FROM: ${{ inputs.from }}
           TO: ${{ inputs.to || github.ref_name }}
         run: |
-          if [ -z "$FROM" ]; then
-            FROM="$(git describe --tags --abbrev=0 "${TO}^" 2>/dev/null || git rev-list --max-parents=0 "$TO" | tail -n1)"
-          fi
-          git rev-parse --verify --quiet "${FROM}^{commit}" >/dev/null
           git rev-parse --verify --quiet "${TO}^{commit}" >/dev/null
-          echo "args=--output proposal --from ${FROM} --to ${TO}" >> "$GITHUB_OUTPUT"
+          ARGS="--output proposal --to ${TO}"
+          if [ -n "$FROM" ]; then
+            git rev-parse --verify --quiet "${FROM}^{commit}" >/dev/null
+            ARGS="${ARGS} --from ${FROM}"
+          fi
+          echo "args=${ARGS}" >> "$GITHUB_OUTPUT"
 
       - name: Release notes
         if: steps.gate.outputs.ready == 'true'
