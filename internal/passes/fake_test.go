@@ -230,6 +230,7 @@ type writes struct {
 	verbatim  []api.VerbatimRequest
 	deletions []api.VerbatimDeleteRequest
 	assets    []string
+	assetPass []string
 	hints     []api.HintInput
 	memories  []api.MemoryWrite
 	fail      map[string]error
@@ -259,10 +260,11 @@ func (w *writes) DeleteVerbatim(_ context.Context, _ string, req api.VerbatimDel
 	return &api.VerbatimResult{Change: &api.Change{ID: "chg_d", Op: api.OpDelete, Status: "applied"}}, nil
 }
 
-func (w *writes) UploadAsset(_ context.Context, _, repoPath, _, sha string, _ []byte) (*api.Asset, error) {
+func (w *writes) UploadAsset(_ context.Context, _, runPassID, repoPath, _, sha string, _ []byte) (*api.Asset, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.assets = append(w.assets, repoPath)
+	w.assetPass = append(w.assetPass, runPassID)
 	return &api.Asset{Key: sha, URL: "https://media.test/" + sha[:8]}, nil
 }
 

@@ -46,7 +46,7 @@ func TestVerbatimImportsChangedFilesUploadsImagesAndProposesDeletions(t *testing
 	if !strings.Contains(text, "https://media.test/") || !strings.Contains(text, "[outage](../api/outage)") {
 		t.Fatalf("image and link not rewritten: %q", text)
 	}
-	if len(w.assets) != 1 || w.assets[0] != "docs/handbook/oncall/chart.png" {
+	if len(w.assets) != 1 || w.assets[0] != "docs/handbook/oncall/chart.png" || w.assetPass[0] != "ppr_1" {
 		t.Fatalf("assets = %v", w.assets)
 	}
 	if len(w.deletions) != 1 || w.deletions[0].Path != "docs/handbook/old.md" {

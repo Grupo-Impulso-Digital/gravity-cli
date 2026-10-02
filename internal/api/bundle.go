@@ -181,17 +181,21 @@ type Asset struct {
 }
 
 // UploadAsset calls POST /api/v1/runs/{runId}/assets with the raw image bytes.
-func (c *Client) UploadAsset(ctx context.Context, runID, repoPath, contentType, sha256Hex string, data []byte) (*Asset, error) {
+func (c *Client) UploadAsset(ctx context.Context, runID, runPassID, repoPath, contentType, sha256Hex string, data []byte) (*Asset, error) {
+	headers := map[string]string{
+		"X-Gravity-Asset-Path":   repoPath,
+		"X-Gravity-Asset-Sha256": sha256Hex,
+	}
+	if runPassID != "" {
+		headers["X-Gravity-Run-Pass-Id"] = runPassID
+	}
 	var out Asset
 	err := c.do(ctx, request{
 		method:      http.MethodPost,
 		path:        "/api/v1/runs" + pathEscape(runID, "assets"),
 		raw:         data,
 		contentType: contentType,
-		headers: map[string]string{
-			"X-Gravity-Asset-Path":   repoPath,
-			"X-Gravity-Asset-Sha256": sha256Hex,
-		},
+		headers:     headers,
 	}, &out)
 	if err != nil {
 		return nil, err

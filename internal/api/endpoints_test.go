@@ -422,12 +422,12 @@ func TestBundleWrites(t *testing.T) {
 	expectRequest(t, s, "POST", "/api/v1/runs/prun_1/verbatim/delete")
 
 	c, s = fixtureServer(t, 201, `{"key":"k","url":"https://cdn/media/k","deduplicated":false}`)
-	asset, err := c.UploadAsset(context.Background(), "prun_1", "docs/img/flow.png", "image/png", "abc123", []byte{0x89, 'P', 'N', 'G'})
+	asset, err := c.UploadAsset(context.Background(), "prun_1", "ppr_3", "docs/img/flow.png", "image/png", "abc123", []byte{0x89, 'P', 'N', 'G'})
 	if err != nil || asset.URL == "" {
 		t.Fatalf("asset %+v %v", asset, err)
 	}
 	expectRequest(t, s, "POST", "/api/v1/runs/prun_1/assets")
-	if s.headers.Get("Content-Type") != "image/png" || s.headers.Get("X-Gravity-Asset-Path") != "docs/img/flow.png" || s.headers.Get("X-Gravity-Asset-Sha256") != "abc123" || string(s.raw) != "\x89PNG" {
+	if s.headers.Get("Content-Type") != "image/png" || s.headers.Get("X-Gravity-Asset-Path") != "docs/img/flow.png" || s.headers.Get("X-Gravity-Asset-Sha256") != "abc123" || s.headers.Get("X-Gravity-Run-Pass-Id") != "ppr_3" || string(s.raw) != "\x89PNG" {
 		t.Fatalf("asset headers %v raw %q", s.headers, s.raw)
 	}
 

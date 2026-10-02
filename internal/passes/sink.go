@@ -25,7 +25,7 @@ type Writer interface {
 	ProposeChange(ctx context.Context, runID string, req api.ChangeRequest) (*api.Change, error)
 	ImportVerbatim(ctx context.Context, runID string, req api.VerbatimRequest) (*api.VerbatimResult, error)
 	DeleteVerbatim(ctx context.Context, runID string, req api.VerbatimDeleteRequest) (*api.VerbatimResult, error)
-	UploadAsset(ctx context.Context, runID, repoPath, contentType, sha256Hex string, data []byte) (*api.Asset, error)
+	UploadAsset(ctx context.Context, runID, runPassID, repoPath, contentType, sha256Hex string, data []byte) (*api.Asset, error)
 	RaiseHints(ctx context.Context, runID, runPassID string, hints []api.HintInput) (*api.HintsResult, error)
 	WriteMemory(ctx context.Context, req api.MemoryWrite) (*api.MemoryResult, error)
 }
@@ -80,7 +80,7 @@ func (s *PlatformSink) Asset(ctx context.Context, repoPath, contentType string, 
 		}
 		s.Assets.mu.Unlock()
 	}
-	a, err := s.W.UploadAsset(ctx, s.RunID, repoPath, contentType, key, data)
+	a, err := s.W.UploadAsset(ctx, s.RunID, s.RunPassID, repoPath, contentType, key, data)
 	if err != nil {
 		return nil, err
 	}
