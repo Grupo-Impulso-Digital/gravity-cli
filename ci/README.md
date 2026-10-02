@@ -17,8 +17,13 @@ Three triggers, three jobs. `live` is whatever branch you deploy from (`main`,
 | Trigger              | Commands                                                                     | What it does                                     |
 | -------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------ |
 | **Pull request**     | `gravity check api --ci --format github`<br>`gravity check docs --ci --format github` | Read-only. Annotates the diff with drift.        |
-| **Push to `live`**   | `gravity ping`<br>`gravity sync --ci`<br>`gravity docs generate --since <sha> --ci` | Registers the repo, shapes the site, authors what changed. |
-| **Release tag pushed**| `gravity release-notes --ci --output proposal --from <previous tag> --to <tag>` | Drafts the release page.                         |
+| **Push to `live`**   | `gravity ping --ci`<br>`gravity sync --ci`<br>`gravity docs generate --since <sha> --ci` | Registers the repo, shapes the site, authors what changed. |
+| **Release tag pushed**| `gravity release-notes --ci --output proposal --from <previous tag> --to <tag>` | Drafts the release page in `releaseNotes.space`. |
+
+`--ci` is a global flag accepted by every command, and it is switched on
+automatically when the `CI` environment variable is `true` (GitHub Actions,
+GitLab CI and Bitbucket Pipelines all set it): no prompts, plain ASCII output
+without emoji.
 
 Rules that make the cadence work:
 
@@ -27,8 +32,10 @@ Rules that make the cadence work:
   diff. They are **advisory by default** (`continue-on-findings: "true"`); a repo
   opts into a blocking gate explicitly (`fail-on-findings: true` on the org
   reusable workflow, `GRAVITY_FAIL_ON_FINDINGS=true` here). Exit `2` always
-  fails. `check docs` verifies only the bindings on pages this repo wrote, so a
-  sibling repo's pages never fail your PR.
+  fails. `check docs` and `check api` look only at this repo's pages — the ones
+  the platform attributes to it, or, before any attribution exists, the spaces
+  `.gravity.yaml` declares — so a sibling repo's pages never fail your PR, and
+  the whole site is never checked by default.
 - **`ping` first, once, in the live job.** It registers/refreshes this repo's
   `connected_repo` row (branch, commit, resolved manifest) so write attribution
   and coverage see the right revision. Cheap, idempotent, writes no content.
@@ -67,11 +74,12 @@ Rules that make the cadence work:
 
 Every command follows the same convention so pipelines can react:
 
-| Code | Meaning  | Typical CI behaviour            |
-| ---- | -------- | ------------------------------- |
-| `0`  | pass     | step succeeds                   |
-| `1`  | findings | drift/gaps/stale bindings found |
-| `2`  | error    | auth, network, or bad input     |
+| Code | Meaning  | Typical CI behaviour                                  |
+| ---- | -------- | ----------------------------------------------------- |
+| `0`  | pass     | step succeeds (also: an empty commit range, a no-op)  |
+| `1`  | findings | drift/gaps/stale bindings found                       |
+| `2`  | error    | auth, network, bad input, unknown site/space          |
+| `3`  | licence  | the workspace's licence lacks the module; ask an admin |
 
 A non-zero exit fails the step by default. To let findings be advisory rather
 than blocking without also swallowing real errors:
@@ -93,10 +101,12 @@ and never commit it:
 - **Bitbucket Pipelines** — a *secured* repository variable named
   `GRAVITY_TOKEN`.
 
-`GRAVITY_API_URL` and `GRAVITY_SITE` are non-secret and can be set as plain
-variables. Environment variables take precedence over any committed
-`.gravity.yaml`, which is exactly what you want in CI. A committed `token:` in
-`.gravity.yaml` is a hard load error, never honored.
+The site, spaces and API URL come from the committed `.gravity.yaml`; the
+templates set nothing else. `GRAVITY_SITE`, `GRAVITY_SPACE` and
+`GRAVITY_API_URL` are non-secret overrides — set them only when a pipeline must
+target something other than the manifest (environment variables take
+precedence over `.gravity.yaml`). A committed `token:` in `.gravity.yaml` is a
+hard load error, never honored.
 
 Every LLM call made by `release-notes`, `docs generate` and `check docs --ai` is
 proxied through the Gravity gateway, so tenant provider keys never touch CI —
@@ -107,7 +117,8 @@ the CLI only ever sends the `sk_live_…` bearer token.
 `release-notes`, `check docs --ai` and `docs generate --since` all inspect git
 history and diffs. Make sure the checkout includes it: `fetch-depth: 0` on
 GitHub, `GIT_DEPTH: 0` on GitLab, `clone: { depth: full }` on Bitbucket.
-Ranges that cannot resolve are exit `2`.
+Ranges that cannot resolve are exit `2` with a plain message ("unknown git ref
+… fetch full history"); an empty range is a no-op that exits `0`.
 
 ## Repo identity, attribution and coverage
 
@@ -166,26 +177,28 @@ jobs:
       - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@main
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
-          site: docs
           command: "check docs"
-          args: "--ci --format github"
 ```
 
-`--format github` emits `::error::`/`::warning::` annotations so findings show
-up inline in the checks UI.
+The action downloads the prebuilt release binary (checksum-verified by
+`install.sh`) and caches it per release, so no Go toolchain is needed. For
+`check api`, `check docs` and `coverage` it appends `--format github`, which emits
+`::error::`/`::warning::` annotations so findings show up inline in the checks
+UI; other commands never receive `--format`. It always runs with `--ci`.
 
 Inputs:
 
 | Input                  | Default                      | Notes                                                                |
 | ---------------------- | ---------------------------- | -------------------------------------------------------------------- |
 | `token`                | — (required)                 | `sk_live_…`, from a secret.                                          |
-| `api-url`              | `https://api.gravitydocs.io` | Override for self-hosted.                                            |
-| `site`                 | `""`                         | Optional when `.gravity.yaml` sets `site`.                           |
+| `api-url`              | `""`                         | Empty so `.gravity.yaml` (or the hosted default) wins; set for self-hosted. |
+| `site`                 | `""`                         | Empty so `.gravity.yaml` wins.                                       |
 | `command`              | `check docs`                 | `ping`, `repos`, `check api`, `check docs`, `sync`, `docs generate`, `coverage`, `release-notes`. |
-| `args`                 | `--ci --format github`       | Appended verbatim. Pass `""` for commands with no `--ci`/`--format` (`ping`, `repos`). |
+| `args`                 | `""`                         | Appended verbatim.                                                   |
+| `format`               | `github`                     | Appended as `--format` only for `check api`, `check docs`, `coverage` (unless `args` sets `--format`/`--json`). |
 | `since`                | `""`                         | Appended as `--since <ref>` for an incremental `docs generate`.      |
-| `continue-on-findings` | `false`                      | Exit `1` → success; exit `2` still fails.                            |
-| `version`              | `latest`                     | `latest` (newest release), a release tag, or a git ref of this repo. |
+| `continue-on-findings` | `false`                      | Exit `1` → success; exit `2`/`3` still fail.                         |
+| `version`              | `latest`                     | `latest` or a release tag (`v0.3.0`); `source` builds from the action's own checkout (this repo's dogfood). |
 
 The full three-trigger pipeline is
 [`.github/workflows/docs.yml`](../.github/workflows/docs.yml) in this repo —
@@ -195,11 +208,16 @@ and can reach it.
 ## GitLab CI
 
 See [`gitlab/.gitlab-ci.yml`](gitlab/.gitlab-ci.yml). Include or copy the jobs;
-they install the CLI with `go install` and run the full cadence. Set
-`GRAVITY_TOKEN` as a masked/protected variable and `LIVE_BRANCH` to your
-deployment branch.
+they install the prebuilt release binary with `install.sh` (cached per pinned
+`GRAVITY_CLI_VERSION`) and run the full cadence. Set `GRAVITY_TOKEN` as a
+masked/protected variable and `LIVE_BRANCH` to your deployment branch. Add a
+`GRAVITY_CI_PUSH_TOKEN` (project access token with `write_repository`) so the
+generate job moves the `docs-synced` marker and later runs stay incremental.
 
 ## Bitbucket Pipelines
 
 See [`bitbucket/pipe`](bitbucket/pipe). Copy its contents into
 `bitbucket-pipelines.yml`. Add `GRAVITY_TOKEN` as a secured repository variable.
+The steps install the prebuilt release binary with `install.sh` and push the
+`docs-synced` marker after a successful generate, so later runs stay
+incremental.
