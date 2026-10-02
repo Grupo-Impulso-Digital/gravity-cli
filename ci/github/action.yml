@@ -35,9 +35,9 @@ inputs:
     required: false
     default: "false"
   version:
-    description: "gravity CLI release to install: 'latest' or a release tag such as v0.3.0. 'source' builds the CLI from this action's own checkout (for the CLI repo's own CI)."
+    description: "gravity CLI to install: a major version (0, the default, installs the newest 0.x release), a release tag such as v0.3.1, latest, or source (builds the CLI from this action's own checkout, for the CLI repo's own CI)."
     required: false
-    default: "latest"
+    default: "0"
 
 runs:
   using: "composite"
@@ -46,30 +46,19 @@ runs:
       id: resolve
       shell: bash
       env:
-        GRAVITY_CLI_VERSION: ${{ inputs.version }}
+        GRAVITY_VERSION: ${{ inputs.version }}
+        GRAVITY_RESOLVE_ONLY: "1"
         GH_TOKEN: ${{ github.token }}
       run: |
-        case "$GRAVITY_CLI_VERSION" in
-          source)
-            tag="source"
-            ;;
-          latest|"")
-            tag="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-              https://api.github.com/repos/Grupo-Impulso-Digital/gravity-cli/releases/latest \
-              | grep '"tag_name"' | head -n1 | cut -d'"' -f4)"
-            if [ -z "$tag" ]; then
-              echo "::error::could not resolve the latest gravity release"
-              exit 2
-            fi
-            ;;
-          v[0-9]*)
-            tag="$GRAVITY_CLI_VERSION"
-            ;;
-          *)
-            echo "::error::version must be 'latest', a release tag (vX.Y.Z) or 'source'; got '$GRAVITY_CLI_VERSION'"
-            exit 2
-            ;;
-        esac
+        if [ "$GRAVITY_VERSION" = "source" ]; then
+          tag=source
+        else
+          tag="$(sh "${GITHUB_ACTION_PATH}/../../install.sh")"
+        fi
+        if [ -z "$tag" ]; then
+          echo "::error::could not resolve gravity version '$GRAVITY_VERSION'"
+          exit 2
+        fi
         echo "tag=$tag" >> "$GITHUB_OUTPUT"
         echo "dir=${RUNNER_TOOL_CACHE}/gravity/${tag}-${RUNNER_OS}-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
 

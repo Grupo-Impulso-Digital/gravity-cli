@@ -164,7 +164,8 @@ single notice, and the commands keep their pre-v2 behaviour — never a failure.
 
 ## GitHub Actions
 
-Use the composite action in [`github/action.yml`](github/action.yml):
+Use the composite action in [`github/action.yml`](github/action.yml), pinned to
+major 0 (`@v0`): CLI 1.0 replaces these commands, and `@main` will follow it.
 
 ```yaml
 jobs:
@@ -174,7 +175,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@main
+      - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v0
         with:
           token: ${{ secrets.GRAVITY_TOKEN }}
           command: "check docs"
@@ -199,7 +200,7 @@ Inputs:
 | `format`               | `github`                     | Appended as `--format` only for `check api`, `check docs`, `coverage` (unless `args` sets `--format`/`--json`). |
 | `since`                | `""`                         | Appended as `--since <ref>` for an incremental `docs generate`.      |
 | `continue-on-findings` | `false`                      | Exit `1` → success; exit `2`/`3` still fail.                         |
-| `version`              | `latest`                     | `latest` or a release tag (`v0.3.0`); `source` builds from the action's own checkout (this repo's dogfood). |
+| `version`              | `0`                          | A major version (`0`: the newest 0.x release), a release tag (`v0.3.1`) or `latest`; `source` builds from the action's own checkout (this repo's dogfood). |
 
 The full three-trigger pipeline is
 [`.github/workflows/docs.yml`](../.github/workflows/docs.yml) in this repo —

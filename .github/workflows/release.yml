@@ -38,3 +38,10 @@ jobs:
           # Set it in repo settings → Secrets → Actions. Without it the release
           # still ships binaries; only the tap/bucket publish steps fail.
           GORELEASER_TOKEN: ${{ secrets.GORELEASER_TOKEN }}
+
+      - name: Move the major tag of the GitHub action
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          major="${GITHUB_REF_NAME%%.*}"
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"

@@ -32,9 +32,10 @@ curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/m
 ```
 
 The script auto-detects your OS/arch, downloads the matching binary from the
-latest [release](https://github.com/Grupo-Impulso-Digital/gravity-cli/releases), verifies its
+newest 0.x [release](https://github.com/Grupo-Impulso-Digital/gravity-cli/releases), verifies its
 checksum, and installs it to `/usr/local/bin` (or `~/.local/bin`). Override the
-target with `GRAVITY_INSTALL_DIR=...`, or pin a version with `GRAVITY_VERSION=v0.1.0`.
+target with `GRAVITY_INSTALL_DIR=...`, or choose a version with `GRAVITY_VERSION`:
+a major version (`0`, the default), a release (`v0.3.1`) or `latest`.
 
 **Homebrew (macOS / Linux):**
 

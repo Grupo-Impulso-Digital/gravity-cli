@@ -16,9 +16,9 @@
 
 variables:
   LIVE_BRANCH: "main"
-  # Pin a release (e.g. v0.3.0) for reproducible pipelines; "latest" follows
-  # the newest release.
-  GRAVITY_CLI_VERSION: "latest"
+  # "0" follows the newest 0.x release; pin a release (e.g. v0.3.1) for
+  # reproducible pipelines.
+  GRAVITY_CLI_VERSION: "0"
   # release-notes, `check docs --ai` and `--since` all walk git history; a
   # shallow clone hides it.
   GIT_DEPTH: 0
@@ -36,9 +36,9 @@ stages:
       - .gravity-bin/
   before_script:
     # Prebuilt release binary (checksum-verified by the installer), cached per
-    # pinned version; "latest" is re-resolved on every run.
+    # pinned release; a major version or "latest" is re-resolved on every run.
     - |
-      if [ "$GRAVITY_CLI_VERSION" = "latest" ] || [ ! -x .gravity-bin/gravity ]; then
+      if [ ! -x .gravity-bin/gravity ] || ! printf '%s' "$GRAVITY_CLI_VERSION" | grep -Eq '^v?[0-9]+[.][0-9]+[.][0-9]+$'; then
         curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.sh \
           | GRAVITY_VERSION="$GRAVITY_CLI_VERSION" GRAVITY_INSTALL_DIR="$CI_PROJECT_DIR/.gravity-bin" sh
       fi

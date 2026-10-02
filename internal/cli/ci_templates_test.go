@@ -41,8 +41,8 @@ func TestGitHubActionDefaults(t *testing.T) {
 	if got := action.Inputs["args"].Default; strings.Contains(got, "--format") {
 		t.Errorf("args default %q must not force --format on every command", got)
 	}
-	if got := action.Inputs["version"].Default; got != "latest" {
-		t.Errorf("version default = %q, want latest", got)
+	if got := action.Inputs["version"].Default; got != "0" {
+		t.Errorf("version default = %q, want 0 so v0 pipelines never install 1.x", got)
 	}
 	var installs, caches, windows bool
 	for _, s := range action.Runs.Steps {
@@ -67,6 +67,33 @@ func TestGitHubActionDefaults(t *testing.T) {
 	}
 	if !installs || !caches || !windows {
 		t.Errorf("the action must install the release binary (%v, windows %v) and cache it (%v)", installs, windows, caches)
+	}
+}
+
+func TestEverythingPinsMajorZero(t *testing.T) {
+	pins := map[string]*regexp.Regexp{
+		"install.sh":               regexp.MustCompile(`GRAVITY_VERSION:?[=-]"?0"?[^0-9.]`),
+		"install.ps1":              regexp.MustCompile(`else \{ '0' \}`),
+		"ci/github/action.yml":     regexp.MustCompile(`(?m)default: ['"]?0['"]?$`),
+		"ci/gitlab/.gitlab-ci.yml": regexp.MustCompile(`GRAVITY_CLI_VERSION: "0"`),
+		"ci/bitbucket/pipe":        regexp.MustCompile(`GRAVITY_CLI_VERSION:-0\}`),
+	}
+	for rel, re := range pins {
+		body := readTemplate(t, rel)
+		if !re.MatchString(body) {
+			t.Errorf("%s does not default to major 0", rel)
+		}
+		for _, bad := range []string{`:-latest}`, `:=latest}`, `GRAVITY_CLI_VERSION: "latest"`, `default: "latest"`, `else { 'latest' }`} {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s still defaults to latest (%s)", rel, bad)
+			}
+		}
+	}
+	if !strings.Contains(readTemplate(t, ".github/workflows/release.yml"), `git push -f origin "refs/tags/$major"`) {
+		t.Error("the release workflow must move the v<major> tag ci/github@v0 resolves to")
+	}
+	if strings.Contains(readTemplate(t, "ci/README.md"), "ci/github@main") {
+		t.Error("ci/README.md must reference the action by its major tag, not main")
 	}
 }
 
