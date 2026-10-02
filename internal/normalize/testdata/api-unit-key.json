@@ -1,0 +1,44 @@
+[
+    {
+        "in": {
+            "method": "POST",
+            "path": "/v1/refunds"
+        },
+        "out": "api:post:/v1/refunds"
+    },
+    {
+        "in": {
+            "method": "POST",
+            "path": "/v1/Refunds/{refundId}/"
+        },
+        "out": "api:post:/v1/refunds/:refundid"
+    },
+    {
+        "in": {
+            "method": "get",
+            "path": "/"
+        },
+        "out": "api:get:/"
+    },
+    {
+        "in": {
+            "method": "DELETE",
+            "path": "//v2//items/{item_id}"
+        },
+        "out": "api:delete:/v2/items/:item_id"
+    },
+    {
+        "in": {
+            "method": "PATCH",
+            "path": "/v1/users/{id}/settings@beta"
+        },
+        "out": "api:patch:/v1/users/:id/settings-beta"
+    },
+    {
+        "in": {
+            "method": "GET",
+            "path": "/v1/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/{id}"
+        },
+        "out": "api:get:/v1/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/segment/seg.962a31781a2128ec"
+    }
+]

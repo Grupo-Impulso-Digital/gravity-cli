@@ -153,8 +153,8 @@ func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
 }
 
 func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
-	badInput := json.RawMessage(`{"title":"Overview","blocks":"totally not an array"}`)
-	goodInput := json.RawMessage(`{"title":"Overview","blocks":[{"key":"h1","type":"heading","content":{"text":"Overview"}}]}`)
+	badInput := json.RawMessage(`{"summary":"s","upserts":"totally not an array"}`)
+	goodInput := json.RawMessage(`{"summary":"s","upserts":[{"key":"h1","type":"heading","content":{"text":"Overview"},"rationale":{"summary":"new section","commits":["a1b2c3d"]}}]}`)
 
 	script := &scriptedServer{
 		responses: []api.MessagesResponse{
@@ -162,13 +162,13 @@ func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
 				Type:       "message",
 				Role:       "assistant",
 				StopReason: api.StopToolUse,
-				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_1", Name: agent.ToolSubmitPageDoc, Input: badInput}},
+				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_1", Name: agent.ToolSubmitPageChanges, Input: badInput}},
 			},
 			{
 				Type:       "message",
 				Role:       "assistant",
 				StopReason: api.StopToolUse,
-				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_2", Name: agent.ToolSubmitPageDoc, Input: goodInput}},
+				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_2", Name: agent.ToolSubmitPageChanges, Input: goodInput}},
 			},
 		},
 	}
@@ -177,23 +177,23 @@ func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
 
 	runner := &agent.Runner{
 		Client: api.New(srv.URL, "test-token"),
-		Tools:  []agent.Tool{agent.SubmitPageDocTool()},
+		Tools:  []agent.Tool{agent.SubmitPageChangesTool()},
 	}
 	res, err := runner.Run(context.Background(), "go")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if res.TerminalTool != agent.ToolSubmitPageDoc {
+	if res.TerminalTool != agent.ToolSubmitPageChanges {
 		t.Fatalf("expected terminal tool after correction, got %q (stopped=%v %s)", res.TerminalTool, res.Stopped, res.StopReason)
 	}
 	if res.Iterations != 2 {
 		t.Errorf("expected 2 iterations (reject + accept), got %d", res.Iterations)
 	}
-	page, err := agent.ParsePageDoc(res.TerminalInput)
-	if err != nil {
+	var page agent.PageChanges
+	if err := agent.Decode(res.TerminalInput, &page); err != nil {
 		t.Fatalf("parse accepted input: %v", err)
 	}
-	if len(page.Blocks) != 1 || page.Blocks[0].Key != "h1" {
+	if len(page.Upserts) != 1 || page.Upserts[0].Key != "h1" {
 		t.Errorf("unexpected accepted page: %+v", page)
 	}
 
@@ -208,8 +208,8 @@ func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
 	if !last.Content[0].IsError || last.Content[0].ToolUseID != "tu_1" {
 		t.Errorf("expected error tool_result for tu_1, got %+v", last.Content[0])
 	}
-	if !strings.Contains(last.Content[0].Content, "blocks") {
-		t.Errorf("rejection should explain the blocks problem, got %q", last.Content[0].Content)
+	if !strings.Contains(last.Content[0].Content, "upserts") {
+		t.Errorf("rejection should explain the upserts problem, got %q", last.Content[0].Content)
 	}
 }
 
@@ -416,10 +416,6 @@ func TestRunner_StripsEmptyTextBlocks(t *testing.T) {
 }
 
 func TestRunner_RetriesTransientGatewayError(t *testing.T) {
-	old := agent.RetryBackoff
-	agent.RetryBackoff = time.Millisecond
-	defer func() { agent.RetryBackoff = old }()
-
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -437,7 +433,9 @@ func TestRunner_RetriesTransientGatewayError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	runner := &agent.Runner{Client: api.New(srv.URL, "test-token")}
+	client := api.New(srv.URL, "test-token")
+	client.Sleep = func(context.Context, time.Duration) error { return nil }
+	runner := &agent.Runner{Client: client}
 	res, err := runner.Run(context.Background(), "go")
 	if err != nil {
 		t.Fatalf("run should succeed after retries: %v", err)
@@ -528,5 +526,46 @@ func TestRunner_ForcedToolChoiceRejectedFallsBackToInstruction(t *testing.T) {
 	}
 	if !strings.HasPrefix(retry.System, "base") || !strings.Contains(retry.System, agent.ToolReportFindings) {
 		t.Errorf("fallback system prompt must name the terminal tool, got %q", retry.System)
+	}
+}
+
+func TestRunner_TokenBudgetForcesSubmitThenStops(t *testing.T) {
+	spin := api.MessagesResponse{
+		Type: "message", Role: "assistant", StopReason: api.StopToolUse,
+		Usage:   api.Usage{InputTokens: 600, OutputTokens: 100},
+		Content: []api.ContentPart{{Type: api.PartToolUse, ID: "tu_x", Name: "spin", Input: json.RawMessage(`{}`)}},
+	}
+	script := &scriptedServer{responses: []api.MessagesResponse{spin, findingsUse("tu_f")}}
+	srv := newMessagesServer(t, script)
+	defer srv.Close()
+	runner := &agent.Runner{
+		Client:      api.New(srv.URL, "test-token"),
+		TokenBudget: 500,
+		Tools: []agent.Tool{
+			{Def: api.Tool{Name: "spin", InputSchema: map[string]any{"type": "object"}}, Run: func(context.Context, json.RawMessage) (string, error) { return "spun", nil }},
+			agent.ReportFindingsTool(),
+		},
+	}
+	res, err := runner.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TerminalTool != agent.ToolReportFindings || res.Tokens() != 700 {
+		t.Fatalf("terminal=%q tokens=%d", res.TerminalTool, res.Tokens())
+	}
+	if tc := script.requests[1].ToolChoice; tc == nil || tc.Type != api.ToolChoiceTool {
+		t.Fatalf("the turn after the budget ran out must force the submit, got %+v", tc)
+	}
+
+	stubborn := &scriptedServer{responses: []api.MessagesResponse{spin, spin}}
+	srv2 := newMessagesServer(t, stubborn)
+	defer srv2.Close()
+	runner.Client = api.New(srv2.URL, "test-token")
+	res, err = runner.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Stopped || !strings.Contains(res.StopReason, "token budget") {
+		t.Fatalf("a forced turn past the budget must stop: %+v", res)
 	}
 }

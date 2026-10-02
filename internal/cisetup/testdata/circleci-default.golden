@@ -1,0 +1,16 @@
+provider: circleci (CircleCI)
+=== snippet for .circleci/config.yml (add this job and workflow)
+jobs:
+  gravity:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run: curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 GRAVITY_INSTALL_DIR="$HOME/.local/bin" sh
+      - run:
+          name: Gravity
+          command: $HOME/.local/bin/gravity run
+workflows:
+  gravity:
+    jobs: [gravity]
+=== paste: add it as the project environment variable GRAVITY_TOKEN (Project Settings > Environment Variables)

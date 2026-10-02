@@ -28,7 +28,7 @@ func TestUnknownRefIsHumanized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = repo.Log(context.Background(), "no-such-tag", "HEAD", 0)
+	_, err = repo.LogOneline(context.Background(), "no-such-tag", "HEAD", 0)
 	if err == nil {
 		t.Fatal("expected an unknown-ref error")
 	}

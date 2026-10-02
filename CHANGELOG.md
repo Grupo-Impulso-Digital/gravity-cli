@@ -1,5 +1,189 @@
 # Changelog
 
+## v1.0.0 — 2026-10-02
+
+Clean break: the v0.x command set and the v1 manifest are removed, and every CI
+provider runs one step, `gravity run`. This entry covers milestones C1 (CLI
+core), C2 (passes), C3 (setup UX) and C4 (multi-repository intelligence and
+CI). It is published only after the major-pinned v0.3.x release, so v0.3
+pipelines never pick it up by accident.
+
+### Upgrading from 0.x
+
+- Pipelines on `ci/github@v0`, `GRAVITY_VERSION=0` or the 0.x templates keep
+  installing the newest 0.x release.
+- Run `gravity init` in the repository: it converts `.gravity.yaml` to version
+  2 once (the original is kept as `.gravity.v1.yaml.bak`), registers the
+  passes, mints a repository token with the right scopes, writes the
+  single-step CI file and installs the secret.
+- Prefer the repository token (`gr_repo_…`) that init mints over a v0.x
+  organization key in CI: it carries only the scopes its passes need.
+
+### Added
+
+- Multi-repository ownership (C4). Units are product-wide and any pass whose
+  change touches a unit may update the blocks bound to it, whichever repository
+  wrote them last: guides now reach pages outside their target through units
+  the repository declares or implements (updates of bound blocks only). Every
+  authored block carries provenance (commits and source refs), and repositories
+  that only document a unit are recorded with the `documents` role.
+- Claim verdicts are settled against the product inventory, block writers and
+  Nucleus: `true-elsewhere` (with the owning repository as evidence),
+  `unverifiable` (a soft note), `contradicted-here` (a finding); a
+  contradiction about behaviour another repository implements becomes a
+  cross-repository hint for that repository.
+- Handoffs: pull requests predict them from the API units the change adds or
+  removes; write runs report what the platform detected on ingest. Competing
+  changes (another run's open proposal on the same blocks) are listed in the
+  run output, the step summary and the pull request comment.
+- `gravity explain <page>`: per block the last writer (repository, pass,
+  commit, run), the earlier writers, the ownership, and the page's repository
+  lock with a link to the file.
+- Pull request comments on GitHub, GitLab (`GITLAB_TOKEN`), Bitbucket
+  (`BITBUCKET_ACCESS_TOKEN`) and Azure DevOps (`SYSTEM_ACCESSTOKEN`), upserted
+  by a per-repository marker and created only once a pull request has impact.
+  Findings become GitHub workflow commands, Azure logging commands or a GitLab
+  Code Quality report (`gl-code-quality-report.json`); `--annotate` on `run`
+  and `check`.
+- Every CI run writes a summary: GitHub step summary (pushes and releases too),
+  Azure build summary, `gravity-report.md` elsewhere. The GitHub action
+  receives `run-url` and `exit-code` outputs.
+- The 1.0 GitHub action (`ci/github@v1`): one step that resolves the version,
+  caches the prebuilt binary per release, installs it with `install.sh` (or
+  `install.ps1` on Windows) and runs `gravity run`, `check` or `status`.
+  Inputs `token`, `command`, `args`, `version` (default `1`),
+  `working-directory`, `api-url`.
+- Single-step templates for GitLab (with the Code Quality artifact), Bitbucket
+  and Azure under `ci/`, identical to what `gravity init` writes.
+- `install.sh` and `install.ps1` resolve `GRAVITY_VERSION=<major>` to the
+  newest release of that major and default to `1`; `latest`, `v1.2.3` and
+  `1.2.3` still work. `GRAVITY_RESOLVE_ONLY=1` prints the tag without
+  installing.
+
+- `gravity init` (C3): local detection (remote, languages, OpenAPI documents,
+  UI and server routes, docs folders, runbooks, releases, CI provider), at most
+  three questions (product, passes with the target site chosen inside the
+  question, write), a preview of every file, app-first pass registration or
+  `--passes-as-code`, missing spaces created through `createTargets`, a
+  repository token minted with exactly the scopes of its passes, the CI file
+  for GitHub, GitLab, Bitbucket or Azure (snippets for Jenkins and CircleCI),
+  and the secret installed with `gh`/`glab` on stdin or printed once to paste.
+  `--yes`, `--ci`, `--no-secret`, `--dry-run`, `--repo`, `--app-passes`.
+  A developer without `docs.repos.manage` gets the pre-registration hint
+  without being asked anything.
+- One-shot v1 conversion inside `gravity init`: every live v1 key is mapped or
+  reported, converted verbatim passes carry `adopt: true` and per-file
+  slug/title overrides, the original is kept as `.gravity.v1.yaml.bak`, and
+  converting the output again is a no-op.
+- `gravity status` adds the profile and token expiry, locked (repo-managed)
+  passes, and capability warnings: expiring or expired token, missing modules,
+  missing token scopes, no AI provider, server features a pass needs.
+- `gravity login --token <token>` stores a token headlessly; the device flow
+  shows a spinner while it waits for approval.
+- Terminal UI: `charmbracelet/huh` prompts (accessible mode with
+  `ACCESSIBLE=1`), live per-step progress (`bubbletea`) for `init`, `run`,
+  `preview` and `check`, and a summary card with links (`lipgloss`). Plain
+  output for `--json`, `CI=true`, `NO_COLOR` and non-terminals.
+
+- `gravity run`: connect, plan (dry runs overlay the branch's manifest by
+  hash), per-pass ranges with `stale_head`, one ChangeSet per distinct base,
+  zero-cost scope skips and the no-run rule, `POST /runs` with lease waiting
+  (`--lease-timeout`) and re-planning on `plan_stale`, heartbeats, inventory
+  ingest v2 with `roles[]` (authoritative and release runs; batches plus a
+  closing `entries` call), passes in plan order (`--parallel N`, never two
+  passes on one space at once), pass reports, finish. `lease_lost` stops the
+  run without a finish call.
+- Pass kinds: `guides` (impact from unit bindings, search and hints; an AI plan;
+  block-level edits that cite commits, never touch human blocks or locked
+  pages, deprecate instead of deleting; cross-repo hints), `reference`
+  (deterministic api blocks with endpoint bindings and canonical unit keys,
+  upgrades v0.3 pages in place, explicit removals, optional AI prose),
+  `verbatim` (Markdown/MDX import with front matter, admonitions, GitHub
+  alerts, MkDocs, details, MDX tabs, mermaid, tables, task lists, footnotes,
+  images uploaded once per run, intra-repository links rewritten, folders to
+  collections, whole-page re-import on hash change, deletion proposals,
+  translated files such as `guide.fr.md` or `lang: fr` uploaded as the
+  source page's language version after every source page),
+  `changelog` (release pages and the Unreleased page), `nucleus` (namespaced,
+  repository-tagged atoms), `check` (drift, coverage, claim verdicts, verbatim
+  contradictions, PR notes) and `capture` (waits for the server Doc Agent run).
+- One agent harness for every AI pass: forced submit on the last turn, a token
+  budget per pass, `read_file` at the range head or any ref (the working tree
+  for previews), and doc tools `read_page`, `search_docs`, `recall_nucleus`,
+  `product_inventory`, `list_target`. Hosted pass prompts fall back to baked
+  copies.
+- `gravity preview`: every pass as a dry run over the working tree, with page
+  diffs, the composed instruction layers and the cost.
+- `gravity check`: the PR gate, with a built-in drift and coverage check when
+  no check pass is declared, the doc-impact report, annotations and the
+  upserted PR comment, and exit `1` on findings in `--fail-on`. Fork pull
+  requests without a token exit `0` with a warning.
+
+- New command tree: `login` (device flow, `--with-token`), `logout`, `whoami`,
+  `init`, `status`, `passes`
+  (`list`, `show`, `edit`), `explain`, `version`.
+- Global flags `--profile`, `--api-url`, `--token`, `--manifest`, `-C`,
+  `--json` (one envelope on stdout), `--no-color`, `-q`, `-v`.
+- Profiles in `~/.config/gravity/profiles.yaml`; the v0.x `config.yaml` token
+  is copied once into profile `default` and the old file is never modified.
+- Manifest v2: strict parsing, embedded JSON Schema, did-you-mean for unknown
+  keys, `kind` required on every pass, v1 detection.
+- REST client for the CLI 1.0 contract (auth, repos, plan, status, runs,
+  content, bundle writes, inventory, hints, Nucleus, gateway run context),
+  error envelope with details, retries with backoff on `429`/`5xx`, versioned
+  `User-Agent` (`gravity-cli/<v> (<os>; <arch>)`).
+- CI provider detection (GitHub, GitLab, Bitbucket, Azure, Jenkins, CircleCI,
+  generic) with `GRAVITY_*` overrides.
+- Range resolution per trigger (watermarks, stale head, survey, release tags,
+  shallow-clone deepening) and the ChangeSet (commits, files, renames, unit
+  mapping through source refs, deterministic OpenAPI diff, removed/renamed
+  symbols).
+
+### Security
+
+- A profile token is only sent to the host that issued it. When `--api-url`,
+  `GRAVITY_API_URL` or a manifest `apiUrl` points elsewhere, the command exits
+  `2` (`token_host_mismatch`) before any request; a cloned repository can no
+  longer redirect a stored token. `--token`/`GRAVITY_TOKEN` may target any host.
+- `gravity init` refuses to start the browser sign-in against a `.gravity.yaml`
+  `apiUrl` other than the default host (`manifest_api_url`); name the host
+  yourself with `gravity login --api-url <url>`. `logout` revokes a token only
+  on the host that issued it, whatever `--api-url` says.
+- API URLs must be https; plain http is accepted for loopback hosts only.
+- A `token_to_manifest_host` warning fires when `--token`/`GRAVITY_TOKEN` is
+  sent to a manifest `apiUrl` that is not the default host.
+
+### Changed
+
+- `.github/workflows/docs.yml` (this repository's own docs) is one step on
+  pushes, tags and pull requests; this repository's `.gravity.yaml` is version
+  2 with passes-as-code.
+- The release workflow refuses a `v1.*` tag until a major-pinned v0.x release
+  exists, and moves the `v1` tag the action is referenced by.
+- `gravity logout` with `--token`/`GRAVITY_TOKEN` holding a user token revokes
+  that token on the host it is used against and removes any profile holding
+  it; repository and organization tokens are refused with a warning
+  (`token_kind_unsupported`), since they are revoked in the app.
+- Reference pages per OpenAPI tag are titled with the tag's `x-displayName`,
+  else the tag name in title case (`payment_methods` → `Payment Methods`).
+- `gravity init --yes` in an organization with exactly one product joins it
+  when nothing points to another product, instead of creating a new one.
+- On GitLab and Bitbucket, init's preview and closing summary name the comment
+  token to create (`GITLAB_TOKEN`, `BITBUCKET_ACCESS_TOKEN`); both templates
+  keep `gravity-report.md` as a job or step artifact.
+
+### Removed
+
+- The v0.x GitLab template and Bitbucket pipe (`ci/gitlab/.gitlab-ci.yml`,
+  `ci/bitbucket/pipe`), and the action's `site`, `format`, `since` and
+  `continue-on-findings` inputs.
+- `auth *`, `doctor`, `ping`, `repos`, `spaces`, `sync`, `docs *`,
+  `release-notes`, `check api|docs`, `coverage`, `capture`, `nucleus *`:
+  invoking one prints its replacement and exits `2`.
+- The global `--ci` and `--site` flags; CI mode follows `CI=true`.
+- The v1 manifest (`site`, `spaces`, `sources`, `documents`, ...): CLI 1.x
+  refuses it outside `gravity init`, which converts it.
+
 ## v0.3.0 — 2026-10-02
 
 Stop-the-bleeding release for current v0.2 users: no new architecture, every

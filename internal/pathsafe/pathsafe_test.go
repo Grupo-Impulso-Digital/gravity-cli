@@ -2,6 +2,7 @@ package pathsafe
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -45,5 +46,38 @@ func TestResolve(t *testing.T) {
 	}
 	if _, err := Resolve(root, "../escape"); !errors.Is(err, ErrEscape) {
 		t.Fatalf("Resolve escape err = %v, want ErrEscape", err)
+	}
+}
+
+func TestResolveInRootRefusesSymlinksOutOfTheRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "in.txt"), []byte("i"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(root, "leak.txt")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "dir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("in.txt", filepath.Join(root, "alias.txt")); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"leak.txt", "dir/secret.txt"} {
+		if _, err := ResolveInRoot(root, p); !errors.Is(err, ErrEscape) {
+			t.Errorf("ResolveInRoot(%q) err = %v, want ErrEscape", p, err)
+		}
+	}
+	got, err := ResolveInRoot(root, "alias.txt")
+	if err != nil || filepath.Base(got) != "in.txt" {
+		t.Errorf("an in-root symlink resolves: %q, %v", got, err)
+	}
+	if got, err := ResolveInRoot(root, "missing.txt"); err != nil || got != filepath.Join(root, "missing.txt") {
+		t.Errorf("a missing path resolves to the joined path: %q, %v", got, err)
 	}
 }

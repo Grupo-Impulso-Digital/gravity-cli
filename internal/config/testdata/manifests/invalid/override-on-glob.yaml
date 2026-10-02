@@ -1,0 +1,9 @@
+version: 2
+passes:
+  - name: handbook
+    kind: verbatim
+    target: internal/handbook
+    options:
+      files:
+        - include: "docs/handbook/**/*.md"
+          slug: handbook

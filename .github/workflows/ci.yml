@@ -1,8 +1,3 @@
-# This workflow is intentionally self-contained (not a caller of an org
-# reusable workflow) because gravity-cli is a PUBLIC repository and the
-# Grupo-Impulso-Digital/workflows repo (which hosts the org's reusable
-# go-ci.yml) is PRIVATE — public repos cannot invoke a private reusable
-# workflow. It mirrors that org go-ci contract directly.
 name: CI
 
 on:
@@ -34,8 +29,6 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # golangci-lint is pinned via the go.mod tool directive, so this needs no
-      # separate install and cannot drift from what `make lint` runs locally.
       - name: golangci-lint
         run: make lint
 

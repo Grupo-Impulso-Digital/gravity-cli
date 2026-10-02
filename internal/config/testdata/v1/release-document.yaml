@@ -1,0 +1,14 @@
+version: 1
+site: docs
+product:
+  slug: billing
+  role: docs
+spaces:
+  default: guides
+documents:
+  - file: NEWS.md
+    as: release
+  - file: OTHER.md
+    as: release
+knowledge:
+  namespace: legacy-ns

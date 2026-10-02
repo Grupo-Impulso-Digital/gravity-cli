@@ -1,0 +1,5 @@
+site: docs
+sources:
+  - source: api/openapi.yaml
+    kind: openapi
+    space: api

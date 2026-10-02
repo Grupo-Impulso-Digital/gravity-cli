@@ -1,0 +1,21 @@
+Gravity - billing-api -> Acme Platform   ! health: blocked
+    Pass product-guides: target product/guides awaits approval
+  Auth        dave@acme.io - Acme - user token - profile acme - expires 2026-10-05
+  Repository  github.com/acme/billing-api - last connect 2026-10-01T09:00:00Z
+  App         https://app.gravitydocs.io/app/repos/cr_1
+  Manifest    .gravity.yaml - sha256:8cbfc3de17ba - local changes not yet stored (lands from main)
+  Last CLI    1.0.0
+Passes
+  ok  developer-api   reference  dev-portal/api  repo (locked)  main@9f8e7d6  succeeded 2026-09-30T10:00:00Z  
+  !   product-guides  guides     product/guides  app            -             never ran                       awaiting approval https://app.gravitydocs.io/app/repos/cr_1/passes/rp_2#approve
+Recent runs
+  prun_1  push  main  write  succeeded  4 changes  0 findings  $0.42
+Bundle awaiting review: 4 changes -> https://app.gravitydocs.io/app/repos/runs/prun_1
+Tokens
+  ...r2D2  repo  last used 2026-09-30T10:00:00Z  no expiry
+Capabilities
+  ! the token expires in 4 days (2026-10-05); run `gravity login` to renew it
+  ! pass memory needs the memory module, which this organization does not have
+  ! pass memory needs token scopes nucleus:write; mint a token with them in the app
+  ! no AI provider is configured for this organization; product-guides, memory, changelog cannot write until an admin adds one in the app
+Same product: gateway (live)

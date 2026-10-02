@@ -1,0 +1,30 @@
+provider: azure (Azure Pipelines)
+=== create azure-pipelines.gravity.yml
+trigger:
+  branches:
+    include: [trunk]
+  tags:
+    include: ['v*']
+pr:
+  branches:
+    include: ['*']
+schedules:
+  - cron: '0 6 * * 1'
+    displayName: Gravity weekly
+    branches:
+      include: [trunk]
+    always: true
+pool:
+  vmImage: ubuntu-latest
+steps:
+  - checkout: self
+    fetchDepth: 0
+  - script: |
+      curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 GRAVITY_INSTALL_DIR="$HOME/.local/bin" sh
+      "$HOME/.local/bin/gravity" run
+    displayName: Gravity
+    env:
+      GRAVITY_TOKEN: $(GRAVITY_TOKEN)
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      GRAVITY_API_URL: 'https://api.acme.test'
+=== paste: add it as the secret pipeline variable GRAVITY_TOKEN (Pipelines > Edit > Variables, keep this value secret)

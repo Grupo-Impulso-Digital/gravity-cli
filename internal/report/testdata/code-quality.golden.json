@@ -1,0 +1,26 @@
+[
+  {
+    "description": "Gravity: `Webhooks` says `retry_count` is in the payload; it was removed in a1b2c3d",
+    "check_name": "gravity/claim_contradicted",
+    "fingerprint": "7cba3b398d7dd6b0a9e43d2c757ae14c",
+    "severity": "major",
+    "location": {
+      "path": "src/events.ts",
+      "lines": {
+        "begin": 42
+      }
+    }
+  },
+  {
+    "description": "Gravity: Refunds is out of date (page refunds)",
+    "check_name": "gravity/drift",
+    "fingerprint": "351ea6b5a03324efd0e47e076fbae8a1",
+    "severity": "minor",
+    "location": {
+      "path": ".gravity.yaml",
+      "lines": {
+        "begin": 1
+      }
+    }
+  }
+]

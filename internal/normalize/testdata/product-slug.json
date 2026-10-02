@@ -1,0 +1,38 @@
+[
+    {
+        "in": "Acme Platform",
+        "out": "acme-platform"
+    },
+    {
+        "in": "acme-platform",
+        "out": "acme-platform"
+    },
+    {
+        "in": "  --Billing__API--  ",
+        "out": "billing-api"
+    },
+    {
+        "in": "Café Platform",
+        "out": "caf-platform"
+    },
+    {
+        "in": "__",
+        "out": "default"
+    },
+    {
+        "in": "",
+        "out": "default"
+    },
+    {
+        "in": "New Service!!",
+        "out": "new-service"
+    },
+    {
+        "in": "a-very-long-product-name-that-keeps-going-and-going-past-the-sixty-three-limit",
+        "out": "a-very-long-product-name-that-keeps-going-and-going-past-the-si"
+    },
+    {
+        "in": "Platform -- 2026 (beta)",
+        "out": "platform-2026-beta"
+    }
+]

@@ -1,0 +1,31 @@
+image: alpine:3.20
+clone:
+  depth: full
+definitions:
+  steps:
+    - step: &gravity
+        name: Gravity
+        script:
+          - apk add --no-cache git curl
+          - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh
+          - gravity run
+        artifacts:
+          - gravity-report.md
+pipelines:
+  branches:
+    main:
+      - step: *gravity
+  pull-requests:
+    '**':
+      - step: *gravity
+  tags:
+    'v*':
+      - step: *gravity
+  custom:
+    gravity-schedule:
+      - step:
+          name: Gravity (schedule)
+          script:
+            - apk add --no-cache git curl
+            - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh
+            - GRAVITY_TRIGGER=schedule gravity run

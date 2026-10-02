@@ -3,7 +3,7 @@ set -eu
 
 REPO="Grupo-Impulso-Digital/gravity-cli"
 BINARY="gravity"
-: "${GRAVITY_VERSION:=0}"
+: "${GRAVITY_VERSION:=1}"
 : "${GRAVITY_INSTALL_DIR:=}"
 : "${GRAVITY_RESOLVE_ONLY:=}"
 : "${GRAVITY_RELEASES_API:=https://api.github.com}"
@@ -57,7 +57,7 @@ resolve_tag() {
       ;;
     v[0-9]*.[0-9]*.[0-9]*) t="$GRAVITY_VERSION" ;;
     [0-9]*.[0-9]*.[0-9]*) t="v$GRAVITY_VERSION" ;;
-    *) err "GRAVITY_VERSION must be a major version (0), a release (v0.3.0) or latest; got '$GRAVITY_VERSION'" ;;
+    *) err "GRAVITY_VERSION must be a major version (1), a release (v1.2.3) or latest; got '$GRAVITY_VERSION'" ;;
   esac
   printf '%s\n' "$t"
 }

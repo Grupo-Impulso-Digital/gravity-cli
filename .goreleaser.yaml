@@ -1,14 +1,9 @@
-# GoReleaser builds the downloadable binaries the app's "Download" button hands
-# out. Cut a release by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.
-# Validate changes locally with `goreleaser check` (see the Release section in
-# AGENTS.md). Schema: GoReleaser v2.
 version: 2
 
 project_name: gravity
 
 before:
   hooks:
-    # download-only (not `tidy`): a release must never mutate committed files.
     - go mod download
 
 builds:
@@ -16,14 +11,11 @@ builds:
     main: ./cmd/gravity
     binary: gravity
     env:
-      # static binary — no libc dependency, runs on any matching OS/arch.
       - CGO_ENABLED=0
     flags:
       - -trimpath
     ldflags:
-      # matches the Makefile's version wiring (internal/version.Version). -s -w strips the
-      # symbol table + DWARF to shrink the download.
-      - -s -w -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{ .Version }}
+      - -s -w -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{ .Version }} -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Commit={{ .FullCommit }} -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Date={{ .Date }}
     goos:
       - linux
       - darwin
@@ -34,8 +26,6 @@ builds:
 
 archives:
   - id: gravity
-    # install.sh reconstructs this exact name from the release tag + uname, so
-    # keep it in sync with ./install.sh if you change it.
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
@@ -62,10 +52,6 @@ changelog:
       - "Merge pull request"
       - "Merge branch"
 
-# Homebrew tap — `brew install Grupo-Impulso-Digital/tap/gravity`. A cask (not a
-# formula): casks ship the prebuilt binary directly, which is GoReleaser's
-# recommended route for a Go CLI. Publishes to a separate repo, so it needs a
-# cross-repo PAT (GORELEASER_TOKEN), not the workflow's default GITHUB_TOKEN.
 homebrew_casks:
   - name: gravity
     repository:
@@ -73,9 +59,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.GORELEASER_TOKEN }}"
     homepage: "https://github.com/Grupo-Impulso-Digital/gravity-cli"
-    description: "CI/pipeline companion for the Gravity docs platform"
-    # The binary is unsigned; strip the Gatekeeper quarantine xattr on install
-    # so `gravity` runs without the "developer cannot be verified" prompt.
+    description: "Keeps documentation in Gravity true to your code, from CI"
     hooks:
       post:
         install: |
@@ -83,20 +67,27 @@ homebrew_casks:
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/gravity"]
           end
 
-# Scoop bucket (Windows) — `scoop install gravity`. Same cross-repo PAT.
 scoops:
   - repository:
       owner: Grupo-Impulso-Digital
       name: scoop-bucket
       token: "{{ .Env.GORELEASER_TOKEN }}"
     homepage: "https://github.com/Grupo-Impulso-Digital/gravity-cli"
-    description: "CI/pipeline companion for the Gravity docs platform"
+    description: "Keeps documentation in Gravity true to your code, from CI"
 
 release:
   github:
     owner: Grupo-Impulso-Digital
     name: gravity-cli
   draft: false
-  # tags like v1.0.0-rc.1 land as GitHub pre-releases and are excluded from
-  # /releases/latest, so `curl | sh` users stay on stable builds.
   prerelease: auto
+  header: |
+    {{- if and (eq .Major 1) (eq .Minor 0) (eq .Patch 0) }}
+    ## gravity 1.0
+
+    CLI 1.0 is a clean break: manifest v2 (`version: 2`), passes, and one command per job (`gravity run`). The v0.x commands and the v1 manifest are gone.
+
+    - Pipelines on v0.3 keep working: `ci/github@v0`, `GRAVITY_VERSION=0` and the 0.x templates install the newest 0.x release, never 1.0.
+    - To move: run `gravity init` in the repository. It converts `.gravity.yaml` once, writes the single-step CI file and sets the secret.
+    - CI templates and the action default to major `1` (`ci/github@v1`, `GRAVITY_VERSION=1`), so 2.0 can never break a 1.x pipeline.
+    {{- end }}

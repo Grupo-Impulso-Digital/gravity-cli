@@ -1,0 +1,18 @@
+version: 2
+product: acme-platform
+code:
+  units:
+    role: [declares, implements]
+passes:
+  - name: docs-guides
+    kind: verbatim
+    target: dev-portal/guides
+    triggers: [push]
+    options:
+      adopt: true
+      files:
+        - include: docs/getting-started.md
+          slug: getting-started
+          title: Getting started
+        - include: docs/auth.md
+          collection: concepts

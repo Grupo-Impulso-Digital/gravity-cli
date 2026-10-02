@@ -102,11 +102,24 @@ type ToolChoice struct {
 	Name string `json:"name,omitempty"`
 }
 
-// MessagesContext lets the caller scope the platform gateway's RAG to a specific site/space.
+// Gateway call purposes recorded with a run context.
+const (
+	PurposePlan     = "plan"
+	PurposeAuthor   = "author"
+	PurposeCheck    = "check"
+	PurposeDistill  = "distill"
+	PurposeImpact   = "impact"
+	PurposeMapUnits = "map-units"
+)
+
+// MessagesContext scopes a gateway call to a site/space or to a pass run.
 type MessagesContext struct {
 	Site      string `json:"site,omitempty"`
 	Space     string `json:"space,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
+	RunID     string `json:"runId,omitempty"`
+	RunPassID string `json:"runPassId,omitempty"`
+	Purpose   string `json:"purpose,omitempty"`
 }
 
 // MessagesRequest is the request body of POST /api/llm/v1/messages.

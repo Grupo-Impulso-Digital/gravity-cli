@@ -1,0 +1,5 @@
+version: 2
+passes:
+  - name: docs
+    kind: guides
+    target: product

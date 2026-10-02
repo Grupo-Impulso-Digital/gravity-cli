@@ -1,4 +1,4 @@
-// Package api implements the HTTP client for the Gravity platform.
+// Package api implements the HTTP client for the Gravity platform REST API and LLM gateway.
 package api
 
 import (
@@ -11,11 +11,22 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
+
+// RetryPolicy controls how 429 and 5xx answers are retried.
+type RetryPolicy struct {
+	Attempts int
+	Base     time.Duration
+	Max      time.Duration
+}
+
+// DefaultRetry is three attempts with exponential backoff from one second.
+var DefaultRetry = RetryPolicy{Attempts: 3, Base: time.Second, Max: 60 * time.Second}
 
 // Client talks to the Gravity platform.
 type Client struct {
@@ -23,160 +34,206 @@ type Client struct {
 	Token      string
 	HTTPClient *http.Client
 	UserAgent  string
+	Retry      RetryPolicy
+	Sleep      func(ctx context.Context, d time.Duration) error
 }
 
 // New constructs a Client.
 func New(baseURL, token string) *Client {
 	return &Client{
-		BaseURL:   strings.TrimRight(baseURL, "/"),
-		Token:     token,
-		UserAgent: version.UserAgent(),
-		HTTPClient: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		BaseURL:    strings.TrimRight(baseURL, "/"),
+		Token:      token,
+		UserAgent:  version.UserAgent(),
+		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		Retry:      DefaultRetry,
+		Sleep:      sleepContext,
 	}
 }
 
-// APIError is the decoded error envelope from a non-2xx response.
-type APIError struct {
-	StatusCode int
-	Code       string
-	Message    string
-}
-
-func (e *APIError) Error() string {
-	if e.Code != "" {
-		return fmt.Sprintf("api error %d (%s): %s", e.StatusCode, e.Code, e.Message)
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
-	if e.Message != "" {
-		return fmt.Sprintf("api error %d: %s", e.StatusCode, e.Message)
-	}
-	return fmt.Sprintf("api error %d", e.StatusCode)
 }
 
-// IsAuth reports whether the error is an authentication/authorization failure.
-// A license refusal (module_disabled, seat_limit) is a 403 but not an auth
-// failure: the credential is fine and "check your token" would send the user
-// down the wrong path, so those surface as *ModuleDisabledError/*SeatLimitError.
-func (e *APIError) IsAuth() bool {
-	if e.isLicense() {
-		return false
-	}
-	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
+type request struct {
+	method      string
+	path        string
+	query       url.Values
+	body        any
+	raw         []byte
+	contentType string
+	headers     map[string]string
 }
 
-func (e *APIError) isLicense() bool {
-	return e.Code == CodeModuleDisabled || e.Code == CodeSeatLimit
-}
-
-// IsUnavailable reports that the platform explicitly declined the route as not implemented or disabled.
-func (e *APIError) IsUnavailable() bool {
-	if e.StatusCode == http.StatusNotImplemented {
-		return true
-	}
-	switch e.Code {
-	case "not_implemented", "feature_disabled", "unknown_route":
-		return true
-	}
-	return false
-}
-
-// IsNotFound reports a 404 that is not an explicit unknown-route answer.
-func (e *APIError) IsNotFound() bool {
-	return e.StatusCode == http.StatusNotFound && !e.IsUnavailable()
-}
-
-type errorEnvelope struct {
-	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		Module  string `json:"module"`
-	} `json:"error"`
-}
-
-func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
+func (c *Client) do(ctx context.Context, r request, out any) error {
 	if c.BaseURL == "" {
-		return errors.New("no API URL configured (set --api-url, GRAVITY_API_URL, or run gravity auth login)")
+		return errors.New("no API URL configured (set --api-url or GRAVITY_API_URL, or run gravity login)")
 	}
-	u := c.BaseURL + path
-	if len(query) > 0 {
-		u += "?" + query.Encode()
-	}
-
-	var reqBody io.Reader
-	if body != nil {
-		buf, err := json.Marshal(body)
+	payload := r.raw
+	if r.body != nil {
+		buf, err := json.Marshal(r.body)
 		if err != nil {
 			return fmt.Errorf("encode request body: %w", err)
 		}
-		reqBody = bytes.NewReader(buf)
+		payload = buf
 	}
+	attempts := max(c.Retry.Attempts, 1)
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		status, data, header, err := c.send(ctx, r, payload)
+		if err != nil {
+			lastErr = err
+			if r.method != http.MethodGet || attempt == attempts || ctx.Err() != nil {
+				return err
+			}
+			if serr := c.wait(ctx, c.backoff(attempt, 0)); serr != nil {
+				return serr
+			}
+			continue
+		}
+		if status >= 200 && status < 300 {
+			if out != nil && len(data) > 0 {
+				if err := json.Unmarshal(data, out); err != nil {
+					return fmt.Errorf("decode response of %s %s: %w", r.method, r.path, err)
+				}
+			}
+			return nil
+		}
+		apiErr := decodeError(status, header, data)
+		apiErr.Method, apiErr.Path = r.method, r.path
+		if !retryable(status) || attempt == attempts {
+			return classifyLicense(apiErr)
+		}
+		lastErr = apiErr
+		if serr := c.wait(ctx, c.backoff(attempt, apiErr.RetryAfter)); serr != nil {
+			return serr
+		}
+	}
+	return lastErr
+}
 
-	req, err := http.NewRequestWithContext(ctx, method, u, reqBody)
+func (c *Client) send(ctx context.Context, r request, payload []byte) (int, []byte, http.Header, error) {
+	u := c.BaseURL + r.path
+	if len(r.query) > 0 {
+		u += "?" + r.query.Encode()
+	}
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, r.method, u, body)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return 0, nil, nil, fmt.Errorf("build request: %w", err)
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	switch {
+	case r.contentType != "":
+		req.Header.Set("Content-Type", r.contentType)
+	case payload != nil:
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	}
+	for k, v := range r.headers {
+		req.Header.Set(k, v)
 	}
 	req.Header.Set("Accept", "application/json")
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
 	}
-
-	resp, err := c.HTTPClient.Do(req)
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", method, path, err)
+		return 0, nil, nil, fmt.Errorf("%s %s: %w", r.method, r.path, err)
 	}
 	defer resp.Body.Close()
-
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		return 0, nil, nil, fmt.Errorf("read response of %s %s: %w", r.method, r.path, err)
 	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		apiErr := &APIError{StatusCode: resp.StatusCode}
-		var env errorEnvelope
-		if json.Unmarshal(data, &env) == nil {
-			apiErr.Code = env.Error.Code
-			apiErr.Message = env.Error.Message
-		}
-		if apiErr.Message == "" {
-			apiErr.Message = summarizeBody(resp.StatusCode, resp.Header.Get("Content-Type"), data)
-		}
-		return classifyLicense(apiErr, env.Error.Module)
-	}
-
-	if out != nil && len(data) > 0 {
-		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("decode response: %w", err)
-		}
-	}
-	return nil
+	return resp.StatusCode, data, resp.Header, nil
 }
 
-// Get issues a GET request.
+func retryable(status int) bool {
+	return status == http.StatusTooManyRequests || status >= 500
+}
+
+func (c *Client) backoff(attempt, retryAfter int) time.Duration {
+	limit := c.Retry.Max
+	if limit <= 0 {
+		limit = DefaultRetry.Max
+	}
+	if retryAfter > 0 {
+		return min(time.Duration(retryAfter)*time.Second, limit)
+	}
+	base := c.Retry.Base
+	if base <= 0 {
+		base = DefaultRetry.Base
+	}
+	return min(base<<(attempt-1), limit)
+}
+
+func (c *Client) wait(ctx context.Context, d time.Duration) error {
+	sleep := c.Sleep
+	if sleep == nil {
+		sleep = sleepContext
+	}
+	return sleep(ctx, d)
+}
+
+// Get issues a GET request and decodes the JSON response into out.
 func (c *Client) Get(ctx context.Context, path string, query url.Values, out any) error {
-	return c.do(ctx, http.MethodGet, path, query, nil, out)
+	return c.do(ctx, request{method: http.MethodGet, path: path, query: query}, out)
 }
 
 // Post issues a POST request with a JSON body.
 func (c *Client) Post(ctx context.Context, path string, body, out any) error {
-	return c.do(ctx, http.MethodPost, path, nil, body, out)
+	return c.do(ctx, request{method: http.MethodPost, path: path, body: body}, out)
 }
 
-// Patch issues a PATCH request with a JSON body.
-func (c *Client) Patch(ctx context.Context, path string, body, out any) error {
-	return c.do(ctx, http.MethodPatch, path, nil, body, out)
+// Put issues a PUT request with a JSON body.
+func (c *Client) Put(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, request{method: http.MethodPut, path: path, body: body}, out)
 }
 
-// Delete issues a DELETE request.
-func (c *Client) Delete(ctx context.Context, path string, out any) error {
-	return c.do(ctx, http.MethodDelete, path, nil, nil, out)
+func decodeError(status int, header http.Header, data []byte) *APIError {
+	e := &APIError{StatusCode: status}
+	var env struct {
+		Error struct {
+			Code       string        `json:"code"`
+			Message    string        `json:"message"`
+			Details    []ErrorDetail `json:"details"`
+			Module     string        `json:"module"`
+			RetryAfter int           `json:"retryAfter"`
+			Holder     *LeaseHolder  `json:"holder"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &env) == nil {
+		e.Code = env.Error.Code
+		e.Message = env.Error.Message
+		e.Details = env.Error.Details
+		e.Module = env.Error.Module
+		e.RetryAfter = env.Error.RetryAfter
+		e.Holder = env.Error.Holder
+	}
+	if e.RetryAfter == 0 {
+		if n, err := strconv.Atoi(strings.TrimSpace(header.Get("Retry-After"))); err == nil && n > 0 {
+			e.RetryAfter = n
+		}
+	}
+	if e.Message == "" {
+		e.Message = summarizeBody(status, header.Get("Content-Type"), data)
+	}
+	return e
 }
 
 const maxErrorSummary = 200
@@ -214,4 +271,13 @@ func clip(s string, limit int) string {
 		return s
 	}
 	return string(r[:limit]) + "…"
+}
+
+func pathEscape(parts ...string) string {
+	var b strings.Builder
+	for _, p := range parts {
+		b.WriteByte('/')
+		b.WriteString(url.PathEscape(p))
+	}
+	return b.String()
 }

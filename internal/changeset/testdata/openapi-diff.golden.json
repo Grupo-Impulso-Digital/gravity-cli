@@ -1,0 +1,42 @@
+{
+  "path": "api/openapi.yaml",
+  "added": [
+    {
+      "method": "POST",
+      "path": "/v1/refunds/{id}/cancel",
+      "operationId": "cancelRefund"
+    }
+  ],
+  "removed": [
+    {
+      "method": "GET",
+      "path": "/v1/legacy",
+      "breaking": true
+    }
+  ],
+  "changed": [
+    {
+      "method": "POST",
+      "path": "/v1/refunds",
+      "operationId": "createRefund",
+      "changes": [
+        "parameter Idempotency-Key (header) is now required",
+        "parameter dry_run (query) added (optional)",
+        "requestBody.currency enum narrowed (removed gbp)",
+        "requestBody.reason added (optional)",
+        "response 422 added",
+        "response 201 field retry_count removed"
+      ],
+      "breaking": true
+    },
+    {
+      "method": "GET",
+      "path": "/v1/refunds/{id}",
+      "operationId": "getRefund",
+      "changes": [
+        "summary changed"
+      ]
+    }
+  ],
+  "breaking": true
+}

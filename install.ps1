@@ -33,7 +33,7 @@ function Get-NewestOfMajor([string]$major) {
   return $null
 }
 
-$version = if ($env:GRAVITY_VERSION) { $env:GRAVITY_VERSION } else { '0' }
+$version = if ($env:GRAVITY_VERSION) { $env:GRAVITY_VERSION } else { '1' }
 switch -Regex ($version) {
   '^latest$' {
     try {
@@ -50,7 +50,7 @@ switch -Regex ($version) {
   }
   '^v\d+\.\d+\.\d+' { $tag = $version; break }
   '^\d+\.\d+\.\d+' { $tag = "v$version"; break }
-  default { Die "GRAVITY_VERSION must be a major version (0), a release (v0.3.0) or latest; got '$version'" }
+  default { Die "GRAVITY_VERSION must be a major version (1), a release (v1.2.3) or latest; got '$version'" }
 }
 if (-not $tag) { Die 'could not determine the release tag' }
 if ($env:GRAVITY_RESOLVE_ONLY) { Write-Output $tag; exit 0 }

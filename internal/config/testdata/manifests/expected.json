@@ -1,0 +1,64 @@
+{
+    "valid/minimal.yaml": {
+        "valid": true
+    },
+    "valid/full.yaml": {
+        "valid": true
+    },
+    "valid/gateway-declares.yaml": {
+        "valid": true
+    },
+    "invalid/v1-manifest.yaml": {
+        "valid": false,
+        "path": "",
+        "reason": "v1 manifest: version must be 2 and v1 keys are unknown"
+    },
+    "invalid/on-key.yaml": {
+        "valid": false,
+        "path": "passes[0]",
+        "reason": "unknown key on (did you mean triggers)"
+    },
+    "invalid/typo-key.yaml": {
+        "valid": false,
+        "path": "passes[0]",
+        "reason": "unknown key trigers (did you mean triggers)"
+    },
+    "invalid/target-site-only.yaml": {
+        "valid": false,
+        "path": "passes[0].target",
+        "reason": "guides targets need <site>/<space>"
+    },
+    "invalid/verbatim-without-files.yaml": {
+        "valid": false,
+        "path": "passes[0]",
+        "reason": "verbatim passes require options.files"
+    },
+    "invalid/parent-path.yaml": {
+        "valid": false,
+        "path": "code.openapi[0]",
+        "reason": "paths must stay inside the repository"
+    },
+    "invalid/token-in-manifest.yaml": {
+        "valid": false,
+        "path": "token",
+        "reason": "tokens are never read from .gravity.yaml"
+    },
+    "invalid/bad-pass-name.yaml": {
+        "valid": false,
+        "path": "passes[0].name",
+        "reason": "pass names are lowercase slugs"
+    },
+    "valid/converted-v1-documents.yaml": {
+        "valid": true
+    },
+    "invalid/template-without-kind.yaml": {
+        "valid": false,
+        "path": "passes[0]",
+        "reason": "kind is required even when template is given"
+    },
+    "invalid/override-on-glob.yaml": {
+        "valid": false,
+        "path": "passes[0].options.files[0].include",
+        "reason": "slug/title overrides need a literal include"
+    }
+}

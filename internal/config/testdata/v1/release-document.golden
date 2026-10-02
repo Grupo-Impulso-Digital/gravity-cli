@@ -1,0 +1,32 @@
+version: 2
+product: billing
+code:
+  units:
+    role: documents
+passes:
+  - name: docs
+    kind: guides
+    template: user-guide
+    target: docs/guides
+    triggers: [push, pr]
+  - name: release-notes
+    kind: changelog
+    target: docs/guides
+    triggers: [release]
+    options:
+      changelogFile: NEWS.md
+      source: changelog-file
+  - name: memory
+    kind: nucleus
+    template: nucleus-facts
+    triggers: [push]
+---
+mapped version: version: 2
+mapped site: prefix of every pass target (docs/...)
+mapped product.slug: product: billing
+mapped product.role: code.units.role: documents
+mapped spaces.default: guides pass docs (user-guide) -> docs/guides
+dropped documents[].as: only the first as: release document (NEWS.md) becomes the changelog file; OTHER.md is dropped
+mapped documents: only as: release documents, which feed the changelog pass (see documents[].as)
+mapped documents[].as: changelog pass release-notes -> docs/guides reading NEWS.md
+dropped knowledge.namespace: nucleus pass memory writes to the product namespace product:billing; "legacy-ns" is not inside it

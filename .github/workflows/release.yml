@@ -14,7 +14,33 @@ permissions:
   contents: write
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the major-pinned 0.x release before 1.x
+        if: startsWith(inputs.tag || github.ref_name, 'v1.')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == false) | .tag_name | select(test("^v0\\.[0-9]+\\.[0-9]+$"))] | first // empty')"
+          if [ -z "$tag" ]; then
+            echo "::error::no v0.x release exists; ship the major-pinned v0.3.x release (milestone C0.1) before any v1 tag"
+            exit 1
+          fi
+          action="$(gh api "repos/$GITHUB_REPOSITORY/contents/ci/github/action.yml?ref=$tag" --jq .content | base64 -d)"
+          installer="$(gh api "repos/$GITHUB_REPOSITORY/contents/install.sh?ref=$tag" --jq .content | base64 -d)"
+          if ! printf '%s\n' "$action" | grep -Eq "default: ['\"]?0['\"]?$"; then
+            echo "::error::$tag's ci/github action still defaults to latest; v0.x pipelines would install 1.0"
+            exit 1
+          fi
+          if ! printf '%s\n' "$installer" | grep -Eq 'GRAVITY_VERSION:?[=-]"?0"?[^0-9.]'; then
+            echo "::error::$tag's install.sh does not default to major 0"
+            exit 1
+          fi
+          echo "$tag pins v0 pipelines to major 0"
+
   goreleaser:
+    needs: gate
     runs-on: ubuntu-latest
     env:
       TAG: ${{ inputs.tag || github.ref_name }}

@@ -1,0 +1,46 @@
+[
+    {
+        "in": {
+            "type": "prose",
+            "content": {
+                "text": "Refunds are processed within 5 business days."
+            }
+        },
+        "canonical": "{\"content\":{\"text\":\"Refunds are processed within 5 business days.\"},\"type\":\"prose\"}",
+        "out": "sha256:02bd892f970c04d78ee5bd0ebdf54d8f0cdee7aeabfb027a980cba5152f3a40e"
+    },
+    {
+        "in": {
+            "type": "heading",
+            "content": {
+                "level": 2,
+                "text": "Rotation"
+            }
+        },
+        "canonical": "{\"content\":{\"level\":2,\"text\":\"Rotation\"},\"type\":\"heading\"}",
+        "out": "sha256:e7e4c2c95dcf8e3d42123423d6c8bb464458146bd51892e92f226bcbfa2b5c62"
+    },
+    {
+        "in": {
+            "type": "api",
+            "content": {
+                "path": "/v1/refunds",
+                "method": "POST",
+                "summary": "Create a refund"
+            }
+        },
+        "canonical": "{\"content\":{\"method\":\"POST\",\"path\":\"/v1/refunds\",\"summary\":\"Create a refund\"},\"type\":\"api\"}",
+        "out": "sha256:c8c8e97280fe6cc37574acc99ff4e815483bb5b934ffd155c815765113a15ccc"
+    },
+    {
+        "in": {
+            "type": "callout",
+            "content": {
+                "variant": "warning",
+                "text": "**Deprecated** Use v2."
+            }
+        },
+        "canonical": "{\"content\":{\"text\":\"**Deprecated** Use v2.\",\"variant\":\"warning\"},\"type\":\"callout\"}",
+        "out": "sha256:745ec1f4a5e86d3f63f781db07f93da481768a4a42e12e5cea5e9b28f1d77cb7"
+    }
+]

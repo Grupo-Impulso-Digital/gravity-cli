@@ -1,0 +1,22 @@
+version: 2
+product: acme-platform
+appPasses: ignore
+code:
+  openapi: [openapi/public.yaml]
+  units:
+    kind: api
+    role: declares
+passes:
+  - name: public-api
+    kind: reference
+    target: dev-portal/api/gateway
+    triggers: [push, pr]
+    branches: [main, "release/*"]
+    publish: auto-if-trusted
+  - name: claims
+    kind: check
+    target: dev-portal
+    triggers: [pr]
+    options:
+      failOn: [claims]
+      coverageMin: 0.8

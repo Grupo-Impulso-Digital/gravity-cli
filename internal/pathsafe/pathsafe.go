@@ -3,6 +3,7 @@ package pathsafe
 
 import (
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"strings"
 )
@@ -32,4 +33,28 @@ func Resolve(root, p string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, clean), nil
+}
+
+// ResolveInRoot resolves p like Resolve and refuses it when symlinks lead outside root; a missing path resolves to the joined path.
+func ResolveInRoot(root, p string) (string, error) {
+	full, err := Resolve(root, p)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(full)
+	if errors.Is(err, fs.ErrNotExist) {
+		return full, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(realRoot, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", ErrEscape
+	}
+	return resolved, nil
 }

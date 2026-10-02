@@ -1,7 +1,10 @@
 BINARY    := gravity
 PKG       := ./cmd/gravity
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS   := -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version=$(VERSION)
+COMMIT    ?= $(shell git rev-parse HEAD 2>/dev/null)$(shell git diff --quiet HEAD 2>/dev/null || echo -dirty)
+DATE      ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+VPKG      := github.com/Grupo-Impulso-Digital/gravity-cli/internal/version
+LDFLAGS   := -X $(VPKG).Version=$(VERSION) -X $(VPKG).Commit=$(COMMIT) -X $(VPKG).Date=$(DATE)
 GOLANGCI  := go tool golangci-lint
 
 .DEFAULT_GOAL := build

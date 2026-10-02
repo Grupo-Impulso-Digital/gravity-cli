@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "command": "whoami",
+  "version": "dev",
+  "data": {
+    "principal": {
+      "kind": "user",
+      "user": {
+        "id": "usr_1",
+        "email": "dave@acme.io",
+        "name": "Dave"
+      },
+      "role": "editor",
+      "permissions": [
+        "docs.read",
+        "docs.write",
+        "docs.repos.manage",
+        "docs.repos.tokens"
+      ]
+    },
+    "organization": {
+      "id": "org_1",
+      "slug": "acme",
+      "name": "Acme"
+    },
+    "organizations": [
+      {
+        "id": "org_1",
+        "slug": "acme",
+        "name": "Acme",
+        "role": "editor"
+      },
+      {
+        "id": "org_2",
+        "slug": "acme-labs",
+        "name": "Acme Labs",
+        "role": "admin"
+      }
+    ],
+    "token": {
+      "kind": "user",
+      "source": "env",
+      "keyHint": "x9Qa",
+      "scopes": [],
+      "expiresAt": "2026-12-30T12:00:00Z"
+    },
+    "apiUrl": "http://platform.test",
+    "features": {
+      "device-auth": true,
+      "machine-tokens": true,
+      "pipelines": true
+    },
+    "modules": {
+      "agent": false,
+      "cli": true,
+      "memory": true
+    }
+  },
+  "warnings": [],
+  "error": null
+}

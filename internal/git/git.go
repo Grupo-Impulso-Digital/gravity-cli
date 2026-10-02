@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // Repo is a handle to a git working tree rooted at Root.
@@ -42,38 +43,6 @@ func run(ctx context.Context, dir string, args ...string) (string, error) {
 
 func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	return run(ctx, r.Root, args...)
-}
-
-// MarkerTag is the CI bookkeeping tag that records the last docs-synced commit.
-const MarkerTag = "docs-synced"
-
-// LatestTag returns the most recent release tag reachable from HEAD, or "" if none.
-func (r *Repo) LatestTag(ctx context.Context) (string, error) {
-	return r.describeRelease(ctx, "HEAD")
-}
-
-// TagBefore returns the most recent release tag reachable from ref's first parent, so a
-// release checkout sitting on its own tag ranges from the previous one.
-func (r *Repo) TagBefore(ctx context.Context, ref string) (string, error) {
-	return r.describeRelease(ctx, ref+"^")
-}
-
-func (r *Repo) describeRelease(ctx context.Context, rev string) (string, error) {
-	for _, filter := range [][]string{
-		{"--match", "v[0-9]*"},
-		{"--exclude", MarkerTag, "--exclude", MarkerTag + "-*"},
-	} {
-		args := append([]string{"describe", "--tags", "--abbrev=0"}, filter...)
-		out, err := r.git(ctx, append(args, rev)...)
-		if err == nil {
-			return strings.TrimSpace(out), nil
-		}
-		if !stderrHas(err, "No names found", "cannot describe", "No tags can describe",
-			"Not a valid object name", "unknown revision") {
-			return "", err
-		}
-	}
-	return "", nil
 }
 
 // CurrentBranch returns the checked-out branch name.
@@ -111,86 +80,32 @@ func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// Range describes the commit range release notes / diffs are computed over.
-type Range struct {
-	From string
-	To   string
-}
-
-// String renders the range as git range notation; an empty From is the root of history.
-func (rg Range) String() string {
-	if rg.From == "" {
-		return rg.To
+// ValidateRef refuses a revision that git could parse as an option or that carries whitespace or control characters.
+func ValidateRef(ref string) error {
+	if strings.TrimSpace(ref) == "" {
+		return fmt.Errorf("invalid ref %q: empty", ref)
 	}
-	return rg.From + ".." + rg.To
-}
-
-// Since names the range start for people and prompts.
-func (rg Range) Since() string {
-	if rg.From == "" {
-		return "the start of history"
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid ref %q: must not start with '-'", ref)
 	}
-	return rg.From
-}
-
-// ToolArgs renders the range as git_log/git_diff tool arguments.
-func (rg Range) ToolArgs() string {
-	if rg.From == "" {
-		return fmt.Sprintf("to=%q", rg.To)
-	}
-	return fmt.Sprintf("from=%q, to=%q", rg.From, rg.To)
-}
-
-// ResolveRange determines the effective range given optional from/to overrides; with no earlier tag From stays empty, the root of history.
-func (r *Repo) ResolveRange(ctx context.Context, from, to string) (Range, error) {
-	rng := Range{From: from, To: to}
-	if rng.To == "" {
-		rng.To = "HEAD"
-	}
-	if rng.From == "" {
-		tag, err := r.TagBefore(ctx, rng.To)
-		if err != nil {
-			return Range{}, err
+	for _, c := range ref {
+		if unicode.IsSpace(c) || unicode.IsControl(c) {
+			return fmt.Errorf("invalid ref %q: whitespace or control character", ref)
 		}
-		rng.From = tag
 	}
-	return rng, nil
+	return nil
 }
 
-// Commit is a single log entry.
-type Commit struct {
-	Hash    string
-	Subject string
-}
-
-// Log returns the commits in (from, to].
-func (r *Repo) Log(ctx context.Context, from, to string, maxCount int) ([]Commit, error) {
-	if to == "" {
-		to = "HEAD"
-	}
-	args := []string{"log", "--no-color", "--pretty=format:%H%x09%s"}
-	if maxCount > 0 {
-		args = append(args, fmt.Sprintf("--max-count=%d", maxCount))
-	}
-	args = append(args, rangeArg(from, to))
-	out, err := r.git(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var commits []Commit
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
+func validateRefs(refs ...string) error {
+	for _, ref := range refs {
+		if ref == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
-		c := Commit{Hash: parts[0]}
-		if len(parts) == 2 {
-			c.Subject = parts[1]
+		if err := ValidateRef(ref); err != nil {
+			return err
 		}
-		commits = append(commits, c)
 	}
-	return commits, nil
+	return nil
 }
 
 // LogOneline returns `git log --oneline` text for the range.
@@ -198,11 +113,14 @@ func (r *Repo) LogOneline(ctx context.Context, from, to string, maxCount int) (s
 	if to == "" {
 		to = "HEAD"
 	}
+	if err := validateRefs(from, to); err != nil {
+		return "", err
+	}
 	args := []string{"log", "--no-color", "--oneline"}
 	if maxCount > 0 {
 		args = append(args, fmt.Sprintf("--max-count=%d", maxCount))
 	}
-	args = append(args, rangeArg(from, to))
+	args = append(args, "--end-of-options", rangeArg(from, to), "--")
 	return r.git(ctx, args...)
 }
 
@@ -211,16 +129,19 @@ func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) 
 	if to == "" {
 		to = "HEAD"
 	}
+	if err := validateRefs(from, to); err != nil {
+		return "", err
+	}
 	if from == "" {
-		empty, err := r.git(ctx, "hash-object", "-t", "tree", "--stdin")
+		tree, err := r.EmptyTree(ctx)
 		if err != nil {
 			return "", err
 		}
-		from = strings.TrimSpace(empty)
+		from = tree
 	}
-	args := []string{"diff", "--no-color", rangeArg(from, to)}
+	args := []string{"diff", "--no-color", "--end-of-options", rangeArg(from, to), "--"}
 	if path != "" {
-		args = append(args, "--", path)
+		args = append(args, path)
 	}
 	return r.git(ctx, args...)
 }
@@ -230,7 +151,10 @@ func (r *Repo) Show(ctx context.Context, ref, path string) (string, error) {
 	if ref == "" {
 		ref = "HEAD"
 	}
-	return r.git(ctx, "show", fmt.Sprintf("%s:%s", ref, path))
+	if err := ValidateRef(ref); err != nil {
+		return "", err
+	}
+	return r.git(ctx, "show", "--end-of-options", fmt.Sprintf("%s:%s", ref, path))
 }
 
 // ListFiles returns tracked files, optionally filtered by a pathspec/glob.
@@ -273,4 +197,19 @@ func rangeArg(from, to string) string {
 		return to
 	}
 	return from + ".." + to
+}
+
+// DiffWorkingTree returns the unified diff between from and the working tree.
+func (r *Repo) DiffWorkingTree(ctx context.Context, from, path string) (string, error) {
+	if from == "" {
+		from = "HEAD"
+	}
+	if err := ValidateRef(from); err != nil {
+		return "", err
+	}
+	args := []string{"diff", "--no-color", "--end-of-options", from, "--"}
+	if path != "" {
+		args = append(args, path)
+	}
+	return r.git(ctx, args...)
 }

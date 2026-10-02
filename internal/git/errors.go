@@ -131,16 +131,3 @@ func firstLine(s string) string {
 	}
 	return ""
 }
-
-func stderrHas(err error, subs ...string) bool {
-	var ge *Error
-	if !errors.As(err, &ge) {
-		return false
-	}
-	for _, s := range subs {
-		if strings.Contains(ge.Stderr, s) {
-			return true
-		}
-	}
-	return false
-}
