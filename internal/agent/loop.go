@@ -20,14 +20,8 @@ const (
 	defaultMaxTokens     = 4096
 )
 
-// Author-phase loop caps.
-const (
-	DefaultAuthorMaxTokens     = 8192
-	DefaultAuthorMaxIterations = 16
-)
-
-// DefaultPlanMaxTokens is the output budget of the docs-plan turn, which emits the whole unit inventory at once.
-const DefaultPlanMaxTokens = 16384
+// PhaseMaxTokens is the output budget of one plan or author call.
+const PhaseMaxTokens = 16000
 
 // LLM is the subset of the API client the loop needs.
 type LLM interface {
@@ -43,6 +37,7 @@ type Runner struct {
 	MaxTokens     int
 	MaxIterations int
 	MaxToolCalls  int
+	TokenBudget   int
 	Context       *api.MessagesContext
 	Log           io.Writer
 }
@@ -56,6 +51,13 @@ type Result struct {
 	StopReason    string
 	Iterations    int
 	ToolCalls     int
+	InputTokens   int
+	OutputTokens  int
+}
+
+// Tokens returns the input plus output tokens the loop consumed.
+func (r *Result) Tokens() int {
+	return r.InputTokens + r.OutputTokens
 }
 
 func rejectsForcedToolChoice(err error) bool {
@@ -145,10 +147,9 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 	messages := []api.Message{api.UserText(initialUser)}
 	result := &Result{}
 
-	var inTokens, outTokens int
 	defer func() {
-		if inTokens > 0 || outTokens > 0 {
-			r.logf("agent: tokens: %d in / %d out over %d turn(s)", inTokens, outTokens, result.Iterations)
+		if result.Tokens() > 0 {
+			r.logf("agent: tokens: %d in / %d out over %d turn(s)", result.InputTokens, result.OutputTokens, result.Iterations)
 		}
 	}()
 
@@ -190,8 +191,8 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 
 		messages = append(messages, api.Message{Role: api.RoleAssistant, Content: sanitizeContent(resp.Content)})
 		result.FinalText = resp.TextContent()
-		inTokens += resp.Usage.InputTokens
-		outTokens += resp.Usage.OutputTokens
+		result.InputTokens += resp.Usage.InputTokens
+		result.OutputTokens += resp.Usage.OutputTokens
 
 		if text := strings.TrimSpace(resp.TextContent()); text != "" {
 			r.logf("agent: says: %s", compactLog(text, 400))
@@ -289,6 +290,16 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 
 		messages = append(messages, api.ToolResult(toolResults...))
 		if forced {
+			forceNext = true
+		}
+		if r.TokenBudget > 0 && result.Tokens() >= r.TokenBudget && terminal != "" {
+			if forced {
+				r.logf("agent: token budget of %d spent; stopping", r.TokenBudget)
+				result.Stopped = true
+				result.StopReason = fmt.Sprintf("token budget of %d reached", r.TokenBudget)
+				return result, nil
+			}
+			r.logf("agent: token budget of %d spent; requiring %s next", r.TokenBudget, terminal)
 			forceNext = true
 		}
 	}

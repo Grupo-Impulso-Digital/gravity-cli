@@ -24,7 +24,8 @@ func unwrapJSONString(raw json.RawMessage) (json.RawMessage, bool) {
 	return nil, false
 }
 
-func lenientUnmarshal(raw json.RawMessage, v any) error {
+// Decode unmarshals a terminal tool input, accepting a JSON document the model wrapped in a string.
+func Decode(raw json.RawMessage, v any) error {
 	err := json.Unmarshal(raw, v)
 	if err == nil {
 		return nil
@@ -39,432 +40,288 @@ func lenientUnmarshal(raw json.RawMessage, v any) error {
 
 // Terminal tool names.
 const (
+	ToolSubmitPagePlan     = "submit_page_plan"
+	ToolSubmitPageChanges  = "submit_page_changes"
 	ToolSubmitReleaseNotes = "submit_release_notes"
-	ToolReportFindings     = "report_findings"
 	ToolSubmitAtoms        = "submit_atoms"
-	ToolSubmitDocPlan      = "submit_doc_plan"
-	ToolSubmitPageDoc      = "submit_page_doc"
+	ToolReportFindings     = "report_findings"
+	ToolSubmitUnits        = "submit_units"
 )
 
-// ReleaseNotesInput is the structured input the model passes to submit_release_notes.
-type ReleaseNotesInput struct {
-	Title    string `json:"title"`
-	Summary  string `json:"summary"`
-	Sections []struct {
-		Heading string   `json:"heading"`
-		Items   []string `json:"items"`
-	} `json:"sections"`
-}
+var stringItems = map[string]any{"type": "string"}
 
-// FindingsInput is the structured input the model passes to report_findings.
-type FindingsInput struct {
-	Findings []struct {
-		Severity      string `json:"severity"`
-		Title         string `json:"title"`
-		Detail        string `json:"detail"`
-		SuggestedPage string `json:"suggestedPage"`
-	} `json:"findings"`
-}
+func noop(context.Context, json.RawMessage) (string, error) { return "", nil }
 
-// AtomsInput is the structured input the model passes to submit_atoms.
-type AtomsInput struct {
-	Atoms []struct {
-		Title string   `json:"title"`
-		Body  string   `json:"body"`
-		Kind  string   `json:"kind"`
-		Tags  []string `json:"tags"`
-	} `json:"atoms"`
-}
-
-var memoryKinds = []any{
-	"fact", "entity", "concept", "procedure", "decision",
-	"glossary", "relationship", "preference", "other",
-}
-
-// SubmitAtomsTool builds the terminal tool that ends the nucleus-distill loop.
-func SubmitAtomsTool() Tool {
+func terminal(name, description string, schema map[string]any, validate func(json.RawMessage) error) Tool {
 	return Tool{
 		Terminal: true,
-		Def: api.Tool{
-			Name:        ToolSubmitAtoms,
-			Description: "Submit the distilled memories. Call this exactly once when done, with an empty array if there is nothing worth remembering.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"atoms": map[string]any{
-						"type":        "array",
-						"description": "Small, self-contained facts worth remembering across the product.",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"title": map[string]any{"type": "string", "description": "Short, stable noun phrase naming the fact. Reusing it revises that memory, so keep it identical across runs."},
-								"body":  map[string]any{"type": "string", "description": "One or two concise, self-contained sentences stating the fact."},
-								"kind":  map[string]any{"type": "string", "enum": memoryKinds, "description": "Defaults to fact."},
-								"tags":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Short topical tags; use src:<repo-relative-path> for code provenance."},
-							},
-							"required": []any{"title", "body"},
-						},
-					},
-				},
-				"required": []any{"atoms"},
-			},
-		},
-		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return "", nil
-		},
+		Validate: validate,
+		Run:      noop,
+		Def:      api.Tool{Name: name, Description: description, InputSchema: schema},
 	}
 }
 
-// ParseAtoms decodes a submit_atoms input.
-func ParseAtoms(raw json.RawMessage) (AtomsInput, error) {
-	var in AtomsInput
-	err := json.Unmarshal(raw, &in)
-	return in, err
+func object(required []string, props map[string]any) map[string]any {
+	req := make([]any, 0, len(required))
+	for _, r := range required {
+		req = append(req, r)
+	}
+	return map[string]any{"type": "object", "properties": props, "required": req}
 }
 
-// SubmitReleaseNotesTool builds the terminal tool that ends the release-notes loop.
-func SubmitReleaseNotesTool() Tool {
-	return Tool{
-		Terminal: true,
-		Def: api.Tool{
-			Name:        ToolSubmitReleaseNotes,
-			Description: "Submit the finished release notes. Call this exactly once when you are done. After calling it, do not write any further text.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"title":   map[string]any{"type": "string", "description": "Release notes title (e.g. a version or date)."},
-					"summary": map[string]any{"type": "string", "description": "A one-or-two sentence overview of the release."},
-					"sections": map[string]any{
-						"type":        "array",
-						"description": "Grouped, user-facing changes.",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"heading": map[string]any{"type": "string", "description": "One of Added, Changed, Fixed, Removed, Security, Breaking."},
-								"items": map[string]any{
-									"type":  "array",
-									"items": map[string]any{"type": "string"},
-								},
-							},
-							"required": []any{"heading", "items"},
-						},
-					},
-				},
-				"required": []any{"title", "sections"},
-			},
-		},
-		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return "", nil
-		},
+func enum(values ...string) map[string]any {
+	list := make([]any, 0, len(values))
+	for _, v := range values {
+		list = append(list, v)
 	}
+	return map[string]any{"type": "string", "enum": list}
 }
 
-// ReportFindingsTool builds the terminal tool that ends the docs-gap loop.
-func ReportFindingsTool() Tool {
-	return Tool{
-		Terminal: true,
-		Def: api.Tool{
-			Name:        ToolReportFindings,
-			Description: "Report the documentation gaps you found. Call this exactly once when you are done, with an empty array if there are no gaps.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"findings": map[string]any{
-						"type": "array",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"severity":      map[string]any{"type": "string", "description": "high, medium, or low."},
-								"title":         map[string]any{"type": "string", "description": "Short summary of the gap."},
-								"detail":        map[string]any{"type": "string", "description": "What changed in code and why the docs are now incomplete."},
-								"suggestedPage": map[string]any{"type": "string", "description": "Optional page slug that should be updated."},
-							},
-							"required": []any{"severity", "title"},
-						},
-					},
-				},
-				"required": []any{"findings"},
-			},
-		},
-		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return "", nil
-		},
-	}
+// Page plan actions.
+const (
+	ActionUpdate    = "update"
+	ActionCreate    = "create"
+	ActionDeprecate = "deprecate"
+	ActionNone      = "none"
+)
+
+// PagePlan is the input of submit_page_plan.
+type PagePlan struct {
+	Actions []PageAction `json:"actions"`
 }
 
-// DocPlanInput is the structured input the model passes to submit_doc_plan.
-type DocPlanInput struct {
-	Pages []DocPlanPage `json:"pages"`
-	Units []DocPlanUnit `json:"units"`
+// PageAction is one planned page decision.
+type PageAction struct {
+	Action         string   `json:"action"`
+	PageID         string   `json:"pageId,omitempty"`
+	Slug           string   `json:"slug"`
+	Title          string   `json:"title,omitempty"`
+	CollectionPath []string `json:"collectionPath,omitempty"`
+	Reason         string   `json:"reason"`
+	Units          []string `json:"units,omitempty"`
 }
 
-// UnmarshalJSON decodes a submit_doc_plan input.
-func (p *DocPlanInput) UnmarshalJSON(data []byte) error {
-	var shim struct {
-		Pages json.RawMessage `json:"pages"`
-		Units json.RawMessage `json:"units"`
+// SlugPattern is the shape of a page slug.
+var SlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// SubmitPagePlanTool ends the guides plan phase.
+func SubmitPagePlanTool() Tool {
+	action := object([]string{"action", "slug", "reason"}, map[string]any{
+		"action":         enum(ActionUpdate, ActionCreate, ActionDeprecate, ActionNone),
+		"pageId":         map[string]any{"type": "string", "description": "Existing page id (update, deprecate)."},
+		"slug":           map[string]any{"type": "string", "description": "Page slug; for create a new kebab-case slug."},
+		"title":          map[string]any{"type": "string", "description": "Title of a new page."},
+		"collectionPath": map[string]any{"type": "array", "items": stringItems, "description": "Collection slugs of a new page under the target."},
+		"reason":         map[string]any{"type": "string", "description": "Why, naming the commits or units."},
+		"units":          map[string]any{"type": "array", "items": stringItems, "description": "Unit keys this action concerns."},
+	})
+	return terminal(ToolSubmitPagePlan, "Submit the page actions for this change set. Call exactly once; an empty list when nothing is needed.",
+		object([]string{"actions"}, map[string]any{"actions": map[string]any{"type": "array", "items": action}}), ValidatePagePlan)
+}
+
+// ValidatePagePlan checks a submit_page_plan input.
+func ValidatePagePlan(raw json.RawMessage) error {
+	var in PagePlan
+	if err := Decode(raw, &in); err != nil {
+		return fmt.Errorf("actions must be an array of objects: %w", err)
 	}
-	if err := lenientUnmarshal(data, &shim); err != nil {
-		return err
-	}
-	p.Pages, p.Units = nil, nil
-	if len(shim.Pages) > 0 && string(shim.Pages) != "null" {
-		if err := lenientUnmarshal(shim.Pages, &p.Pages); err != nil {
-			return fmt.Errorf("pages: %w", err)
-		}
-	}
-	if len(shim.Units) > 0 && string(shim.Units) != "null" {
-		if err := lenientUnmarshal(shim.Units, &p.Units); err != nil {
-			return fmt.Errorf("units: %w", err)
+	for i, a := range in.Actions {
+		switch a.Action {
+		case ActionUpdate, ActionDeprecate:
+			if a.PageID == "" && a.Slug == "" {
+				return fmt.Errorf("actions[%d]: %s needs the pageId or slug of an existing page", i, a.Action)
+			}
+		case ActionCreate:
+			if !SlugPattern.MatchString(a.Slug) || strings.TrimSpace(a.Title) == "" {
+				return fmt.Errorf("actions[%d]: create needs a kebab-case slug and a title", i)
+			}
+		case ActionNone:
+		default:
+			return fmt.Errorf("actions[%d]: action %q must be update, create, deprecate or none", i, a.Action)
 		}
 	}
 	return nil
 }
 
-// DocPlanPage is one proposed documentation page.
-type DocPlanPage struct {
-	Space     string   `json:"space"`
-	Slug      string   `json:"slug"`
-	Title     string   `json:"title"`
-	Summary   string   `json:"summary"`
-	Audiences []string `json:"audiences"`
-	Sources   []string `json:"sources"`
-	Units     []string `json:"units"`
-	Kind      string   `json:"kind"`
-}
-
-// DocPlanUnit is one documentable thing the planner found.
-type DocPlanUnit struct {
-	Key        string   `json:"key"`
-	Kind       string   `json:"kind"`
-	Title      string   `json:"title"`
+// Rationale explains a block edit.
+type Rationale struct {
 	Summary    string   `json:"summary"`
-	SourceRefs []string `json:"sourceRefs"`
-	Audiences  []string `json:"audiences"`
-	PageSlugs  []string `json:"pageSlugs"`
-	Changed    bool     `json:"changed"`
+	Commits    []string `json:"commits,omitempty"`
+	SourceRefs []string `json:"sourceRefs,omitempty"`
 }
 
-// UnitKeyPattern is the stable-identity format an inventory unit key must match.
-var UnitKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
-
-var unitKinds = map[string]bool{
-	api.UnitKindFeature: true, api.UnitKindService: true, api.UnitKindSystem: true,
-	api.UnitKindAPI: true, api.UnitKindCapability: true,
-}
-
-// PageDocInput is the structured input the model passes to submit_page_doc.
-type PageDocInput struct {
-	Title  string          `json:"title"`
-	Blocks []DocBlockInput `json:"blocks"`
-}
-
-// UnmarshalJSON decodes a submit_page_doc input.
-func (p *PageDocInput) UnmarshalJSON(data []byte) error {
-	var shim struct {
-		Title  string          `json:"title"`
-		Blocks json.RawMessage `json:"blocks"`
-	}
-	if err := lenientUnmarshal(data, &shim); err != nil {
-		return err
-	}
-	p.Title = shim.Title
-	p.Blocks = nil
-	if len(shim.Blocks) == 0 || string(shim.Blocks) == "null" {
-		return nil
-	}
-	if err := lenientUnmarshal(shim.Blocks, &p.Blocks); err != nil {
-		return fmt.Errorf("blocks: %w", err)
-	}
-	return nil
-}
-
-// DocBlockInput is one authored block.
-type DocBlockInput struct {
+// BlockEdit is one block the author adds or replaces.
+type BlockEdit struct {
 	Key       string          `json:"key"`
 	Type      string          `json:"type"`
-	Ownership string          `json:"ownership"`
-	Audiences []string        `json:"audiences"`
 	Content   json.RawMessage `json:"content"`
-	Sources   []string        `json:"sources"`
+	After     *string         `json:"after,omitempty"`
+	Units     []string        `json:"units,omitempty"`
+	Audiences []string        `json:"audiences,omitempty"`
+	Rationale Rationale       `json:"rationale"`
 }
 
-// SubmitDocPlanTool builds the terminal tool that ends the docs-plan loop.
-func SubmitDocPlanTool() Tool {
-	audienceItems := map[string]any{"type": "string", "enum": []any{"public", "users", "developers"}}
-	kindEnum := []any{
-		api.UnitKindFeature, api.UnitKindService, api.UnitKindSystem,
-		api.UnitKindAPI, api.UnitKindCapability,
-	}
-	stringItems := map[string]any{"type": "string"}
-	return Tool{
-		Terminal: true,
-		Validate: ValidateDocPlan,
-		Def: api.Tool{
-			Name:        ToolSubmitDocPlan,
-			Description: "Submit the repository's unit inventory and the documentation pages that cover it. Call this exactly once when done.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"units": map[string]any{
-						"type":        "array",
-						"description": "Every documentable thing this repository contains, one entry each.",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"key":        map[string]any{"type": "string", "description": "Stable identity, ^[a-z0-9][a-z0-9._-]{0,127}$ (e.g. svc.billing.invoicing). Reuse the key of a unit that already exists."},
-								"kind":       map[string]any{"type": "string", "enum": kindEnum, "description": "feature (user-visible capability) | service (deployable backend component) | system (cross-cutting mechanism) | api (concrete API surface) | capability (platform capability other teams consume)."},
-								"title":      map[string]any{"type": "string", "description": "Human name for the unit."},
-								"summary":    map[string]any{"type": "string", "description": "What it does, what it owns, what it calls."},
-								"sourceRefs": map[string]any{"type": "array", "items": stringItems, "description": "Repo-relative files this unit is made of."},
-								"audiences":  map[string]any{"type": "array", "items": audienceItems, "description": "Audiences this unit is documented for."},
-								"pageSlugs":  map[string]any{"type": "array", "items": stringItems, "description": "Slugs of the pages that document this unit."},
-								"changed":    map[string]any{"type": "boolean", "description": "True when the supplied change set touched this unit."},
-							},
-							"required": []any{"key", "kind", "title"},
-						},
-					},
-					"pages": map[string]any{
-						"type":        "array",
-						"description": "The documentation pages to author, covering the public/users/developers audiences.",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"space":     map[string]any{"type": "string", "description": "Target space slug."},
-								"slug":      map[string]any{"type": "string", "description": "Stable kebab-case page slug."},
-								"title":     map[string]any{"type": "string"},
-								"summary":   map[string]any{"type": "string", "description": "What this page should contain."},
-								"audiences": map[string]any{"type": "array", "items": audienceItems, "description": "Audiences this page serves."},
-								"sources":   map[string]any{"type": "array", "items": stringItems, "description": "Repo files most relevant to authoring this page."},
-								"units":     map[string]any{"type": "array", "items": stringItems, "description": "Keys of the units this page documents; every key must appear in units[]."},
-								"kind":      map[string]any{"type": "string", "enum": kindEnum, "description": "The page's dominant unit kind."},
-							},
-							"required": []any{"slug", "title", "audiences", "units"},
-						},
-					},
-				},
-				"required": []any{"units", "pages"},
-			},
-		},
-		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return "", nil
-		},
-	}
+// HintDraft is a cross-repository hint the author raises instead of editing.
+type HintDraft struct {
+	Kind     string   `json:"kind"`
+	Claim    string   `json:"claim"`
+	UnitKey  string   `json:"unitKey,omitempty"`
+	BlockKey string   `json:"blockKey,omitempty"`
+	Detail   string   `json:"detail,omitempty"`
+	ForRepos []string `json:"forRepos,omitempty"`
 }
 
-// SubmitPageDocTool builds the terminal tool that ends a docs-author loop.
-func SubmitPageDocTool() Tool {
-	audienceItems := map[string]any{"type": "string", "enum": []any{"public", "users", "developers"}}
-	return Tool{
-		Terminal: true,
-		Validate: ValidatePageDoc,
-		Def: api.Tool{
-			Name:        ToolSubmitPageDoc,
-			Description: "Submit the complete set of blocks for this page. Call this exactly once when done.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"title": map[string]any{"type": "string"},
-					"blocks": map[string]any{
-						"type":        "array",
-						"description": "The page's blocks, in reading order, covering all its audiences.",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"key":       map[string]any{"type": "string", "description": "Stable block identity; reuse an existing key to update, omit to remove."},
-								"type":      map[string]any{"type": "string", "enum": []any{"heading", "prose", "code", "table"}},
-								"ownership": map[string]any{"type": "string", "enum": []any{"machine", "hybrid", "human"}, "description": "Defaults to hybrid."},
-								"audiences": map[string]any{"type": "array", "items": audienceItems, "description": "Audiences for this block; empty = everyone."},
-								"content":   map[string]any{"type": "object", "description": "Shape depends on type: heading/prose/code use {text,...}; table uses {rows: string[][] with the header row first, header: true}."},
-								"sources":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Repo files this block draws from."},
-							},
-							"required": []any{"key", "type", "content"},
-						},
-					},
-				},
-				"required": []any{"title", "blocks"},
-			},
-		},
-		Run: func(ctx context.Context, input json.RawMessage) (string, error) {
-			return "", nil
-		},
-	}
+// PageChanges is the input of submit_page_changes.
+type PageChanges struct {
+	Title      string      `json:"title,omitempty"`
+	Summary    string      `json:"summary"`
+	Upserts    []BlockEdit `json:"upserts"`
+	RemoveKeys []string    `json:"removeKeys,omitempty"`
+	Hints      []HintDraft `json:"hints,omitempty"`
 }
 
-// ParseDocPlan decodes a submit_doc_plan input.
-func ParseDocPlan(raw json.RawMessage) (DocPlanInput, error) {
-	var in DocPlanInput
-	err := json.Unmarshal(raw, &in)
-	return in, err
+// AuthoredBlockTypes are the block types authors may write.
+var AuthoredBlockTypes = []string{"heading", "prose", "code", "list", "callout", "table", "quote"}
+
+// SubmitPageChangesTool ends an author phase.
+func SubmitPageChangesTool() Tool {
+	rationale := object([]string{"summary"}, map[string]any{
+		"summary":    map[string]any{"type": "string"},
+		"commits":    map[string]any{"type": "array", "items": stringItems, "description": "SHAs that justify the edit."},
+		"sourceRefs": map[string]any{"type": "array", "items": stringItems, "description": "Files (path or path:line) the edit is based on."},
+	})
+	block := object([]string{"key", "type", "content", "rationale"}, map[string]any{
+		"key":       map[string]any{"type": "string", "description": "Existing key to replace a block, or a new guide:<page-slug>:<section-slug>[:n] key."},
+		"type":      enum(AuthoredBlockTypes...),
+		"content":   map[string]any{"type": "object", "description": "heading {text, level}; prose {text}; code {text, language}; list {text, variant}; callout {text, variant}; table {rows, header}; quote {text}."},
+		"after":     map[string]any{"type": "string", "description": "Key of the block a new block goes after; omit for the end of the page."},
+		"units":     map[string]any{"type": "array", "items": stringItems},
+		"audiences": map[string]any{"type": "array", "items": stringItems},
+		"rationale": rationale,
+	})
+	hint := object([]string{"kind", "claim"}, map[string]any{
+		"kind":     enum("contradiction", "impact"),
+		"claim":    map[string]any{"type": "string"},
+		"unitKey":  map[string]any{"type": "string"},
+		"blockKey": map[string]any{"type": "string"},
+		"detail":   map[string]any{"type": "string"},
+		"forRepos": map[string]any{"type": "array", "items": stringItems, "description": "Remote keys of the repositories that should look at it; empty = the unit's other contributors."},
+	})
+	return terminal(ToolSubmitPageChanges, "Submit the block-level edits of this page. Call exactly once.",
+		object([]string{"summary", "upserts"}, map[string]any{
+			"title":      map[string]any{"type": "string", "description": "Page title (new pages only)."},
+			"summary":    map[string]any{"type": "string", "description": "One sentence for reviewers: what changed on the page and why."},
+			"upserts":    map[string]any{"type": "array", "items": block},
+			"removeKeys": map[string]any{"type": "array", "items": stringItems},
+			"hints":      map[string]any{"type": "array", "items": hint},
+		}), ValidatePageChanges)
 }
 
-// ParsePageDoc decodes a submit_page_doc input.
-func ParsePageDoc(raw json.RawMessage) (PageDocInput, error) {
-	var in PageDocInput
-	err := json.Unmarshal(raw, &in)
-	return in, err
-}
-
-// ValidateDocPlan checks a submit_doc_plan input parses and is actionable.
-func ValidateDocPlan(raw json.RawMessage) error {
-	in, err := ParseDocPlan(raw)
-	if err != nil {
-		return fmt.Errorf("pages and units must be JSON arrays of objects, not strings: %w", err)
+// ValidatePageChanges checks a submit_page_changes input.
+func ValidatePageChanges(raw json.RawMessage) error {
+	var in PageChanges
+	if err := Decode(raw, &in); err != nil {
+		return fmt.Errorf("upserts must be an array of block objects: %w", err)
 	}
-	if len(in.Pages) == 0 {
-		return errors.New("pages is empty — every codebase has documentable surface; propose at least an overview, a usage/getting-started page, and an architecture page grounded in files you read")
+	allowed := map[string]bool{}
+	for _, t := range AuthoredBlockTypes {
+		allowed[t] = true
 	}
-	keys := make(map[string]bool, len(in.Units))
-	for i, u := range in.Units {
-		key := strings.TrimSpace(u.Key)
-		if !UnitKeyPattern.MatchString(key) {
-			return fmt.Errorf("units[%d].key %q must match ^[a-z0-9][a-z0-9._-]{0,127}$ (e.g. svc.billing.invoicing)", i, u.Key)
+	seen := map[string]bool{}
+	for i, b := range in.Upserts {
+		switch {
+		case strings.TrimSpace(b.Key) == "":
+			return fmt.Errorf("upserts[%d] needs a key", i)
+		case seen[b.Key]:
+			return fmt.Errorf("upserts[%d]: key %q appears twice", i, b.Key)
+		case !allowed[b.Type]:
+			return fmt.Errorf("upserts[%d] (%s): type %q must be one of %s", i, b.Key, b.Type, strings.Join(AuthoredBlockTypes, ", "))
+		case !isObject(b.Content):
+			return fmt.Errorf("upserts[%d] (%s): content must be an object", i, b.Key)
+		case strings.TrimSpace(b.Rationale.Summary) == "":
+			return fmt.Errorf("upserts[%d] (%s): rationale.summary is required; cite the commits behind the edit", i, b.Key)
 		}
-		if keys[key] {
-			return fmt.Errorf("units[%d].key %q is duplicated — every unit needs its own stable key", i, key)
-		}
-		keys[key] = true
-		if !unitKinds[strings.TrimSpace(u.Kind)] {
-			return fmt.Errorf("units[%d] (key %q): kind %q must be feature|service|system|api|capability", i, key, u.Kind)
-		}
-		if strings.TrimSpace(u.Title) == "" {
-			return fmt.Errorf("units[%d] (key %q) needs a title", i, key)
-		}
-	}
-	for i, pg := range in.Pages {
-		if strings.TrimSpace(pg.Slug) == "" || strings.TrimSpace(pg.Title) == "" {
-			return fmt.Errorf("pages[%d] needs both a slug and a title", i)
-		}
-		if kind := strings.TrimSpace(pg.Kind); kind != "" && !unitKinds[kind] {
-			return fmt.Errorf("pages[%d] (%q): kind %q must be feature|service|system|api|capability", i, pg.Slug, pg.Kind)
-		}
-		for _, key := range pg.Units {
-			if !keys[strings.TrimSpace(key)] {
-				return fmt.Errorf("pages[%d] (%q) references unit %q, which is not in units[] — add the unit or fix the key", i, pg.Slug, key)
-			}
-		}
+		seen[b.Key] = true
 	}
 	return nil
 }
 
-// ValidatePageDoc checks a submit_page_doc input parses and every block has the required shape.
-func ValidatePageDoc(raw json.RawMessage) error {
-	in, err := ParsePageDoc(raw)
-	if err != nil {
-		return fmt.Errorf("blocks must be a JSON array of block objects, not a string: %w", err)
+func isObject(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) > 0 && t[0] == '{'
+}
+
+// ReleaseSections are the changelog sections in display order.
+var ReleaseSections = []string{"Added", "Changed", "Fixed", "Deprecated", "Removed", "Security"}
+
+// ReleaseItem is one release-notes entry.
+type ReleaseItem struct {
+	Text    string   `json:"text"`
+	Commits []string `json:"commits,omitempty"`
+	Units   []string `json:"units,omitempty"`
+}
+
+// UnmarshalJSON accepts an entry object or a bare string.
+func (r *ReleaseItem) UnmarshalJSON(data []byte) error {
+	var s string
+	if json.Unmarshal(data, &s) == nil {
+		*r = ReleaseItem{Text: s}
+		return nil
 	}
-	if len(in.Blocks) == 0 {
-		return errors.New("blocks is empty — submit the page's complete block set")
+	type plain ReleaseItem
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
 	}
-	for i, b := range in.Blocks {
-		if strings.TrimSpace(b.Key) == "" {
-			return fmt.Errorf("blocks[%d] needs a key", i)
-		}
-		if strings.TrimSpace(b.Type) == "" {
-			return fmt.Errorf("blocks[%d] (key %q) needs a type", i, b.Key)
-		}
-		if len(bytes.TrimSpace(b.Content)) == 0 {
-			return fmt.Errorf("blocks[%d] (key %q) needs content", i, b.Key)
+	*r = ReleaseItem(p)
+	return nil
+}
+
+// ReleaseSection groups entries under a heading.
+type ReleaseSection struct {
+	Heading string        `json:"heading"`
+	Items   []ReleaseItem `json:"items"`
+}
+
+// ReleaseNotesInput is the input of submit_release_notes.
+type ReleaseNotesInput struct {
+	Title    string           `json:"title"`
+	Summary  string           `json:"summary"`
+	Sections []ReleaseSection `json:"sections"`
+}
+
+// SubmitReleaseNotesTool ends the changelog author phase.
+func SubmitReleaseNotesTool() Tool {
+	item := object([]string{"text"}, map[string]any{
+		"text":    map[string]any{"type": "string"},
+		"commits": map[string]any{"type": "array", "items": stringItems},
+		"units":   map[string]any{"type": "array", "items": stringItems},
+	})
+	section := object([]string{"heading", "items"}, map[string]any{
+		"heading": enum(ReleaseSections...),
+		"items":   map[string]any{"type": "array", "items": item},
+	})
+	return terminal(ToolSubmitReleaseNotes, "Submit the finished release notes. Call exactly once.",
+		object([]string{"summary", "sections"}, map[string]any{
+			"title":    map[string]any{"type": "string"},
+			"summary":  map[string]any{"type": "string", "description": "One or two sentences about the release."},
+			"sections": map[string]any{"type": "array", "items": section},
+		}), ValidateReleaseNotes)
+}
+
+// ValidateReleaseNotes checks a submit_release_notes input.
+func ValidateReleaseNotes(raw json.RawMessage) error {
+	var in ReleaseNotesInput
+	if err := Decode(raw, &in); err != nil {
+		return fmt.Errorf("sections must be an array of objects: %w", err)
+	}
+	known := map[string]bool{}
+	for _, s := range ReleaseSections {
+		known[s] = true
+	}
+	for i, s := range in.Sections {
+		if !known[s.Heading] {
+			return fmt.Errorf("sections[%d]: heading %q must be one of %s", i, s.Heading, strings.Join(ReleaseSections, ", "))
 		}
 	}
 	return nil
@@ -473,13 +330,184 @@ func ValidatePageDoc(raw json.RawMessage) error {
 // ParseReleaseNotes decodes a submit_release_notes input.
 func ParseReleaseNotes(raw json.RawMessage) (ReleaseNotesInput, error) {
 	var in ReleaseNotesInput
-	err := json.Unmarshal(raw, &in)
+	err := Decode(raw, &in)
 	return in, err
 }
 
-// ParseFindings decodes a report_findings input.
-func ParseFindings(raw json.RawMessage) (FindingsInput, error) {
-	var in FindingsInput
-	err := json.Unmarshal(raw, &in)
-	return in, err
+// Atom is one distilled memory.
+type Atom struct {
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	Kind       string   `json:"kind,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	Confidence float64  `json:"confidence,omitempty"`
+	Commits    []string `json:"commits,omitempty"`
+	Units      []string `json:"units,omitempty"`
 }
+
+// AtomsInput is the input of submit_atoms.
+type AtomsInput struct {
+	Atoms []Atom `json:"atoms"`
+}
+
+// MemoryKinds are the Nucleus atom kinds.
+var MemoryKinds = []string{"fact", "entity", "concept", "procedure", "decision", "glossary", "relationship", "preference", "other"}
+
+// SubmitAtomsTool ends the nucleus distill phase.
+func SubmitAtomsTool() Tool {
+	atom := object([]string{"title", "body"}, map[string]any{
+		"title":      map[string]any{"type": "string", "description": "Short, stable noun phrase; reusing it revises that memory."},
+		"body":       map[string]any{"type": "string", "description": "One or two self-contained sentences."},
+		"kind":       enum(MemoryKinds...),
+		"tags":       map[string]any{"type": "array", "items": stringItems},
+		"confidence": map[string]any{"type": "number", "minimum": 0, "maximum": 1},
+		"commits":    map[string]any{"type": "array", "items": stringItems},
+		"units":      map[string]any{"type": "array", "items": stringItems},
+	})
+	return terminal(ToolSubmitAtoms, "Submit the distilled memories. Call exactly once, with an empty array when nothing is worth remembering.",
+		object([]string{"atoms"}, map[string]any{"atoms": map[string]any{"type": "array", "items": atom}}), func(raw json.RawMessage) error {
+			var in AtomsInput
+			if err := Decode(raw, &in); err != nil {
+				return fmt.Errorf("atoms must be an array of objects: %w", err)
+			}
+			for i, a := range in.Atoms {
+				if strings.TrimSpace(a.Title) == "" || strings.TrimSpace(a.Body) == "" {
+					return fmt.Errorf("atoms[%d] needs a title and a body", i)
+				}
+			}
+			return nil
+		})
+}
+
+// ClaimEvidence supports a claim verdict.
+type ClaimEvidence struct {
+	Kind string `json:"kind"`
+	Ref  string `json:"ref"`
+}
+
+// ClaimFinding is one reviewed claim.
+type ClaimFinding struct {
+	Verdict  string          `json:"verdict"`
+	Category string          `json:"category,omitempty"`
+	Title    string          `json:"title"`
+	Claim    string          `json:"claim,omitempty"`
+	Detail   string          `json:"detail,omitempty"`
+	UnitKey  string          `json:"unitKey,omitempty"`
+	BlockKey string          `json:"blockKey,omitempty"`
+	PageID   string          `json:"pageId,omitempty"`
+	PageSlug string          `json:"pageSlug,omitempty"`
+	File     string          `json:"file,omitempty"`
+	Line     int             `json:"line,omitempty"`
+	Repo     string          `json:"repo,omitempty"`
+	Evidence []ClaimEvidence `json:"evidence,omitempty"`
+}
+
+// FindingsInput is the input of report_findings.
+type FindingsInput struct {
+	Findings []ClaimFinding `json:"findings"`
+}
+
+// Verdicts a claim review assigns.
+var Verdicts = []string{api.VerdictVerifiedHere, api.VerdictTrueElsewhere, api.VerdictUnverifiable, api.VerdictContradicted}
+
+// ReportFindingsTool ends a check phase.
+func ReportFindingsTool() Tool {
+	finding := object([]string{"verdict", "title"}, map[string]any{
+		"verdict":  enum(Verdicts...),
+		"category": enum("claims", "verbatim"),
+		"title":    map[string]any{"type": "string"},
+		"claim":    map[string]any{"type": "string", "description": "The statement as the page makes it."},
+		"detail":   map[string]any{"type": "string"},
+		"unitKey":  map[string]any{"type": "string"},
+		"blockKey": map[string]any{"type": "string"},
+		"pageId":   map[string]any{"type": "string"},
+		"pageSlug": map[string]any{"type": "string"},
+		"file":     map[string]any{"type": "string"},
+		"line":     map[string]any{"type": "integer"},
+		"repo":     map[string]any{"type": "string", "description": "For true-elsewhere: the repository that owns the claim."},
+		"evidence": map[string]any{"type": "array", "items": object([]string{"kind", "ref"}, map[string]any{"kind": enum("commit", "file", "spec", "atom", "repo"), "ref": stringItems})},
+	})
+	return terminal(ToolReportFindings, "Report the reviewed claims. Call exactly once, with an empty array when the pages hold no claims about the changed units.",
+		object([]string{"findings"}, map[string]any{"findings": map[string]any{"type": "array", "items": finding}}), func(raw json.RawMessage) error {
+			var in FindingsInput
+			if err := Decode(raw, &in); err != nil {
+				return fmt.Errorf("findings must be an array of objects: %w", err)
+			}
+			valid := map[string]bool{}
+			for _, v := range Verdicts {
+				valid[v] = true
+			}
+			for i, f := range in.Findings {
+				if !valid[f.Verdict] {
+					return fmt.Errorf("findings[%d]: verdict %q must be one of %s", i, f.Verdict, strings.Join(Verdicts, ", "))
+				}
+			}
+			return nil
+		})
+}
+
+// MappedUnit is one unit found by the map-units step.
+type MappedUnit struct {
+	Key        string   `json:"key"`
+	Kind       string   `json:"kind"`
+	Title      string   `json:"title"`
+	Summary    string   `json:"summary,omitempty"`
+	SourceRefs []string `json:"sourceRefs"`
+	Aliases    []string `json:"aliases,omitempty"`
+	Audiences  []string `json:"audiences,omitempty"`
+}
+
+// UnitsInput is the input of submit_units.
+type UnitsInput struct {
+	Units []MappedUnit `json:"units"`
+}
+
+// UnitKeyPattern is the grammar of a product unit key.
+var UnitKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:/-]{0,127}$`)
+
+var unitKinds = []string{api.UnitKindFeature, api.UnitKindService, api.UnitKindSystem, api.UnitKindAPI, api.UnitKindCapability}
+
+// SubmitUnitsTool ends the map-units step.
+func SubmitUnitsTool() Tool {
+	unit := object([]string{"key", "kind", "title", "sourceRefs"}, map[string]any{
+		"key":        map[string]any{"type": "string", "description": "Existing product key when it is the same unit; else a new stable key."},
+		"kind":       enum(unitKinds...),
+		"title":      map[string]any{"type": "string"},
+		"summary":    map[string]any{"type": "string"},
+		"sourceRefs": map[string]any{"type": "array", "items": stringItems},
+		"aliases":    map[string]any{"type": "array", "items": stringItems},
+		"audiences":  map[string]any{"type": "array", "items": stringItems},
+	})
+	return terminal(ToolSubmitUnits, "Submit the units this repository contributes to. Call exactly once.",
+		object([]string{"units"}, map[string]any{"units": map[string]any{"type": "array", "items": unit}}), ValidateUnits)
+}
+
+// ValidateUnits checks a submit_units input.
+func ValidateUnits(raw json.RawMessage) error {
+	var in UnitsInput
+	if err := Decode(raw, &in); err != nil {
+		return fmt.Errorf("units must be an array of objects: %w", err)
+	}
+	kinds := map[string]bool{}
+	for _, k := range unitKinds {
+		kinds[k] = true
+	}
+	seen := map[string]bool{}
+	for i, u := range in.Units {
+		switch {
+		case !UnitKeyPattern.MatchString(u.Key):
+			return fmt.Errorf("units[%d].key %q must match %s", i, u.Key, UnitKeyPattern)
+		case seen[u.Key]:
+			return fmt.Errorf("units[%d].key %q is duplicated", i, u.Key)
+		case !kinds[u.Kind]:
+			return fmt.Errorf("units[%d] (%s): kind %q must be one of %s", i, u.Key, u.Kind, strings.Join(unitKinds, ", "))
+		case len(u.SourceRefs) == 0:
+			return fmt.Errorf("units[%d] (%s) needs at least one sourceRef", i, u.Key)
+		}
+		seen[u.Key] = true
+	}
+	return nil
+}
+
+// ErrNoSubmit means the model never called the terminal tool.
+var ErrNoSubmit = errors.New("the model did not submit a result")

@@ -73,4 +73,24 @@ func TestReadFileReadsAtTheRangeEnd(t *testing.T) {
 	if desc := readFileTool(t, GitToolsAt(repo, "v1")).Def.Description; !strings.Contains(desc, "at v1") {
 		t.Errorf("the tool must tell the model which ref it reads: %q", desc)
 	}
+	got, err = readFileTool(t, GitTools(repo)).Run(context.Background(), json.RawMessage(`{"path":"api.go","ref":"v1"}`))
+	if err != nil || got != "release one\n" {
+		t.Errorf("read_file with ref = %q, %v", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(repo.Root, "api.go"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wt := RepoTools(repo, Range{Base: "HEAD", WorkingTree: true})
+	got, err = readFileTool(t, wt).Run(context.Background(), input)
+	if err != nil || got != "uncommitted\n" {
+		t.Errorf("read_file on the working tree = %q, %v", got, err)
+	}
+	for _, tl := range wt {
+		if tl.Def.Name == "git_diff" {
+			diff, err := tl.Run(context.Background(), json.RawMessage(`{}`))
+			if err != nil || !strings.Contains(diff, "+uncommitted") {
+				t.Errorf("git_diff on the working tree = %q, %v", diff, err)
+			}
+		}
+	}
 }

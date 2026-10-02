@@ -153,3 +153,15 @@ func rangeArg(from, to string) string {
 	}
 	return from + ".." + to
 }
+
+// DiffWorkingTree returns the unified diff between from and the working tree.
+func (r *Repo) DiffWorkingTree(ctx context.Context, from, path string) (string, error) {
+	if from == "" {
+		from = "HEAD"
+	}
+	args := []string{"diff", "--no-color", from}
+	if path != "" {
+		args = append(args, "--", path)
+	}
+	return r.git(ctx, args...)
+}
