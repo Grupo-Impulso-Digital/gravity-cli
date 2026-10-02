@@ -1,58 +1,51 @@
-version: 1
-site: gravity
+version: 2
+product: gravity
 apiUrl: https://api.gravitydocs.io
-
-product:
-  slug: gravity
-  repo: cli
-
-spaces:
-  default: cli
-  parent: developers
-  home: overview
-  shared: [internal]
-  declare:
-    - slug: developers
-      name: Developers
-      type: api-reference
-      visibility: public
-    - slug: cli
-      name: CLI
-      parent: developers
-      audiences: [developers]
-    - slug: internal
-      name: Engineering Handbook
-      type: handbook
-      visibility: private
-
-documents:
-  - file: docs/platform-authoring-api.md
-    space: internal
-    page: platform-authoring-api
-    title: Platform authoring API (CLI-side contract mirror)
-    ownership: hybrid
-
-releaseNotes:
-  space: changelog
-
-knowledge:
-  namespace: gravity
-
-discovery:
-  units: capability
-  exclude:
-    - dist/**
-    - '**/*_test.go'
-  entrypoints:
-    - cmd/gravity/main.go
-    - internal/cli/root.go
-    - internal/config/project.go
-  audiences:
-    default: [developers]
-
-i18n:
-  languages: [fr]
-
-coverage:
-  min: 0.7
-  require: [overview]
+code:
+  entrypoints: [cmd/gravity/main.go, internal/cli/root.go]
+  exclude: [dist/**, '**/*_test.go', '**/testdata/**']
+  units:
+    kind: capability
+docs:
+  include: [README.md, AGENTS.md, ci/README.md, docs/**/*.md]
+passes:
+  - name: cli-guides
+    kind: guides
+    template: developer-guide
+    target: gravity/cli
+    triggers: [push, pr]
+    audiences: [developers]
+    instructions: |
+      Document the gravity CLI for engineers who connect a repository and run
+      it in CI: commands, flags, exit codes, the .gravity.yaml manifest and the
+      CI templates. Every example must run as written.
+    options:
+      languages: [fr]
+  - name: handbook
+    kind: verbatim
+    target: gravity/internal
+    triggers: [push]
+    options:
+      adopt: true
+      files:
+        - include: docs/platform-authoring-api.md
+          slug: platform-authoring-api
+          title: Platform authoring API (CLI-side contract mirror)
+  - name: changelog
+    kind: changelog
+    template: customer-changelog
+    target: gravity/changelog
+    triggers: [push, release]
+    options:
+      source: changelog-file
+      changelogFile: CHANGELOG.md
+  - name: memory
+    kind: nucleus
+    template: nucleus-facts
+    triggers: [push]
+  - name: pr-check
+    kind: check
+    triggers: [pr]
+    options:
+      coverageMin: 0.7
+      failOn: [drift, claims, verbatim]
