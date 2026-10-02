@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
 func TestStatusRendersOneView(t *testing.T) {
@@ -50,5 +52,37 @@ func TestStatusReportsAnExpiredToken(t *testing.T) {
 	warnings := h.envelope()["data"].(map[string]any)["capabilityWarnings"].([]any)
 	if len(warnings) == 0 || warnings[0].(map[string]any)["code"] != "token_expired" {
 		t.Fatalf("capability warnings = %v", warnings)
+	}
+}
+
+func TestStatusListsPassesOnlyThisBranchDeclares(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	h.write(".gravity.yaml", "version: 2\nproduct: acme-platform\n")
+	overlay := strings.Replace(connectBody, `"overlay":false`, `"overlay":true`, 1)
+	overlay = strings.Replace(overlay, `"collectionPath":[],"approveUrl":"https://app.gravitydocs.io/app/repos/cr_1/passes/rp_2#approve"}}]}`, `"collectionPath":[],"approveUrl":"https://app.gravitydocs.io/app/repos/cr_1/passes/rp_2#approve"}},
+{"name":"handbook","kind":"verbatim","source":"manifest","locked":true,"enabled":true,"triggers":["push"],"target":{"ref":"internal/handbook","status":"unapproved","siteSlug":"internal","spaceSlug":"handbook","collectionPath":[],"approveUrl":"https://app.gravitydocs.io/app/repos/cr_1"}}]}`, 1)
+	h.platform.json("POST /api/v1/repos/connect", 200, overlay)
+	expectCode(t, h, h.run("status"), 0)
+	out := h.stdout.String()
+	if !strings.Contains(out, "handbook") || !strings.Contains(out, "not stored yet") {
+		t.Fatalf("an overlay pass is listed: %s", out)
+	}
+}
+
+func TestStatusKnowsTheStoredManifest(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	body := "version: 2\nproduct: acme-platform\n"
+	h.write(".gravity.yaml", body)
+	m, err := config.Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.platform.json("POST /api/v1/repos/connect", 200, strings.Replace(connectBody, `"overlay":false`, `"overlay":true`, 1))
+	h.platform.json("GET /api/v1/repos/self/plan", 200, strings.Replace(planBody, `"manifestHash":"sha256:stored"`, `"manifestHash":"`+m.Hash+`"`, 1))
+	expectCode(t, h, h.run("status"), 0)
+	if out := h.stdout.String(); !strings.Contains(out, "stored in Gravity") || strings.Contains(out, "overlay") {
+		t.Fatalf("a manifest equal to the stored one is not an overlay: %s", out)
 	}
 }

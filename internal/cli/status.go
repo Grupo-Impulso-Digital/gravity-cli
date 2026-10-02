@@ -122,13 +122,18 @@ func newStatusCmd(a *app) *cobra.Command {
 			if data.Siblings == nil {
 				data.Siblings = []api.Sibling{}
 			}
-			data.Capabilities = capabilityWarnings(s, conn, a.statusPlan(ctx, s, conn), a.now())
+			plan := a.statusPlan(ctx, s, conn)
+			data.Capabilities = capabilityWarnings(s, conn, plan, a.now())
 			if s.manifest != nil {
 				data.Manifest = &statusManifest{Path: s.manifest.Path, Hash: s.manifest.Hash}
 			} else if s.v1 {
 				data.Manifest = &statusManifest{Path: config.ManifestFileName, V1: true}
 			}
-			a.printStatus(s, conn, st, data.Capabilities)
+			stored := ""
+			if plan != nil {
+				stored = plan.Repo.ManifestHash
+			}
+			a.printStatus(s, conn, st, stored, data.Capabilities)
 			if check && st.Health.Status != api.HealthLive {
 				reason := ""
 				if len(st.Health.Reasons) > 0 {
@@ -242,7 +247,7 @@ func capabilityWarnings(s *session, conn *api.ConnectResponse, plan *api.Plan, n
 	return out
 }
 
-func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status, warnings []capabilityWarning) {
+func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status, storedHash string, warnings []capabilityWarning) {
 	p := a.ui
 	product := firstNonEmpty(st.Product.Name, st.Product.Slug, conn.Repo.Product.Name)
 	p.Println("%s %s → %s   %s health: %s", p.Bold("Gravity ·"), firstNonEmpty(st.Repo.Name, s.info.name), product, p.Mark(healthMark(st.Health.Status)), st.Health.Status)
@@ -277,7 +282,7 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status,
 	switch {
 	case s.manifest != nil:
 		state := "stored in Gravity"
-		if !conn.Manifest.Persisted {
+		if !conn.Manifest.Persisted && storedHash != s.manifest.Hash {
 			authoritative := firstNonEmpty(conn.Manifest.AuthoritativeBranch, s.info.defaultBranch)
 			state = "local changes not yet stored"
 			if authoritative != "" {
@@ -309,7 +314,19 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status,
 		}
 		locked[ep.Name] = ep.Locked
 	}
-	if len(st.Passes) == 0 {
+	stored := map[string]bool{}
+	for _, sp := range st.Passes {
+		stored[sp.Name] = true
+	}
+	var pending []api.PlanPass
+	if conn.Effective.Overlay {
+		for _, ep := range conn.Effective.Passes {
+			if !stored[ep.Name] {
+				pending = append(pending, ep)
+			}
+		}
+	}
+	if len(st.Passes) == 0 && len(pending) == 0 {
 		p.Println("No passes yet. Add them in the app: %s", orDash(firstNonEmpty(st.Repo.AppURL, conn.Repo.AppURL)))
 	} else {
 		p.Println("%s", p.Bold("Passes"))
@@ -344,6 +361,13 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status,
 				source = "repo (locked)"
 			}
 			prow = append(prow, []string{p.Mark(mark), sp.Name, sp.Kind, orDash(sp.Target.Ref), source, wm, last, note})
+		}
+		for _, ep := range pending {
+			note := "in this branch's .gravity.yaml, not stored yet"
+			if ep.Target.Status == api.TargetUnapproved {
+				note += "; target awaits approval " + ep.Target.ApproveURL
+			}
+			prow = append(prow, []string{p.Mark(ui.MarkSkip), ep.Name, ep.Kind, orDash(ep.Target.Ref), "repo (this branch)", "-", "never ran", note})
 		}
 		p.Table("  ", prow)
 	}
