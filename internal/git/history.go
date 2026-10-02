@@ -169,7 +169,7 @@ func (r *Repo) Commits(ctx context.Context, base, head string, limit int) ([]Com
 	if limit > 0 {
 		args = append(args, "--max-count="+strconv.Itoa(limit))
 	}
-	args = append(args, rangeArg(base, head), "--")
+	args = append(args, "--end-of-options", rangeArg(base, head), "--")
 	out, err := r.git(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -206,6 +206,7 @@ type FileChange struct {
 
 func diffArgs(base, head string, extra ...string) []string {
 	args := append([]string{"diff", "--no-color", "--no-ext-diff", "-M"}, extra...)
+	args = append(args, "--end-of-options")
 	if head == "" {
 		return append(args, base, "--")
 	}
@@ -371,7 +372,10 @@ func (r *Repo) DiffZeroContext(ctx context.Context, base, head string, paths ...
 
 // FileAt returns the content of path at ref, or ok=false when the path does not exist there.
 func (r *Repo) FileAt(ctx context.Context, ref, path string) ([]byte, bool, error) {
-	out, err := r.git(ctx, "show", ref+":"+path)
+	if err := ValidateRef(ref); err != nil {
+		return nil, false, err
+	}
+	out, err := r.git(ctx, "show", "--end-of-options", ref+":"+path)
 	if err != nil {
 		var ge *Error
 		if errors.As(err, &ge) && (strings.Contains(ge.Stderr, "does not exist") || strings.Contains(ge.Stderr, "exists on disk, but not in")) {

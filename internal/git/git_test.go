@@ -156,3 +156,43 @@ func gitRunner(t *testing.T, dir string) func(args ...string) {
 		}
 	}
 }
+
+func TestRefsCannotBecomeOptions(t *testing.T) {
+	dir := testRepo(t)
+	ctx := context.Background()
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "pwned")
+	evil := "--output=" + target
+	calls := map[string]func() error{
+		"Diff":            func() error { _, err := repo.Diff(ctx, "", evil, ""); return err },
+		"DiffWorkingTree": func() error { _, err := repo.DiffWorkingTree(ctx, evil, ""); return err },
+		"LogOneline":      func() error { _, err := repo.LogOneline(ctx, evil, "HEAD", 1); return err },
+		"Show":            func() error { _, err := repo.Show(ctx, evil, "a.txt"); return err },
+		"FileAt":          func() error { _, _, err := repo.FileAt(ctx, evil, "a.txt"); return err },
+	}
+	for name, call := range calls {
+		if err := call(); err == nil {
+			t.Errorf("%s accepted %q", name, evil)
+		}
+	}
+	matches, _ := filepath.Glob(target + "*")
+	if len(matches) > 0 {
+		t.Fatalf("git wrote %v", matches)
+	}
+	for _, ref := range []string{"v1.0.0", "HEAD~1", "main@{0}", "a1b2c3"} {
+		if err := git.ValidateRef(ref); err != nil {
+			t.Errorf("ValidateRef(%q) = %v", ref, err)
+		}
+	}
+	for _, ref := range []string{"", " ", "-x", "a b", "a\x00b", "a\nb"} {
+		if err := git.ValidateRef(ref); err == nil {
+			t.Errorf("ValidateRef(%q) accepted", ref)
+		}
+	}
+	if diff, err := repo.Diff(ctx, "v1.0.0", "HEAD", "b.txt"); err != nil || !strings.Contains(diff, "beta") {
+		t.Fatalf("a path-scoped diff still works: %q, %v", diff, err)
+	}
+}

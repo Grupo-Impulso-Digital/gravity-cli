@@ -94,3 +94,37 @@ func TestReadFileReadsAtTheRangeEnd(t *testing.T) {
 		}
 	}
 }
+
+func TestModelRefsCannotInjectGitOptions(t *testing.T) {
+	repo := twoVersionRepo(t)
+	out := t.TempDir()
+	tools := map[string]Tool{}
+	for _, tl := range GitTools(repo) {
+		tools[tl.Def.Name] = tl
+	}
+	cases := []struct {
+		tool  string
+		input func(target string) string
+	}{
+		{"git_diff", func(p string) string { return `{"to":"--output=` + p + `"}` }},
+		{"git_diff", func(p string) string { return `{"from":"--output=` + p + `","to":"HEAD"}` }},
+		{"git_log", func(p string) string { return `{"to":"--output=` + p + `"}` }},
+		{"git_show", func(p string) string { return `{"ref":"--output=` + p + `","path":"api.go"}` }},
+		{"read_file", func(p string) string { return `{"ref":"--output=` + p + `","path":"api.go"}` }},
+		{"read_file", func(p string) string { return `{"ref":"HEAD --output=` + p + `","path":"api.go"}` }},
+		{"git_show", func(string) string { return `{"ref":"  ","path":"api.go"}` }},
+	}
+	for i, tc := range cases {
+		target := filepath.Join(out, "pwned"+string(rune('a'+i)))
+		if _, err := tools[tc.tool].Run(context.Background(), json.RawMessage(tc.input(target))); err == nil {
+			t.Errorf("%s %s: want an error", tc.tool, tc.input(target))
+		}
+		matches, _ := filepath.Glob(target + "*")
+		if len(matches) > 0 {
+			t.Errorf("%s wrote %v", tc.tool, matches)
+		}
+	}
+	if got, err := tools["read_file"].Run(context.Background(), json.RawMessage(`{"ref":"v1","path":"api.go"}`)); err != nil || got != "release one\n" {
+		t.Errorf("a plain ref still works: %q, %v", got, err)
+	}
+}

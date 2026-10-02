@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // Repo is a handle to a git working tree rooted at Root.
@@ -79,16 +80,47 @@ func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// ValidateRef refuses a revision that git could parse as an option or that carries whitespace or control characters.
+func ValidateRef(ref string) error {
+	if strings.TrimSpace(ref) == "" {
+		return fmt.Errorf("invalid ref %q: empty", ref)
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid ref %q: must not start with '-'", ref)
+	}
+	for _, c := range ref {
+		if unicode.IsSpace(c) || unicode.IsControl(c) {
+			return fmt.Errorf("invalid ref %q: whitespace or control character", ref)
+		}
+	}
+	return nil
+}
+
+func validateRefs(refs ...string) error {
+	for _, ref := range refs {
+		if ref == "" {
+			continue
+		}
+		if err := ValidateRef(ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // LogOneline returns `git log --oneline` text for the range.
 func (r *Repo) LogOneline(ctx context.Context, from, to string, maxCount int) (string, error) {
 	if to == "" {
 		to = "HEAD"
 	}
+	if err := validateRefs(from, to); err != nil {
+		return "", err
+	}
 	args := []string{"log", "--no-color", "--oneline"}
 	if maxCount > 0 {
 		args = append(args, fmt.Sprintf("--max-count=%d", maxCount))
 	}
-	args = append(args, rangeArg(from, to))
+	args = append(args, "--end-of-options", rangeArg(from, to), "--")
 	return r.git(ctx, args...)
 }
 
@@ -97,9 +129,12 @@ func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) 
 	if to == "" {
 		to = "HEAD"
 	}
-	args := []string{"diff", "--no-color", rangeArg(from, to)}
+	if err := validateRefs(from, to); err != nil {
+		return "", err
+	}
+	args := []string{"diff", "--no-color", "--end-of-options", rangeArg(from, to), "--"}
 	if path != "" {
-		args = append(args, "--", path)
+		args = append(args, path)
 	}
 	return r.git(ctx, args...)
 }
@@ -109,7 +144,10 @@ func (r *Repo) Show(ctx context.Context, ref, path string) (string, error) {
 	if ref == "" {
 		ref = "HEAD"
 	}
-	return r.git(ctx, "show", fmt.Sprintf("%s:%s", ref, path))
+	if err := ValidateRef(ref); err != nil {
+		return "", err
+	}
+	return r.git(ctx, "show", "--end-of-options", fmt.Sprintf("%s:%s", ref, path))
 }
 
 // ListFiles returns tracked files, optionally filtered by a pathspec/glob.
@@ -159,9 +197,12 @@ func (r *Repo) DiffWorkingTree(ctx context.Context, from, path string) (string, 
 	if from == "" {
 		from = "HEAD"
 	}
-	args := []string{"diff", "--no-color", from}
+	if err := ValidateRef(from); err != nil {
+		return "", err
+	}
+	args := []string{"diff", "--no-color", "--end-of-options", from, "--"}
 	if path != "" {
-		args = append(args, "--", path)
+		args = append(args, path)
 	}
 	return r.git(ctx, args...)
 }

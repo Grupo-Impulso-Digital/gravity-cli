@@ -45,6 +45,18 @@ func sandboxPath(p string) (string, error) {
 	return clean, nil
 }
 
+func modelRefs(refs ...string) error {
+	for _, ref := range refs {
+		if ref == "" {
+			continue
+		}
+		if err := git.ValidateRef(ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func truncate(s string, limit int, label string) string {
 	if len(s) <= limit {
 		return s
@@ -80,7 +92,7 @@ func GitToolsAt(repo *git.Repo, ref string) []Tool {
 }
 
 func readWorkingTree(root, p string) (string, error) {
-	full, err := pathsafe.Resolve(root, p)
+	full, err := pathsafe.ResolveInRoot(root, p)
 	if err != nil {
 		return "", err
 	}
@@ -118,6 +130,9 @@ func RepoTools(repo *git.Repo, rng Range) []Tool {
 					MaxCount int    `json:"maxCount"`
 				}
 				_ = json.Unmarshal(input, &in)
+				if err := modelRefs(in.From, in.To); err != nil {
+					return "", err
+				}
 				if in.From == "" && in.To == "" {
 					in.From, in.To = rng.Base, head
 				}
@@ -154,6 +169,9 @@ func RepoTools(repo *git.Repo, rng Range) []Tool {
 					Path string `json:"path"`
 				}
 				_ = json.Unmarshal(input, &in)
+				if err := modelRefs(in.From, in.To); err != nil {
+					return "", err
+				}
 				if in.Path != "" {
 					clean, err := sandboxPath(in.Path)
 					if err != nil {
@@ -199,6 +217,9 @@ func RepoTools(repo *git.Repo, rng Range) []Tool {
 					Path string `json:"path"`
 				}
 				_ = json.Unmarshal(input, &in)
+				if err := modelRefs(in.Ref); err != nil {
+					return "", err
+				}
 				clean, err := sandboxPath(in.Path)
 				if err != nil {
 					return "", err
@@ -255,6 +276,9 @@ func RepoTools(repo *git.Repo, rng Range) []Tool {
 					Ref  string `json:"ref"`
 				}
 				_ = json.Unmarshal(input, &in)
+				if err := modelRefs(in.Ref); err != nil {
+					return "", err
+				}
 				clean, err := sandboxPath(in.Path)
 				if err != nil {
 					return "", err

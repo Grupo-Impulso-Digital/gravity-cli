@@ -355,7 +355,7 @@ func readSide(ctx context.Context, repo *git.Repo, ref, p string) ([]byte, error
 		}
 		return data, nil
 	}
-	clean, err := pathsafe.Resolve(repo.Root, p)
+	clean, err := pathsafe.ResolveInRoot(repo.Root, p)
 	if err != nil {
 		return nil, err
 	}
