@@ -273,7 +273,7 @@ func TestCheckFindsDriftCoverageAndContradictions(t *testing.T) {
 	if len(rec.Recorded().Hints) != 1 || rec.Recorded().Hints[0].ForRepos[0] != "github.com/acme/gateway" {
 		t.Fatalf("a contradiction about another repository's unit becomes a hint: %+v", rec.Recorded().Hints)
 	}
-	if len(rep.Notes) != 1 || len(rep.Claims) != 1 || !rep.Failing {
+	if len(rep.Notes) != 2 || len(rep.Claims) != 2 || !rep.Failing {
 		t.Fatalf("notes=%d claims=%d failing=%v", len(rep.Notes), len(rep.Claims), rep.Failing)
 	}
 	in.FailOn = []string{"coverage"}

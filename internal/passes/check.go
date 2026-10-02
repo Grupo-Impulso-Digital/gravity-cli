@@ -494,6 +494,7 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 	var b strings.Builder
 	byID := map[string]claimPage{}
 	bySlug := map[string]claimPage{}
+	writers := map[string]map[string]string{}
 	for _, p := range pages {
 		text, err := agent.PageText(ctx, in.Client, p.id, "draft")
 		if err != nil {
@@ -505,6 +506,7 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 		}
 		byID[p.id] = p
 		bySlug[p.slug] = p
+		writers[p.id] = blockWriters(ctx, in, p.id)
 		label := "claims"
 		if p.verbatim {
 			label = "verbatim (locked to this repository; a contradiction is a finding against the repository)"
@@ -519,15 +521,7 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 	if err != nil {
 		return fmt.Errorf("claims: %w", err)
 	}
-	roles := ownRoles(in)
-	implementers := map[string][]string{}
-	for _, u := range in.Plan.Inventory.Units {
-		for _, c := range u.Contributors {
-			if c.Role == api.RoleImplements && (c.Active == nil || *c.Active) && c.Repo.RemoteKey != in.Info.RemoteKey && c.Repo.RemoteKey != "" {
-				implementers[u.Key] = append(implementers[u.Key], c.Repo.RemoteKey)
-			}
-		}
-	}
+	own := NewOwnership(in.Plan, in.Info)
 	var hints []api.HintInput
 	for _, f := range res.Findings {
 		p, ok := byID[f.PageID]
@@ -537,24 +531,15 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 		var page *api.PageRef
 		if ok {
 			page = &api.PageRef{ID: p.id, Slug: p.slug, Title: p.title}
+			f.PageID, f.PageSlug = p.id, p.slug
 		}
+		v := own.Settle(f, writers[p.id][f.BlockKey], p.verbatim)
+		f = v.Claim
 		switch f.Verdict {
 		case api.VerdictContradicted:
-			r := roles[f.UnitKey]
-			if f.UnitKey != "" && !r[api.RoleImplements] && len(implementers[f.UnitKey]) > 0 && !p.verbatim {
-				h := api.HintInput{Kind: "contradiction", UnitKey: f.UnitKey, BlockKey: f.BlockKey, Claim: firstOf(f.Claim, f.Title), Detail: f.Detail, ForRepos: implementers[f.UnitKey]}
-				if page != nil {
-					h.PageID = page.ID
-				}
-				for _, e := range f.Evidence {
-					switch e.Kind {
-					case "commit":
-						h.Evidence.Commits = append(h.Evidence.Commits, e.Ref)
-					case "file":
-						h.Evidence.Files = append(h.Evidence.Files, e.Ref)
-					}
-				}
-				hints = append(hints, h)
+			if len(v.HintFor) > 0 {
+				hints = append(hints, claimHint(f, page, v.HintFor))
+				rep.Notes = append(rep.Notes, api.Note{Verdict: f.Verdict, Title: fmt.Sprintf("%s (owned by %s; a hint was raised there)", firstOf(f.Title, f.Claim), strings.Join(v.HintFor, ", ")), Page: page})
 				continue
 			}
 			code := CodeClaimContradicted
@@ -568,9 +553,47 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 			rep.Findings = append(rep.Findings, finding)
 		case api.VerdictUnverifiable:
 			rep.Notes = append(rep.Notes, api.Note{Verdict: f.Verdict, Title: f.Title, Page: page})
+			rep.Claims = append(rep.Claims, f)
 		default:
 			rep.Claims = append(rep.Claims, f)
 		}
 	}
 	return raiseHints(ctx, in, out, rep, hints)
+}
+
+func claimHint(f agent.ClaimFinding, page *api.PageRef, recipients []string) api.HintInput {
+	h := api.HintInput{Kind: "contradiction", UnitKey: f.UnitKey, BlockKey: f.BlockKey, Claim: firstOf(f.Claim, f.Title), Detail: f.Detail, ForRepos: recipients}
+	if page != nil {
+		h.PageID = page.ID
+	}
+	for _, e := range f.Evidence {
+		switch e.Kind {
+		case "commit":
+			h.Evidence.Commits = append(h.Evidence.Commits, e.Ref)
+		case "file":
+			h.Evidence.Files = append(h.Evidence.Files, e.Ref)
+		}
+	}
+	if f.File != "" && len(h.Evidence.Files) == 0 {
+		ref := f.File
+		if f.Line > 0 {
+			ref = fmt.Sprintf("%s:%d", f.File, f.Line)
+		}
+		h.Evidence.Files = append(h.Evidence.Files, ref)
+	}
+	return h
+}
+
+func blockWriters(ctx context.Context, in Input, pageID string) map[string]string {
+	out := map[string]string{}
+	pc, err := in.Client.Page(ctx, pageID, api.PageQuery{State: "draft", Format: "json"})
+	if err != nil {
+		return out
+	}
+	for _, b := range pc.Blocks {
+		if b.Key != "" && b.Provenance != nil && b.Provenance.Repo != "" {
+			out[b.Key] = b.Provenance.Repo
+		}
+	}
+	return out
 }

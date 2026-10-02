@@ -18,21 +18,31 @@ type Counts struct {
 	Unchanged int `json:"unchanged,omitempty"`
 	Held      int `json:"held,omitempty"`
 	Competing int `json:"competing,omitempty"`
+	ViaUnit   int `json:"viaUnit,omitempty"`
 	Facts     int `json:"facts,omitempty"`
 	Queued    int `json:"queued,omitempty"`
 	Hints     int `json:"hints,omitempty"`
 }
 
+// Competition is a page this pass changed on top of another run's open proposal; Pending marks one a dry run expects.
+type Competition struct {
+	Page    api.PageRef           `json:"page"`
+	With    []api.CompetingChange `json:"with"`
+	Pending bool                  `json:"pending,omitempty"`
+}
+
 // Report is the outcome of a pass run: the platform report plus local detail for output.
 type Report struct {
 	api.PassReport
-	Counts   Counts               `json:"counts"`
-	Claims   []agent.ClaimFinding `json:"claims,omitempty"`
-	Warnings []string             `json:"warnings,omitempty"`
-	Failing  bool                 `json:"failing,omitempty"`
-	Recorded *Recorded            `json:"recorded,omitempty"`
-	Usage    agent.Usage          `json:"usage"`
-	Errors   []string             `json:"errors,omitempty"`
+	Counts     Counts               `json:"counts"`
+	Competing  []Competition        `json:"competing,omitempty"`
+	Documented []string             `json:"documented,omitempty"`
+	Claims     []agent.ClaimFinding `json:"claims,omitempty"`
+	Warnings   []string             `json:"warnings,omitempty"`
+	Failing    bool                 `json:"failing,omitempty"`
+	Recorded   *Recorded            `json:"recorded,omitempty"`
+	Usage      agent.Usage          `json:"usage"`
+	Errors     []string             `json:"errors,omitempty"`
 }
 
 // Truncated reports whether the change set behind the report hit a size cap.
@@ -58,6 +68,7 @@ func (r *Report) applied(c *api.Change) {
 	}
 	if c.Competing {
 		r.Counts.Competing++
+		r.Competing = append(r.Competing, Competition{Page: c.Page, With: c.CompetingWith})
 	}
 	for _, w := range c.Warnings {
 		if w.BlockKey != "" {
@@ -84,6 +95,7 @@ func (c Counts) Line() string {
 	add(c.Queued, "queued for review")
 	add(c.Held, "held")
 	add(c.Competing, "competing")
+	add(c.ViaUnit, "via unit reach")
 	add(c.Hints, "hints")
 	if len(parts) == 0 {
 		if c.Unchanged > 0 {

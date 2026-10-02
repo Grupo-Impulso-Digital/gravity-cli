@@ -35,9 +35,20 @@ type Candidate struct {
 	Units   []string `json:"units,omitempty"`
 }
 
-// Impact is the deterministic first step of guides: affected pages, undocumented units and hints.
+// ReachPage is a page outside the pass target that the pass may update through a unit this repository contributes to.
+type ReachPage struct {
+	PageID string   `json:"pageId"`
+	Slug   string   `json:"slug"`
+	Site   string   `json:"site"`
+	Space  string   `json:"space"`
+	Units  []string `json:"units"`
+	Role   string   `json:"role"`
+}
+
+// Impact is the deterministic first step of guides: affected pages, unit-reach pages, undocumented units and hints.
 type Impact struct {
 	Candidates   []Candidate    `json:"candidates"`
+	Reach        []ReachPage    `json:"reach,omitempty"`
 	Undocumented []api.Unit     `json:"undocumented"`
 	Hints        []api.PlanHint `json:"hints"`
 	Tree         *api.SpaceTree `json:"-"`
@@ -86,6 +97,28 @@ func ComputeImpact(ctx context.Context, in Input) (*Impact, error) {
 	}
 	imp := &Impact{Tree: tree}
 	pages := targetPages(in, tree)
+	inTree := map[string]api.TreePage{}
+	for _, p := range tree.Pages {
+		inTree[p.ID] = p
+	}
+	own := NewOwnership(in.Plan, in.Info)
+	reach := map[string]*ReachPage{}
+	var reachOrder []string
+	addReach := func(b api.UnitBinding, unit string) {
+		if p, ok := inTree[b.PageID]; ok && p.Lock != nil {
+			return
+		}
+		r, ok := reach[b.PageID]
+		if !ok {
+			if len(reachOrder) == in.IntOption("maxPages", 25) {
+				return
+			}
+			r = &ReachPage{PageID: b.PageID, Slug: b.PageSlug, Site: b.SiteSlug, Space: b.SpaceSlug, Role: own.Role(unit)}
+			reach[b.PageID] = r
+			reachOrder = append(reachOrder, b.PageID)
+		}
+		r.Units = appendUnique(r.Units, unit)
+	}
 	inv := map[string]api.Unit{}
 	for _, u := range in.Plan.Inventory.Units {
 		inv[u.Key] = u
@@ -129,11 +162,13 @@ func ComputeImpact(ctx context.Context, in Input) (*Impact, error) {
 		u, known := inv[t.key]
 		bound := false
 		for _, b := range u.Bindings {
-			if b.SiteSlug == site && b.SpaceSlug == space {
-				if p, ok := pages[b.PageID]; ok {
-					add(p, fmt.Sprintf("unit %s %s", t.key, t.change), t.key)
-					bound = true
-				}
+			if p, ok := pages[b.PageID]; ok && b.SiteSlug == site && b.SpaceSlug == space {
+				add(p, fmt.Sprintf("unit %s %s", t.key, t.change), t.key)
+				bound = true
+				continue
+			}
+			if own.Contributes(t.key) {
+				addReach(b, t.key)
 			}
 		}
 		if bound {
@@ -214,6 +249,11 @@ func ComputeImpact(ctx context.Context, in Input) (*Impact, error) {
 		}
 		imp.Candidates = append(imp.Candidates, *byID[id])
 	}
+	for _, id := range reachOrder {
+		if _, inTarget := byID[id]; !inTarget {
+			imp.Reach = append(imp.Reach, *reach[id])
+		}
+	}
 	return imp, nil
 }
 
@@ -244,6 +284,12 @@ func (imp *Impact) render() string {
 	}
 	for _, c := range imp.Candidates {
 		fmt.Fprintf(&b, "- %s %s %q: %s\n", c.PageID, c.Slug, c.Title, strings.Join(c.Reasons, "; "))
+	}
+	if len(imp.Reach) > 0 {
+		b.WriteString("\n## Pages outside the target bound to units this repository contributes to (update their bound blocks only)\n")
+		for _, r := range imp.Reach {
+			fmt.Fprintf(&b, "- %s %s/%s/%s: units %s (this repository %s them)\n", r.PageID, r.Site, r.Space, r.Slug, strings.Join(r.Units, ", "), firstOf(r.Role, "contributes to"))
+		}
 	}
 	if len(imp.Undocumented) > 0 {
 		b.WriteString("\n## Units without a page in the target\n")
@@ -323,6 +369,12 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 		pages[p.ID] = p
 		bySlug[p.Slug] = p
 	}
+	reach := map[string]ReachPage{}
+	for _, r := range imp.Reach {
+		reach[r.PageID] = r
+	}
+	pending := map[string]bool{}
+	viaUnit := map[string]bool{}
 	var actions []agent.PageAction
 	for _, a := range plan.Actions {
 		if a.Action == agent.ActionNone {
@@ -333,11 +385,28 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 				a.PageID = p.ID
 			}
 		}
+		if r, ok := reach[a.PageID]; ok && a.Action != agent.ActionCreate {
+			if a.Action != agent.ActionUpdate {
+				rep.warn("page %s is outside the target; through unit reach only its bound blocks can be updated; skipped", r.Slug)
+				continue
+			}
+			a.Slug = firstOf(r.Slug, a.Slug)
+			viaUnit[a.PageID] = true
+			actions = append(actions, a)
+			if len(actions) == maxPages {
+				break
+			}
+			continue
+		}
 		if a.Action != agent.ActionCreate {
 			p, ok := pages[a.PageID]
 			if !ok {
 				rep.warn("plan names unknown page %s; skipped", firstOf(a.PageID, a.Slug))
 				continue
+			}
+			if op := p.OpenProposal; op != nil && op.PipelineRunID != "" && op.PipelineRunID != in.RunID && !pending[p.ID] {
+				pending[p.ID] = true
+				rep.Competing = append(rep.Competing, Competition{Page: api.PageRef{ID: p.ID, Slug: p.Slug, Title: p.Title}, With: []api.CompetingChange{{RunID: op.PipelineRunID}}, Pending: true})
 			}
 			if p.Lock != nil {
 				rep.warn("page %s is locked to %s; skipped", p.Slug, p.Lock.Path)
@@ -361,7 +430,11 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	}
 	if out.Dry() && mode == PreviewImpact {
 		for _, a := range actions {
-			rep.impact(api.PageRef{ID: a.PageID, Slug: a.Slug, Title: a.Title}, a.Action, a.Reason)
+			reason := a.Reason
+			if viaUnit[a.PageID] {
+				reason = reachReason(reach[a.PageID], reason)
+			}
+			rep.impact(api.PageRef{ID: a.PageID, Slug: a.Slug, Title: a.Title}, a.Action, reason)
 		}
 		rep.Summary = impactLine(len(actions), in.TargetLabel())
 		return rep, nil
@@ -370,7 +443,13 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	var failures []string
 	authored := map[string]bool{}
 	for _, a := range actions {
-		h, err := guidesAction(ctx, in, out, &rep, a, deprecate)
+		var h []api.HintInput
+		var err error
+		if viaUnit[a.PageID] {
+			h, err = reachAction(ctx, in, out, &rep, a, reach[a.PageID])
+		} else {
+			h, err = guidesAction(ctx, in, out, &rep, a, deprecate)
+		}
 		if err != nil {
 			if api.StopsRun(err) || api.IsLicenseError(err) || errors.Is(err, context.Canceled) {
 				return rep, err
@@ -470,6 +549,7 @@ func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.
 			continue
 		}
 		b := aiBlock(in, e)
+		withProvenance(in, &b, firstOf(changes.Summary, a.Reason))
 		blocks = append(blocks, b)
 		units = append(units, b.Units...)
 	}
@@ -508,6 +588,7 @@ func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.
 	} else {
 		rep.Counts.Updated++
 	}
+	rep.Documented = appendUnique(rep.Documented, units...)
 	rep.applied(c)
 	rep.impact(ref, req.Op, req.Summary)
 	return hints, nil

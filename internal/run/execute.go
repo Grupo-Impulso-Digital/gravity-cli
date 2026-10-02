@@ -32,6 +32,7 @@ type runState struct {
 	known    *passes.Units
 	assets   *passes.Assets
 	resolver *prompts.Resolver
+	ingested []api.IngestUnit
 	mu       sync.Mutex
 	stopErr  error
 	cancel   context.CancelFunc
@@ -78,6 +79,9 @@ func execute(ctx context.Context, env *Env, opts Options, p *api.Plan, prep *pre
 			env.Log.Warn("ingest_failed", fmt.Sprintf("inventory ingest failed; passes use the stored inventory: %v", err))
 		}
 		res.Ingest = ing
+		if ing != nil {
+			res.Handoffs = detectedHandoffs(ing)
+		}
 	}
 	results := s.passes(runCtx)
 	if err := s.stopped(); err != nil {
@@ -85,6 +89,15 @@ func execute(ctx context.Context, env *Env, opts Options, p *api.Plan, prep *pre
 		return err
 	}
 	res.Passes = results
+	if res.Ingest != nil {
+		if err := s.ingestDocuments(runCtx, results); err != nil {
+			if api.StopsRun(err) {
+				s.stop(err)
+				return s.stopped()
+			}
+			env.Log.Warn("ingest_failed", fmt.Sprintf("could not record the units this repository documents: %v", err))
+		}
+	}
 	status := finishStatus(results)
 	summary := runSummary(results)
 	fin, err := env.Client.FinishRun(ctx, started.Run.ID, api.FinishRunRequest{Status: status, Report: &api.FinishReport{Summary: summary}})
@@ -356,6 +369,7 @@ func half[T any](list []T) []T {
 
 func (s *runState) ingest(ctx context.Context) (*api.IngestResult, error) {
 	units := append([]api.IngestUnit{}, s.prep.inventory...)
+	defer func() { s.ingested = units }()
 	complete := true
 	if s.env.Manifest != nil && s.env.Manifest.Code != nil && len(s.env.Manifest.Code.Entrypoints) > 0 {
 		mapped, ran, err := s.mapUnits(ctx)
@@ -370,6 +384,7 @@ func (s *runState) ingest(ctx context.Context) (*api.IngestResult, error) {
 		}
 		units = mergeUnits(units, mapped)
 	}
+	units = keepDocuments(units, s.plan, s.env.Info)
 	if len(units) == 0 && !complete {
 		return nil, nil
 	}
@@ -403,9 +418,6 @@ func (s *runState) ingest(ctx context.Context) (*api.IngestResult, error) {
 	}
 	for _, u := range units {
 		s.known.Add(u.Key)
-	}
-	for _, h := range res.Handoffs {
-		s.env.Log.Infof("Handoff detected: %s %s moved from %s to %s", h.UnitKey, h.Role, h.From, h.To)
 	}
 	for _, c := range res.Conflicts {
 		s.env.Log.Warn("unit_conflict", fmt.Sprintf("unit %s not ingested: %s (existing kind %s)", c.Key, c.Reason, c.ExistingKind))

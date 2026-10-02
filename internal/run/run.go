@@ -116,6 +116,7 @@ type Result struct {
 	Range    *changeset.Range     `json:"range,omitempty"`
 	Commits  int                  `json:"commits"`
 	Ingest   *api.IngestResult    `json:"ingest,omitempty"`
+	Handoffs []Handoff            `json:"handoffs,omitempty"`
 	Warnings []api.Warning        `json:"warnings,omitempty"`
 }
 
@@ -251,6 +252,7 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 			return res, err
 		}
 		res.Range, res.Commits = prep.runRange, prep.commits
+		res.Handoffs = expectedHandoffs(p, env.Info, Roles(env.Manifest), prep)
 		decisions := make([]plan.Decision, 0, len(prep.passes))
 		for _, pp := range prep.passes {
 			decisions = append(decisions, pp.decision)
