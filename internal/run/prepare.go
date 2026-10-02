@@ -90,7 +90,7 @@ func prepare(ctx context.Context, env *Env, opts Options, p *api.Plan) (*prepare
 			TagPattern: optionString(pp, "tagPattern", changeset.DefaultTagPattern),
 			SurveyMax:  optionInt(pp, "surveyCommits", changeset.DefaultSurveyCommits),
 		}
-		if opts.PR != nil {
+		if opts.PR != nil && opts.From == "" {
 			in.PRTarget = opts.PR.TargetBranch
 		}
 		if pp.Watermark != nil && pp.Watermark.Branch == wmBranch && opts.Trigger != config.TriggerPR {
@@ -235,10 +235,16 @@ func startRequest(env *Env, opts Options, p *api.Plan, prep *prepared) api.Start
 		h := env.Manifest.Hash
 		req.ManifestHash = &h
 	}
-	if prep.runRange != nil {
-		req.BaseSHA, req.RangeKind = prep.runRange.Base, prep.runRange.Kind
-		if prep.runRange.PreviousTag != "" && req.Release != nil {
-			req.Release.PreviousTag = prep.runRange.PreviousTag
+	runRange := prep.runRange
+	for i := 0; runRange == nil && i < len(prep.passes); i++ {
+		if prep.passes[i].ranged {
+			runRange = &prep.passes[i].rng
+		}
+	}
+	if runRange != nil {
+		req.BaseSHA, req.RangeKind = runRange.Base, runRange.Kind
+		if runRange.PreviousTag != "" && req.Release != nil {
+			req.Release.PreviousTag = runRange.PreviousTag
 		}
 	}
 	wmBranch := WatermarkBranch(opts.Trigger, opts.Branch)

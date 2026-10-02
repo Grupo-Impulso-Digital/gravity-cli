@@ -102,6 +102,9 @@ func TestNoRunRule(t *testing.T) {
 	if entry["skip"] != api.SkipScopeUnchanged || entry["rangeKind"] != "watermark" || entry["watermarkSeen"] != first {
 		t.Fatalf("entry = %+v", entry)
 	}
+	if start[0].Body["rangeKind"] != "watermark" || start[0].Body["baseSha"] != first {
+		t.Fatalf("a run of skips still carries the run range: %+v", start[0].Body)
+	}
 	if len(p2.find("POST", "/changes")) != 0 || res.ExitCode(false) != 0 {
 		t.Fatal("no writes for an unchanged scope")
 	}

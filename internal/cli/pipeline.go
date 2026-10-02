@@ -171,7 +171,6 @@ func (a *app) pipelineOptions(ctx context.Context, s *pipelineSession, mode pipe
 			}
 		}
 		if f.from != "" {
-			pr.TargetBranch = ""
 			opts.PRBase = f.from
 		} else {
 			opts.PRBase = c.BaseSHA

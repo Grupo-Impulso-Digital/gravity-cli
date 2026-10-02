@@ -304,3 +304,28 @@ func TestPreviewShowsWorkingTreeDiffWithoutWriting(t *testing.T) {
 		t.Fatalf("json preview = %v", data)
 	}
 }
+
+func TestCheckFromPlansAgainstTheDefaultBranch(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	h.commitSpec(t)
+	base := gitCmd(t, h.dir, "rev-parse", "HEAD~1")
+	gitCmd(t, h.dir, "checkout", "-q", "-b", "feature/x")
+	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
+	driftFixture(t, h)
+
+	h.run("check", "--from", base)
+	plans := h.platform.find("GET", "/api/v1/repos/self/plan")
+	if len(plans) == 0 || plans[0].Query["branch"][0] != "main" {
+		t.Fatalf("a local check plans for the default branch it would merge into: %+v", plans)
+	}
+	starts := h.platform.find("POST", "/api/v1/runs")
+	if len(starts) == 0 {
+		t.Fatal("check did not start a dry run")
+	}
+	start := starts[0].Body
+	if start["baseSha"] != base || start["pr"].(map[string]any)["targetBranch"] != "main" {
+		t.Fatalf("--from is the range base and main the target: %v", start)
+	}
+}
