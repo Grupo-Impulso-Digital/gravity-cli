@@ -80,7 +80,7 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 			if ref := repoRefFor(cmd.Context(), repo, e.proj); ref != nil {
 				myRemoteKey = ref.RemoteKey
 			}
-			scope, err := resolveRepoScope(myRemoteKey, anyPageRefAttributed(tree.Pages), e.proj, space)
+			scope, err := resolveRepoScope(myRemoteKey, attributedTo(pageRefRemoteKeys(tree.Pages), myRemoteKey), e.proj, space)
 			if err != nil {
 				return Fail(CodeError, err)
 			}
@@ -131,15 +131,6 @@ func apiSpecs(proj *config.Project, flag string) []apiSpec {
 		out = append(out, apiSpec{path: s.Source, space: sp, page: slug})
 	}
 	return out
-}
-
-func anyPageRefAttributed(pages []api.PageRef) bool {
-	for _, p := range pages {
-		if p.RepoRemoteKey != nil && *p.RepoRemoteKey != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func scopeAPIBlocks(blocks []api.APIBlock, pages []api.PageRef, scope repoScope) []api.APIBlock {

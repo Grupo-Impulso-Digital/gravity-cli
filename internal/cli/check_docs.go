@@ -82,7 +82,7 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 			if ref := repoRefFor(cmd.Context(), repo, e.proj); ref != nil {
 				myRemoteKey = ref.RemoteKey
 			}
-			scope, err := resolveRepoScope(myRemoteKey, anyAttributed(all), e.proj, space)
+			scope, err := resolveRepoScope(myRemoteKey, attributedTo(pageRemoteKeys(all), myRemoteKey), e.proj, space)
 			if err != nil {
 				return Fail(CodeError, err)
 			}
@@ -146,15 +146,13 @@ func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string, mapp
 	res := output.Result{Command: "check docs", Site: siteSlug}
 	verified := 0
 	foreign := 0
-	if !anyAttributed(pages) {
-		myRemoteKey = ""
-	}
+	mineAttributed := attributedTo(pageRemoteKeys(pages), myRemoteKey)
 	type staleKey struct{ page, ref string }
 	staleBlocks := map[staleKey]int{}
 	staleChecks := map[staleKey]checks.BindingCheck{}
 	staleTypes := map[staleKey]string{}
 	for _, p := range pages {
-		if myRemoteKey != "" && !writtenByRepo(p, myRemoteKey) {
+		if foreignPage(p, myRemoteKey, mineAttributed) {
 			if hasBoundBlocks(p) {
 				foreign++
 			}
@@ -215,13 +213,14 @@ func verifyDocsBindings(repoRoot string, pages []api.Page, siteSlug string, mapp
 	return res
 }
 
-func anyAttributed(pages []api.Page) bool {
-	for _, p := range pages {
-		if p.RepoRemoteKey != nil && *p.RepoRemoteKey != "" {
-			return true
-		}
+func foreignPage(p api.Page, myRemoteKey string, mineAttributed bool) bool {
+	if myRemoteKey == "" {
+		return false
 	}
-	return false
+	if mineAttributed {
+		return !writtenByRepo(p, myRemoteKey)
+	}
+	return p.RepoRemoteKey != nil && *p.RepoRemoteKey != "" && *p.RepoRemoteKey != myRemoteKey
 }
 
 func hasBoundBlocks(p api.Page) bool {
@@ -321,7 +320,11 @@ func docsDigest(pages []api.Page) string {
 }
 
 func renderCheck(cmd *cobra.Command, res output.Result, format string) error {
-	if err := output.Render(cmd.OutOrStdout(), res, format); err != nil {
+	out := cmd.OutOrStdout()
+	if format != output.FormatText {
+		out = rawWriter(out)
+	}
+	if err := output.Render(out, res, format); err != nil {
 		return Fail(CodeError, err)
 	}
 	if len(res.Findings) > 0 {
