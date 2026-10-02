@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
@@ -277,9 +278,6 @@ func migrateManifest(path string, in initInputs) (*config.Project, []string, err
 		if p.Spaces.Default == "" {
 			p.Spaces.Default = p.LegacySpace
 		}
-		if p.ReleaseNotes.Space == "" {
-			p.ReleaseNotes.Space = p.LegacySpace
-		}
 		notes = append(notes, fmt.Sprintf("moved the legacy top-level `space: %s` to spaces.default", p.LegacySpace))
 		p.LegacySpace = ""
 	}
@@ -298,7 +296,30 @@ func migrateManifest(path string, in initInputs) (*config.Project, []string, err
 	if in.role != "" {
 		p.Product.Role = in.role
 	}
+	if hasYAMLComments(data) {
+		notes = append(notes, "comments are not carried over: the file is re-rendered from its settings, so copy any comments you want to keep from version control")
+	}
 	return p, notes, nil
+}
+
+func hasYAMLComments(data []byte) bool {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return false
+	}
+	var walk func(n *yaml.Node) bool
+	walk = func(n *yaml.Node) bool {
+		if n.HeadComment != "" || n.LineComment != "" || n.FootComment != "" {
+			return true
+		}
+		for _, c := range n.Content {
+			if walk(c) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(&root)
 }
 
 func runInitWizard(cmd *cobra.Command, client *api.Client, in initInputs, scanDir string) (*config.Project, bool, error) {

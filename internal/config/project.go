@@ -17,6 +17,9 @@ import (
 // DefaultChangelog is the changelog file release notes are written to when nothing else is configured.
 const DefaultChangelog = "CHANGELOG.md"
 
+// DefaultReleaseNotesSpace is the space release notes land in when releaseNotes.space is unset.
+const DefaultReleaseNotesSpace = "changelog"
+
 // SchemaVersion is the highest .gravity.yaml schema version this CLI understands.
 const SchemaVersion = 1
 
@@ -323,11 +326,7 @@ func (p *Project) ApplyDefaults(projectDir string) {
 		}
 	}
 	if p.ReleaseNotes.Space == "" {
-		if p.LegacySpace != "" {
-			p.ReleaseNotes.Space = p.LegacySpace
-		} else {
-			p.ReleaseNotes.Space = "changelog"
-		}
+		p.ReleaseNotes.Space = DefaultReleaseNotesSpace
 	}
 	if p.ReleaseNotes.Changelog == "" {
 		p.ReleaseNotes.Changelog = DefaultChangelog

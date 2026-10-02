@@ -124,8 +124,6 @@ no-op that exits 0.`,
 	return cmd
 }
 
-const defaultReleaseNotesSpace = "changelog"
-
 func releaseNotesSpace(proj *config.Project, flag string) string {
 	if flag != "" {
 		return flag
@@ -133,7 +131,7 @@ func releaseNotesSpace(proj *config.Project, flag string) string {
 	if proj != nil && proj.ReleaseNotes.Space != "" {
 		return proj.ReleaseNotes.Space
 	}
-	return defaultReleaseNotesSpace
+	return config.DefaultReleaseNotesSpace
 }
 
 func releaseNotesChangelog(proj *config.Project, flag string) string {
@@ -232,7 +230,7 @@ func emitReleaseNotes(cmd *cobra.Command, e *env, opts releaseNotesEmit, view re
 
 	switch opts.output {
 	case outputStdout:
-		return finish(func() { fmt.Fprint(out, md) })
+		return finish(func() { fmt.Fprint(rawWriter(out), md) })
 
 	case outputFile:
 		if err := prependChangelog(opts.changelog, md); err != nil {

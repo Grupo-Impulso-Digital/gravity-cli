@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	yaml "go.yaml.in/yaml/v3"
+
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
@@ -250,7 +252,8 @@ func TestInitMigrateIsLossless(t *testing.T) {
 
 func TestInitMigrateUpgradesLegacyAndRemovedKeys(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, config.ProjectFileName, `site: acme
+	writeFile(t, dir, config.ProjectFileName, `# Acme docs manifest
+site: acme
 space: handbook
 sources:
   - source: openapi.yaml
@@ -269,7 +272,7 @@ discovery:
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	for _, want := range []string{"dropped sources[].generator", "dropped knowledge.scope", "moved the legacy top-level `space: handbook`"} {
+	for _, want := range []string{"dropped sources[].generator", "dropped knowledge.scope", "moved the legacy top-level `space: handbook`", "comments are not carried over"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("migrate output missing %q:\n%s", want, stdout)
 		}
@@ -278,7 +281,22 @@ discovery:
 	if err != nil {
 		t.Fatalf("migrated file must load: %v", err)
 	}
-	if proj.Spaces.Default != "handbook" || proj.ReleaseNotes.Space != "handbook" || proj.Knowledge.Namespace != "acme" ||
+	raw, err := os.ReadFile(filepath.Join(dir, config.ProjectFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written struct {
+		ReleaseNotes struct {
+			Space string `yaml:"space"`
+		} `yaml:"releaseNotes"`
+	}
+	if err := yaml.Unmarshal(raw, &written); err != nil {
+		t.Fatal(err)
+	}
+	if written.ReleaseNotes.Space != "" && written.ReleaseNotes.Space != "changelog" {
+		t.Errorf("migrate wrote releaseNotes.space = %q, want unset or changelog (never the docs space):\n%s", written.ReleaseNotes.Space, raw)
+	}
+	if proj.Spaces.Default != "handbook" || proj.ReleaseNotes.Space != "changelog" || proj.Knowledge.Namespace != "acme" ||
 		len(proj.Discovery.Include) != 1 || proj.Sources[0].Page != "api-reference" {
 		t.Errorf("migrated = %+v", proj)
 	}
