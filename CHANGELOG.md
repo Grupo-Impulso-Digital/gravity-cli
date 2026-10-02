@@ -158,6 +158,17 @@ pipelines never pick it up by accident.
   2 with passes-as-code.
 - The release workflow refuses a `v1.*` tag until a major-pinned v0.x release
   exists, and moves the `v1` tag the action is referenced by.
+- `gravity logout` with `--token`/`GRAVITY_TOKEN` holding a user token revokes
+  that token on the host it is used against and removes any profile holding
+  it; repository and organization tokens are refused with a warning
+  (`token_kind_unsupported`), since they are revoked in the app.
+- Reference pages per OpenAPI tag are titled with the tag's `x-displayName`,
+  else the tag name in title case (`payment_methods` → `Payment Methods`).
+- `gravity init --yes` in an organization with exactly one product joins it
+  when nothing points to another product, instead of creating a new one.
+- On GitLab and Bitbucket, init's preview and closing summary name the comment
+  token to create (`GITLAB_TOKEN`, `BITBUCKET_ACCESS_TOKEN`); both templates
+  keep `gravity-report.md` as a job or step artifact.
 
 ### Removed
 
