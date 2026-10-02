@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"unicode"
 
 	yaml "go.yaml.in/yaml/v3"
 
@@ -70,10 +71,11 @@ func ReferenceSources(pp api.PlanPass, m *config.Manifest) []SpecSource {
 // SpecFile is one parsed OpenAPI document of a reference pass, at head and at base.
 type SpecFile struct {
 	SpecSource
-	File  string
-	Title string
-	Ops   []checks.OperationDetail
-	Base  []checks.OperationDetail
+	File      string
+	Title     string
+	TagTitles map[string]string
+	Ops       []checks.OperationDetail
+	Base      []checks.OperationDetail
 }
 
 // ResolveSpecs expands the source globs against the files at the range head and parses each document.
@@ -93,20 +95,20 @@ func ResolveSpecs(ctx context.Context, in Input, sources []SpecSource) ([]SpecFi
 	var out []SpecFile
 	var warnings []string
 	seen := map[string]bool{}
-	baseOps := func(f string) ([]checks.OperationDetail, string) {
+	baseOps := func(f string) ([]checks.OperationDetail, specInfo) {
 		if in.Range.Base == "" {
-			return nil, ""
+			return nil, specInfo{}
 		}
 		before, ok, err := in.Repo.FileAt(ctx, in.Range.Base, f)
 		if err != nil || !ok {
-			return nil, ""
+			return nil, specInfo{}
 		}
 		ops, err := docs.Operations(before)
 		if err != nil {
-			return nil, ""
+			return nil, specInfo{}
 		}
 		ops, _ = documentable(ops)
-		return ops, specTitle(before)
+		return ops, readSpecInfo(before)
 	}
 	for _, src := range sources {
 		pattern := strings.TrimPrefix(src.Path, "./")
@@ -132,15 +134,16 @@ func ResolveSpecs(ctx context.Context, in Input, sources []SpecSource) ([]SpecFi
 				warnings = append(warnings, fmt.Sprintf("%s: %s %s skipped: api blocks have no %s method", f, strings.ToUpper(op.Method), op.Path, strings.ToUpper(op.Method)))
 			}
 			before, _ := baseOps(f)
-			out = append(out, SpecFile{SpecSource: src, File: f, Title: specTitle(data), Ops: ops, Base: before})
+			info := readSpecInfo(data)
+			out = append(out, SpecFile{SpecSource: src, File: f, Title: info.title, TagTitles: info.tagTitles, Ops: ops, Base: before})
 		}
 		for _, f := range baseFiles {
 			if seen[f] || atHead[f] || !specMatch(pattern, f) {
 				continue
 			}
 			seen[f] = true
-			if before, title := baseOps(f); len(before) > 0 {
-				out = append(out, SpecFile{SpecSource: src, File: f, Title: title, Base: before})
+			if before, info := baseOps(f); len(before) > 0 {
+				out = append(out, SpecFile{SpecSource: src, File: f, Title: info.title, TagTitles: info.tagTitles, Base: before})
 			}
 		}
 	}
@@ -165,16 +168,51 @@ func documentable(ops []checks.OperationDetail) (keep, dropped []checks.Operatio
 	return keep, dropped
 }
 
-func specTitle(data []byte) string {
+type specInfo struct {
+	title     string
+	tagTitles map[string]string
+}
+
+func readSpecInfo(data []byte) specInfo {
 	var doc struct {
 		Info struct {
 			Title string `yaml:"title"`
 		} `yaml:"info"`
+		Tags []struct {
+			Name        string `yaml:"name"`
+			DisplayName string `yaml:"x-displayName"`
+		} `yaml:"tags"`
 	}
-	if yaml.Unmarshal(data, &doc) == nil {
-		return doc.Info.Title
+	if yaml.Unmarshal(data, &doc) != nil {
+		return specInfo{}
 	}
-	return ""
+	info := specInfo{title: doc.Info.Title}
+	for _, t := range doc.Tags {
+		if t.Name == "" || strings.TrimSpace(t.DisplayName) == "" {
+			continue
+		}
+		if info.tagTitles == nil {
+			info.tagTitles = map[string]string{}
+		}
+		info.tagTitles[t.Name] = strings.TrimSpace(t.DisplayName)
+	}
+	return info
+}
+
+func tagTitle(sf SpecFile, tag string) string {
+	if t, ok := sf.TagTitles[tag]; ok {
+		return t
+	}
+	words := strings.FieldsFunc(tag, func(r rune) bool { return r == ' ' || r == '_' || r == '-' })
+	for i, w := range words {
+		r := []rune(w)
+		r[0] = unicode.ToUpper(r[0])
+		words[i] = string(r)
+	}
+	if len(words) == 0 {
+		return tag
+	}
+	return strings.Join(words, " ")
 }
 
 type refPage struct {
@@ -199,7 +237,7 @@ func pageFor(strategy string, sf SpecFile, op checks.OperationDetail) (slug, tit
 		return docs.Slug(name), firstOf(op.Summary, strings.ToUpper(op.Method)+" "+op.Path)
 	}
 	if len(op.Tags) > 0 && docs.Slug(op.Tags[0]) != "" {
-		return docs.Slug(op.Tags[0]), op.Tags[0]
+		return docs.Slug(op.Tags[0]), tagTitle(sf, op.Tags[0])
 	}
 	return docSlug, docTitle
 }

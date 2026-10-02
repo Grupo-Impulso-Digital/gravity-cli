@@ -218,3 +218,56 @@ func TestReferenceRemovesOperationsOfADeletedSpecAndSkipsTrace(t *testing.T) {
 		t.Fatalf("a TRACE operation is skipped with a warning: %v", rep.Warnings)
 	}
 }
+
+const specTagged = `openapi: 3.0.0
+info: {title: Billing API, version: 1.0.0}
+tags:
+  - name: refunds
+    description: Money going back to the customer.
+    x-displayName: Refunds and reversals
+  - name: payment_methods
+paths:
+  /v1/refunds:
+    post:
+      tags: [refunds]
+      summary: Create a refund
+      responses: {'201': {description: created}}
+  /v1/payment-methods:
+    get:
+      tags: [payment_methods]
+      summary: List payment methods
+      responses: {'200': {description: ok}}
+  /v1/charges:
+    get:
+      tags: [charges]
+      summary: List charges
+      responses: {'200': {description: ok}}
+`
+
+func TestReferencePerTagTitlesUseDisplayNames(t *testing.T) {
+	r := newRepo(t)
+	head := r.commit("spec", map[string]string{"api/openapi.yaml": specTagged})
+	fake := newFakeAPI()
+	w := &writes{}
+	in := input(t, r, fake, planPass(config.KindReference, "developer-api", nil), manifest(), "", head, api.ModeWrite)
+	if _, err := (passes.Reference{}).Run(context.Background(), in, sink(w)); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, c := range w.changes {
+		got[c.Target.Slug] = c.Title
+	}
+	want := map[string]string{
+		"refunds":         "Refunds and reversals",
+		"payment-methods": "Payment Methods",
+		"charges":         "Charges",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("pages = %v", got)
+	}
+	for slug, title := range want {
+		if got[slug] != title {
+			t.Errorf("page %s title = %q, want %q", slug, got[slug], title)
+		}
+	}
+}
