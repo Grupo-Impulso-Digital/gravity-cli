@@ -1,0 +1,27 @@
+provider: github (GitHub Actions)
+=== create .github/workflows/gravity.yml
+name: Gravity
+on:
+  push:
+    branches: [trunk]
+  pull_request:
+  release:
+    types: [published]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  gravity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
+        with:
+          token: ${{ secrets.GRAVITY_TOKEN }}
+          api-url: https://api.acme.test
+=== paste: add it as the repository secret GRAVITY_TOKEN (Settings > Secrets and variables > Actions)

@@ -1,0 +1,25 @@
+provider: azure (Azure Pipelines)
+=== create azure-pipelines.gravity.yml
+trigger:
+  branches:
+    include: [main]
+  tags:
+    include: ['v*']
+pr:
+  branches:
+    include: ['*']
+pool:
+  vmImage: ubuntu-latest
+steps:
+  - checkout: self
+    fetchDepth: 0
+  - script: |
+      curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 GRAVITY_INSTALL_DIR="$HOME/.local/bin" sh
+      echo "##vso[task.prependpath]$HOME/.local/bin"
+    displayName: Install gravity
+  - script: gravity run
+    displayName: Gravity
+    env:
+      GRAVITY_TOKEN: $(GRAVITY_TOKEN)
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+=== paste: add it as the secret pipeline variable GRAVITY_TOKEN (Pipelines > Edit > Variables, keep this value secret)

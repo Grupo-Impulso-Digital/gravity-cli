@@ -178,6 +178,9 @@ func (p *Printer) Mark(kind string) string {
 	case MarkWarn:
 		sym, col = "!", "33"
 	}
+	if p.mode != ModeTTY {
+		sym = asciiReplacer.Replace(sym)
+	}
 	return p.paint(col, sym)
 }
 
