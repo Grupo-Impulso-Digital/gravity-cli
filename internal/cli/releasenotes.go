@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
@@ -30,8 +32,8 @@ func newReleaseNotesCmd(gf *globalFlags) *cobra.Command {
 		output    string
 		dryRun    bool
 		title     string
-		ci        bool
 		changelog string
+		jsonOut   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "release-notes",
@@ -42,8 +44,14 @@ changes into sections, ending by calling submit_release_notes.
 
 Output modes:
   proposal  POST a draft + proposal to Gravity and print the review URL (default)
-  file      write/prepend the notes to CHANGELOG.md
-  stdout    print the notes as markdown`,
+  file      write/prepend the notes to the changelog file
+  stdout    print the notes as markdown
+
+The proposal lands in releaseNotes.space from .gravity.yaml (default
+"changelog"); --space overrides it and GRAVITY_SPACE does not apply. A missing
+target space is created as a release-notes space before the agent runs. The
+file mode writes releaseNotes.changelog (default CHANGELOG.md); --changelog
+overrides it. An empty commit range is a no-op that exits 0.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			switch output {
@@ -52,14 +60,14 @@ Output modes:
 				return Failf(CodeError, "invalid --output %q (want proposal|file|stdout)", output)
 			}
 
-			e, err := resolveEnv(*gf, space)
+			e, err := resolveEnv(*gf, "")
 			if err != nil {
 				return err
 			}
-			sp := e.cfg.Space
-			if sp == "" {
-				sp = "changelog"
-			}
+			sp := releaseNotesSpace(e.proj, space)
+			e.targetSpace = sp
+			e.targetSpaceHint = releaseNotesSpaceHint
+			changelogPath := releaseNotesChangelog(e.proj, changelog)
 			if err := e.requireAuth(); err != nil {
 				return err
 			}
@@ -73,17 +81,28 @@ Output modes:
 				return Fail(CodeError, fmt.Errorf("resolve range: %w", err))
 			}
 
-			logw := logWriter(cmd, ci)
+			logw := logWriter(cmd)
 			fmt.Fprintf(logw, "release-notes: range %s\n", rng.String())
 
 			commits, err := repo.Log(cmd.Context(), rng.From, rng.To, 0)
 			if err != nil {
 				return Fail(CodeError, err)
 			}
+			view := releaseNotesView{Range: rng.String(), Commits: len(commits), Space: sp, Output: output, DryRun: dryRun}
 			if len(commits) == 0 {
-				return Failf(CodeError, "no commits in range %s", rng.String())
+				if jsonOut {
+					view.Skipped = "empty commit range"
+					return writeJSON(cmd.OutOrStdout(), view)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "no commits in range %s; nothing to do\n", rng.String())
+				return nil
 			}
 			fmt.Fprintf(logw, "release-notes: %d commit(s) in range\n", len(commits))
+			if output == outputProposal && !dryRun {
+				if err := ensureReleaseNotesSpace(cmd.Context(), e, sp, logw); err != nil {
+					return err
+				}
+			}
 
 			notes, err := runReleaseNotesAgent(cmd.Context(), e.client, repo, rng, logw, &api.MessagesContext{Site: e.cfg.Site, Space: sp, Namespace: e.cfg.Namespace})
 			if err != nil {
@@ -96,23 +115,95 @@ Output modes:
 				notes.Title = defaultTitle(rng)
 			}
 
-			return emitReleaseNotes(cmd, e, sp, output, dryRun, changelog, notes)
+			view.Notes = notes
+			return emitReleaseNotes(cmd, e, releaseNotesEmit{
+				space: sp, output: output, dryRun: dryRun, changelog: changelogPath, json: jsonOut,
+			}, view)
 		},
 	}
-	cmd.Flags().StringVar(&space, "space", "", "target space slug (default: changelog)")
-	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag, or first commit)")
+	cmd.Flags().StringVar(&space, "space", "", "target space slug (default: releaseNotes.space from .gravity.yaml, else changelog)")
+	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag, else the start of history)")
 	cmd.Flags().StringVar(&to, "to", "", "end git ref (default: HEAD)")
 	cmd.Flags().StringVar(&output, "output", outputProposal, "proposal|file|stdout")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the structured notes without writing or posting")
 	cmd.Flags().StringVar(&title, "title", "", "override the release-notes title")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
-	cmd.Flags().StringVar(&changelog, "changelog", "CHANGELOG.md", "path for --output file")
+	cmd.Flags().StringVar(&changelog, "changelog", "", "path for --output file (default: releaseNotes.changelog from .gravity.yaml, else CHANGELOG.md)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the result as JSON")
 	return cmd
 }
 
-func logWriter(cmd *cobra.Command, ci bool) io.Writer {
-	_ = ci
-	return cmd.ErrOrStderr()
+func releaseNotesSpace(proj *config.Project, flag string) string {
+	if flag != "" {
+		return flag
+	}
+	if proj != nil && proj.ReleaseNotes.Space != "" {
+		return proj.ReleaseNotes.Space
+	}
+	return config.DefaultReleaseNotesSpace
+}
+
+const releaseNotesSpaceHint = "(create it in Gravity, set releaseNotes.space in .gravity.yaml to an existing space, or pass --space)"
+
+func ensureReleaseNotesSpace(ctx context.Context, e *env, sp string, logw io.Writer) error {
+	site, err := e.requireSite()
+	if err != nil {
+		return err
+	}
+	tree, err := e.client.SiteTree(ctx, site)
+	if err != nil {
+		return Fail(CodeError, fmt.Errorf("look up site %q: %w", site, err))
+	}
+	for _, s := range tree.Spaces {
+		if s.Slug == sp {
+			return nil
+		}
+	}
+	req := api.SpaceUpsertRequest{
+		Slug:        sp,
+		Type:        config.SpaceTypeReleaseNotes,
+		Description: "Release notes maintained by the gravity CLI.",
+	}
+	if _, err := e.client.EnsureSpace(ctx, site, req); err != nil {
+		var ae *api.APIError
+		if errors.As(err, &ae) && ae.StatusCode == http.StatusForbidden && !api.IsLicenseError(err) {
+			return Failf(CodeError, "space '%s' does not exist on site '%s' and this token cannot create it (needs docs.spaces.manage); "+
+				"create it in Gravity, set releaseNotes.space in .gravity.yaml to an existing space, or pass --space", sp, site)
+		}
+		return Fail(CodeError, fmt.Errorf("create release-notes space %q: %w", sp, err))
+	}
+	fmt.Fprintf(logw, "release-notes: created space %q on site %q\n", sp, site)
+	return nil
+}
+
+func releaseNotesChangelog(proj *config.Project, flag string) string {
+	if flag != "" {
+		return flag
+	}
+	if proj != nil && proj.ReleaseNotes.Changelog != "" {
+		return proj.ReleaseNotes.Changelog
+	}
+	return config.DefaultChangelog
+}
+
+type releaseNotesView struct {
+	Range    string                    `json:"range"`
+	Commits  int                       `json:"commits"`
+	Space    string                    `json:"space,omitempty"`
+	Output   string                    `json:"output"`
+	DryRun   bool                      `json:"dryRun,omitempty"`
+	Skipped  string                    `json:"skipped,omitempty"`
+	Notes    *agent.ReleaseNotesInput  `json:"notes,omitempty"`
+	Markdown string                    `json:"markdown,omitempty"`
+	File     string                    `json:"file,omitempty"`
+	Proposal *api.ReleaseNotesResponse `json:"proposal,omitempty"`
+}
+
+type releaseNotesEmit struct {
+	space     string
+	output    string
+	dryRun    bool
+	changelog string
+	json      bool
 }
 
 func defaultTitle(rng git.Range) string {
@@ -124,7 +215,7 @@ func defaultTitle(rng git.Range) string {
 }
 
 func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, logw io.Writer, mctx *api.MessagesContext) (*agent.ReleaseNotesInput, error) {
-	tools := append(agent.GitTools(repo), agent.SubmitReleaseNotesTool())
+	tools := append(agent.GitToolsAt(repo, rng.To), agent.SubmitReleaseNotesTool())
 	runner := &agent.Runner{
 		Client:  client,
 		System:  resolvePrompt(ctx, client, prompts.NameReleaseNotes, logw),
@@ -134,9 +225,9 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 	}
 	kickoff := fmt.Sprintf(
 		"Generate release notes for the changes between %s and %s. "+
-			"Start by listing the commits with git_log(from=%q, to=%q), then inspect the diffs. "+
+			"Start by listing the commits with git_log(%s), then inspect the diffs. "+
 			"When finished, call submit_release_notes.",
-		rng.From, rng.To, rng.From, rng.To,
+		rng.Since(), rng.To, rng.ToolArgs(),
 	)
 	if mctx != nil {
 		kickoff = enrichKickoff(ctx, client, mctx.Namespace, "release notes "+rng.String(), kickoff, mctx)
@@ -158,36 +249,43 @@ func runReleaseNotesAgent(ctx context.Context, client *api.Client, repo *git.Rep
 	return &notes, nil
 }
 
-func emitReleaseNotes(cmd *cobra.Command, e *env, space, output string, dryRun bool, changelogPath string, notes *agent.ReleaseNotesInput) error {
+func emitReleaseNotes(cmd *cobra.Command, e *env, opts releaseNotesEmit, view releaseNotesView) error {
 	out := cmd.OutOrStdout()
+	notes := view.Notes
 	md := renderReleaseNotesMarkdown(notes)
-
-	if dryRun {
-		fmt.Fprintln(out, "--- dry run: structured release notes ---")
-		fmt.Fprint(out, md)
+	view.Markdown = md
+	finish := func(text func()) error {
+		if opts.json {
+			return writeJSON(out, view)
+		}
+		text()
 		return nil
 	}
 
-	switch output {
+	if opts.dryRun {
+		return finish(func() {
+			fmt.Fprintln(out, "--- dry run: structured release notes ---")
+			fmt.Fprint(out, md)
+		})
+	}
+
+	switch opts.output {
 	case outputStdout:
-		fmt.Fprint(out, md)
-		return nil
+		return finish(func() { fmt.Fprint(rawWriter(out), md) })
 
 	case outputFile:
-		if err := prependChangelog(changelogPath, md); err != nil {
+		if err := prependChangelog(opts.changelog, md); err != nil {
 			return Fail(CodeError, err)
 		}
-		fmt.Fprintf(out, "Wrote release notes to %s\n", changelogPath)
-		return nil
+		view.File = opts.changelog
+		return finish(func() { fmt.Fprintf(out, "Wrote release notes to %s\n", opts.changelog) })
 
 	case outputProposal:
-		if e.cfg.Site == "" {
-			if _, err := e.requireSite(); err != nil {
-				return err
-			}
+		if _, err := e.requireSite(); err != nil {
+			return err
 		}
 		req := api.ReleaseNotesRequest{
-			SpaceSlug: space,
+			SpaceSlug: opts.space,
 			Title:     notes.Title,
 			Summary:   notes.Summary,
 			Sections:  toAPISections(notes),
@@ -196,13 +294,15 @@ func emitReleaseNotes(cmd *cobra.Command, e *env, space, output string, dryRun b
 		if err != nil {
 			return Fail(CodeError, fmt.Errorf("create release-notes proposal: %w", err))
 		}
-		fmt.Fprintf(out, "Proposed release notes: %s\n", resp.PageSlug)
-		fmt.Fprintf(out, "Status:   %s\n", resp.Status)
-		fmt.Fprintf(out, "Proposal: %s\n", resp.ProposalID)
-		fmt.Fprintf(out, "Review:   %s\n", resp.ReviewURL)
-		return nil
+		view.Proposal = resp
+		return finish(func() {
+			fmt.Fprintf(out, "Proposed release notes: %s  (space %s)\n", resp.PageSlug, opts.space)
+			fmt.Fprintf(out, "Status:   %s\n", resp.Status)
+			fmt.Fprintf(out, "Proposal: %s\n", resp.ProposalID)
+			fmt.Fprintf(out, "Review:   %s\n", resp.ReviewURL)
+		})
 	}
-	return Failf(CodeError, "unhandled output mode %q", output)
+	return Failf(CodeError, "unhandled output mode %q", opts.output)
 }
 
 func toAPISections(notes *agent.ReleaseNotesInput) []api.ReleaseNoteSection {

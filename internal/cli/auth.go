@@ -17,11 +17,11 @@ func newAuthCmd(gf *globalFlags) *cobra.Command {
 		Use:   "auth",
 		Short: "Manage authentication credentials",
 	}
-	cmd.AddCommand(newAuthLoginCmd(), newAuthLogoutCmd(), newAuthStatusCmd(gf))
+	cmd.AddCommand(newAuthLoginCmd(gf), newAuthLogoutCmd(), newAuthStatusCmd(gf))
 	return cmd
 }
 
-func newAuthLoginCmd() *cobra.Command {
+func newAuthLoginCmd(gf *globalFlags) *cobra.Command {
 	var (
 		token  string
 		apiURL string
@@ -38,7 +38,7 @@ func newAuthLoginCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 			existing, _ := config.LoadUserCredentials()
-			interactive := isInteractive(cmd.InOrStdin())
+			interactive := !ciMode(*gf) && isInteractive(cmd.InOrStdin())
 
 			if existing != nil && token == "" && os.Getenv(config.EnvToken) == "" && interactive {
 				replace := false
@@ -151,7 +151,11 @@ func newAuthStatusCmd(gf *globalFlags) *cobra.Command {
 			path, _ := config.UserConfigPath()
 			fmt.Fprintf(out, "Config file: %s\n", path)
 			fmt.Fprintf(out, "API URL:     %s\n", e.cfg.APIURL)
-			fmt.Fprintf(out, "Token:       %s  (%s)\n", tokenState(e.cfg.Token), tokenSource(gf.token))
+			if e.cfg.Token == "" {
+				fmt.Fprintln(out, "Token:       not set")
+			} else {
+				fmt.Fprintf(out, "Token:       set  (%s)\n", tokenSource(gf.token))
+			}
 
 			if e.cfg.Token == "" {
 				fmt.Fprintln(out, "\nNot signed in. Run `gravity auth login` to store a token.")

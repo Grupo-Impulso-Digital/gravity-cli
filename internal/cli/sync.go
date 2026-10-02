@@ -16,6 +16,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
 
 type syncTarget struct {
@@ -79,23 +80,25 @@ func newSyncCmd(gf *globalFlags) *cobra.Command {
 		page           string
 		output         string
 		dryRun         bool
-		ci             bool
 		space          string
 		keepDuplicates bool
+		jsonOut        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Author docs to Gravity from .gravity.yaml (API blocks + Markdown)",
 		Long: `Author the doc mappings declared in .gravity.yaml onto the Gravity platform:
 
-  sources    OpenAPI/code files -> machine-owned, drift-locked api blocks
-  documents  Markdown files     -> native blocks on a page, or a release
+  sources    OpenAPI specs  -> machine-owned, drift-locked api blocks
+  documents  Markdown files -> native blocks on a page, or a release
 
 Machine blocks are bound to their source file by sha256, so they change only when
 the code changes and are verifiable by ` + "`gravity check api`" + ` / ` + "`gravity check docs`" + `.
 Every write creates a draft + open proposal — nothing is published directly.
 
-Use --only to author just one kind, and --page to target a single mapping.`,
+--space (or GRAVITY_SPACE) overrides spaces.default: every mapping that names no
+space of its own lands there. Use --only to author just one kind, and --page to
+target a single mapping.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			switch output {
@@ -117,30 +120,38 @@ Use --only to author just one kind, and --page to target a single mapping.`,
 				return Failf(CodeError, "no %s found; run `gravity init` to create one", config.ProjectFileName)
 			}
 			if len(e.proj.Sources) == 0 && len(e.proj.Documents) == 0 {
-				return Failf(CodeError, "%s declares no `sources` or `documents` to sync", config.ProjectFileName)
+				return Failf(CodeError, "%s declares no `sources` or `documents` to sync (run `gravity init --force` to detect them)", config.ProjectFileName)
 			}
+			applySpaceOverride(e.proj, e.cfg.Space)
+			e.targetSpace = e.proj.Spaces.Default
 
 			repo, err := git.Open(cmd.Context(), ".")
 			if err != nil {
-				return Fail(CodeError, fmt.Errorf("sync must run inside a git repo: %w", err))
+				return Fail(CodeError, err)
 			}
-			generator := "gravity sync v" + version
+			generator := "gravity sync v" + version.String()
 
 			targets, err := buildSyncTargets(e.proj, repo.Root, generator, only, page, localRepoRef(cmd.Context(), e.proj))
 			if err != nil {
 				return Fail(CodeError, err)
 			}
+			out := cmd.OutOrStdout()
 			if len(targets) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "nothing to sync (no matching mappings)")
+				if jsonOut {
+					return writeJSON(out, newSyncReport(e.cfg.Site))
+				}
+				fmt.Fprintln(out, "nothing to sync (no matching mappings)")
 				return nil
 			}
 
-			out := cmd.OutOrStdout()
 			if output == outputStdout {
 				printSyncStdout(out, targets)
 				return nil
 			}
 			if dryRun {
+				if jsonOut {
+					return writeJSON(out, dryRunReport(e.cfg.Site, targets))
+				}
 				return printSyncDryRun(out, targets)
 			}
 
@@ -151,17 +162,84 @@ Use --only to author just one kind, and --page to target a single mapping.`,
 			if err != nil {
 				return err
 			}
-			return runSync(cmd.Context(), e.client, site, targets, !keepDuplicates, hierarchyFromProject(e.proj), logWriter(cmd, ci), out)
+			if !jsonOut {
+				return runSync(cmd.Context(), e.client, site, targets, !keepDuplicates, hierarchyFromProject(e.proj), logWriter(cmd), out)
+			}
+			rep := newSyncReport(site)
+			serr := runSyncReport(cmd.Context(), e.client, site, targets, !keepDuplicates, hierarchyFromProject(e.proj), logWriter(cmd), logWriter(cmd), rep)
+			if werr := writeJSON(out, rep); werr != nil {
+				return werr
+			}
+			return serr
 		},
 	}
 	cmd.Flags().StringVar(&only, "only", "", "author only one kind: api|docs")
 	cmd.Flags().StringVar(&page, "page", "", "author only the mapping(s) for this page slug")
-	cmd.Flags().StringVar(&space, "space", "", "override the target space for all mappings")
+	cmd.Flags().StringVar(&space, "space", "", "override spaces.default: mappings without their own space land here (also GRAVITY_SPACE)")
 	cmd.Flags().StringVar(&output, "output", outputProposal, "proposal|stdout")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be posted without calling the API")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
 	cmd.Flags().BoolVar(&keepDuplicates, "keep-duplicates", false, "report duplicate pages but don't propose deleting them")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the sync plan and results as JSON (human logs go to stderr)")
 	return cmd
+}
+
+func applySpaceOverride(proj *config.Project, space string) {
+	if proj == nil || space == "" {
+		return
+	}
+	proj.Spaces.Default = space
+}
+
+type syncReport struct {
+	Site     string            `json:"site"`
+	DryRun   bool              `json:"dryRun,omitempty"`
+	Plan     []syncPlanEntry   `json:"plan"`
+	Proposed []syncProposal    `json:"proposed"`
+	Deletes  []syncProposal    `json:"deleteProposed,omitempty"`
+	Failures []string          `json:"failures,omitempty"`
+	Home     string            `json:"home,omitempty"`
+	Targets  []syncDryRunEntry `json:"targets,omitempty"`
+}
+
+type syncPlanEntry struct {
+	Action     string `json:"action"`
+	Space      string `json:"space"`
+	Slug       string `json:"slug"`
+	ConfigSlug string `json:"configSlug,omitempty"`
+	Draft      bool   `json:"draft,omitempty"`
+}
+
+type syncProposal struct {
+	Label      string `json:"label,omitempty"`
+	Space      string `json:"space,omitempty"`
+	PageSlug   string `json:"pageSlug"`
+	Status     string `json:"status,omitempty"`
+	ProposalID string `json:"proposalId,omitempty"`
+	ReviewURL  string `json:"reviewUrl,omitempty"`
+}
+
+type syncDryRunEntry struct {
+	Label   string `json:"label"`
+	Kind    string `json:"kind"`
+	Space   string `json:"space"`
+	Payload any    `json:"payload"`
+}
+
+func newSyncReport(site string) *syncReport {
+	return &syncReport{Site: site, Plan: []syncPlanEntry{}, Proposed: []syncProposal{}}
+}
+
+func dryRunReport(site string, targets []syncTarget) *syncReport {
+	rep := newSyncReport(site)
+	rep.DryRun = true
+	for _, t := range targets {
+		var payload any = t.page
+		if t.kind == "release" {
+			payload = t.release
+		}
+		rep.Targets = append(rep.Targets, syncDryRunEntry{Label: t.label, Kind: t.kind, Space: t.space, Payload: payload})
+	}
+	return rep
 }
 
 func buildSyncTargets(proj *config.Project, repoRoot, generator, only, pageFilter string, repo *api.RepoRef) ([]syncTarget, error) {
@@ -437,6 +515,13 @@ func bestTitleMatch(cands []api.Page, title, cfgSlug string) *api.Page {
 }
 
 func runSync(ctx context.Context, client *api.Client, site string, targets []syncTarget, pruneDuplicates bool, hier *hierarchySpec, logw, out io.Writer) error {
+	return runSyncReport(ctx, client, site, targets, pruneDuplicates, hier, logw, out, nil)
+}
+
+func runSyncReport(ctx context.Context, client *api.Client, site string, targets []syncTarget, pruneDuplicates bool, hier *hierarchySpec, logw, out io.Writer, rep *syncReport) error {
+	if rep == nil {
+		rep = newSyncReport(site)
+	}
 	features := map[string]bool{}
 	if who, err := client.WhoAmI(ctx); err == nil {
 		features = who.Features
@@ -492,6 +577,11 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 				note += " (draft — updating the open proposal in place)"
 			}
 			fmt.Fprintf(out, "plan: %-6s %s/%s%s\n", verb, r.space, r.effectiveSlug, note)
+			entry := syncPlanEntry{Action: strings.ToLower(verb), Space: r.space, Slug: r.effectiveSlug, Draft: r.draft}
+			if r.effectiveSlug != r.configSlug {
+				entry.ConfigSlug = r.configSlug
+			}
+			rep.Plan = append(rep.Plan, entry)
 			targets[r.index].page.Slug = r.effectiveSlug
 		}
 		for _, o := range orphans {
@@ -558,17 +648,24 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 		}
 		if err != nil {
 			var ae *api.APIError
-			if errors.As(err, &ae) && ae.IsAuth() {
+			// A license refusal would fail every remaining target the same
+			// way, so it aborts the run like an auth failure does.
+			if (errors.As(err, &ae) && ae.IsAuth()) || api.IsLicenseError(err) {
 				return syncAPIError(err, t.label)
 			}
 			fmt.Fprintf(out, "FAILED: %s: %v\n", t.label, err)
 			failures = append(failures, t.label)
+			rep.Failures = append(rep.Failures, fmt.Sprintf("%s: %v", t.label, err))
 			continue
 		}
 		if t.home && t.kind == "page" && hier != nil && hier.home != "" {
 			homeSpace, homeSlug = t.space, firstNonEmpty(resp.PageSlug, t.page.Slug)
 		}
 		proposed++
+		rep.Proposed = append(rep.Proposed, syncProposal{
+			Label: t.label, Space: t.space, PageSlug: resp.PageSlug, Status: resp.Status,
+			ProposalID: resp.ProposalID, ReviewURL: resp.ReviewURL,
+		})
 		fmt.Fprintf(out, "Proposed: %s  status=%s  proposal=%s\n", resp.PageSlug, resp.Status, resp.ProposalID)
 		if resp.ReviewURL != "" {
 			fmt.Fprintf(out, "  review: %s\n", resp.ReviewURL)
@@ -580,6 +677,7 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 			fmt.Fprintf(out, "note: could not pin %q as the home page of space %q (%v); re-run `gravity sync` to retry\n", homeSlug, homeSpace, err)
 		} else {
 			fmt.Fprintf(out, "Home page: %s/%s\n", homeSpace, homeSlug)
+			rep.Home = homeSpace + "/" + homeSlug
 		}
 	}
 
@@ -593,6 +691,10 @@ func runSync(ctx context.Context, client *api.Client, site string, targets []syn
 				fmt.Fprintf(out, "note: page deletion is unavailable on this platform (%v) — left the duplicate page(s) in place; re-run `gravity sync` once it ships\n", deleteErrHint(err))
 				break
 			}
+			rep.Deletes = append(rep.Deletes, syncProposal{
+				Space: o.page.SpaceSlug, PageSlug: resp.PageSlug, Status: resp.Status,
+				ProposalID: resp.ProposalID, ReviewURL: resp.ReviewURL,
+			})
 			fmt.Fprintf(out, "Delete proposed: %s  status=%s  proposal=%s\n", resp.PageSlug, resp.Status, resp.ProposalID)
 			if resp.ReviewURL != "" {
 				fmt.Fprintf(out, "  review: %s\n", resp.ReviewURL)
@@ -683,7 +785,7 @@ func printSyncStdout(out io.Writer, targets []syncTarget) {
 }
 
 func printSyncDryRun(out io.Writer, targets []syncTarget) error {
-	enc := json.NewEncoder(out)
+	enc := json.NewEncoder(rawWriter(out))
 	enc.SetIndent("", "  ")
 	for _, t := range targets {
 		fmt.Fprintf(out, "--- %s ---\n", t.label)

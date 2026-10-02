@@ -17,6 +17,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
 
 func newPingCmd(gf *globalFlags) *cobra.Command {
@@ -58,7 +59,7 @@ func runPing(ctx context.Context, client *api.Client, req api.SetupPingRequest, 
 		return Fail(CodeError, fmt.Errorf("setup ping failed: %w", classifyAuthErr(err)))
 	}
 	if jsonOut {
-		enc := json.NewEncoder(out)
+		enc := json.NewEncoder(rawWriter(out))
 		enc.SetIndent("", "  ")
 		return enc.Encode(struct {
 			Request  api.SetupPingRequest   `json:"request"`
@@ -72,7 +73,7 @@ func runPing(ctx context.Context, client *api.Client, req api.SetupPingRequest, 
 func buildPingRequest(ctx context.Context, e *env) api.SetupPingRequest {
 	req := api.SetupPingRequest{
 		CLI: api.PingCLI{
-			Version: version,
+			Version: version.String(),
 			OS:      runtime.GOOS,
 			Arch:    runtime.GOARCH,
 		},

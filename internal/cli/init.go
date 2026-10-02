@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,23 +27,30 @@ func newInitCmd(gf *globalFlags) *cobra.Command {
 		urlAlias  string
 		nonInt    bool
 		outDir    string
-		confirm   bool
+		force     bool
 		migrate   bool
+		dryRun    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Write a project-local .gravity.yaml",
 		Long: `Create a .gravity.yaml in the current directory: a committable, non-secret
 manifest describing how this repo feeds the Gravity docs platform — its site,
-product/multi-repo identity, spaces, and the source/document mappings that
-` + "`gravity sync`" + ` authors onto the platform.
+product/multi-repo identity, default space, and the OpenAPI/Markdown mappings
+that ` + "`gravity sync`" + ` authors onto the platform.
 
-Run with no flags for an interactive wizard; it detects OpenAPI specs and
-Markdown docs in the repo and offers to map them. Use -y/--yes (or a
-non-interactive shell) to skip the wizard and rely on flags/env.
+Run with no flags for an interactive wizard. With -y/--yes (or --ci, or a
+non-interactive shell) it skips the questions: it detects OpenAPI specs and the
+repo's documentation Markdown (README.md and docs/**, never AGENTS.md,
+CONTRIBUTING, LICENSE, CHANGELOG, .github/** and the like) and maps them for you.
+Nothing is created on the platform: ` + "`gravity sync`" + ` creates the spaces.
+
+--dry-run prints the file instead of writing it. --migrate upgrades an existing
+file in place without losing any setting (removed keys are dropped and reported).
 
 A token is never written here; provide it via GRAVITY_TOKEN (CI) or
-` + "`gravity auth login`" + ` (local). Use --migrate to upgrade a legacy file in place.`,
+` + "`gravity auth login`" + ` (local). The API URL is only recorded when you pass
+--api-url (self-hosted platforms).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir := outDir
@@ -60,132 +66,104 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 				return Fail(CodeError, fmt.Errorf("resolve dir: %w", err))
 			}
 			path := filepath.Join(dir, config.ProjectFileName)
+			out := cmd.OutOrStdout()
 
-			site := firstNonEmpty(siteAlias, gf.site, os.Getenv(config.EnvSite))
-			apiURL := firstNonEmpty(urlAlias, gf.apiURL, os.Getenv(config.EnvAPIURL))
-			sp := firstNonEmpty(space, os.Getenv(config.EnvSpace))
-			repo := filepath.Base(absDir)
-			productSlug := ""
-			parent, home := "", ""
-			var shared []string
+			explicit := initInputs{
+				site:   firstNonEmpty(siteAlias, gf.site, os.Getenv(config.EnvSite)),
+				apiURL: firstNonEmpty(urlAlias, gf.apiURL),
+				space:  firstNonEmpty(space, os.Getenv(config.EnvSpace)),
+				role:   role,
+				repo:   filepath.Base(absDir),
+			}
+			if explicit.apiURL != "" {
+				if err := config.CheckAPIURL(explicit.apiURL); err != nil {
+					return Fail(CodeError, err)
+				}
+			}
 
-			var sources []config.SourceMap
-			var documents []config.DocMap
-
-			var client *api.Client
-			interactive := false
-
-			if !confirm && !migrate {
+			if !force && !migrate && !dryRun {
 				if _, statErr := os.Stat(path); statErr == nil {
 					return Failf(CodeError, "%s already exists; pass --force to overwrite or --migrate to upgrade it", path)
 				}
 			}
 
+			var proj *config.Project
+			var notes []string
 			switch {
 			case migrate:
-				existing, err := config.LoadProject(dir)
+				proj, notes, err = migrateManifest(path, initInputs{
+					site:   firstNonEmpty(siteAlias, gf.site),
+					apiURL: explicit.apiURL,
+					space:  space,
+					role:   role,
+				})
 				if err != nil {
 					return Fail(CodeError, err)
 				}
-				if existing == nil {
-					return Failf(CodeError, "no %s to migrate in %s", config.ProjectFileName, dir)
-				}
-				site = firstNonEmpty(site, existing.Site)
-				apiURL = firstNonEmpty(apiURL, existing.APIURL)
-				sp = firstNonEmpty(sp, existing.Spaces.Default)
-				parent = existing.Spaces.Parent
-				home = existing.Spaces.Home
-				shared = existing.Spaces.Shared
-				role = firstNonEmpty(role, existing.Product.Role)
-				productSlug = existing.Product.Slug
-				if existing.Product.Repo != "" {
-					repo = existing.Product.Repo
-				}
-				sources = existing.Sources
-				documents = existing.Documents
 
-			case nonInt || !isInteractive(cmd.InOrStdin()):
+			case nonInt || ciMode(*gf) || !isInteractive(cmd.InOrStdin()):
+				if explicit.site == "" {
+					return Failf(CodeError, "site is required: pass --site (or set %s)", config.EnvSite)
+				}
+				det := detectDocSources(absDir)
+				proj = projectFromDetection(explicit, det)
+				notes = detectionNotes(det)
 
 			default:
-				interactive = true
-				if cfg, cerr := config.Resolve(config.Flags{Token: gf.token, APIURL: apiURL, Site: site, Space: sp}, dir); cerr == nil {
-					apiURL = firstNonEmpty(apiURL, cfg.APIURL)
+				var client *api.Client
+				if cfg, cerr := config.Resolve(config.Flags{Token: gf.token, APIURL: explicit.apiURL, Site: explicit.site, Space: explicit.space}, dir); cerr == nil {
 					if cfg.Token != "" && cfg.APIURL != "" {
 						client = api.New(cfg.APIURL, cfg.Token)
 					}
 				}
-				params, write, werr := runInitWizard(cmd, client, initSeed{
-					Site:    site,
-					APIURL:  firstNonEmpty(apiURL, config.DefaultAPIURL),
-					Space:   firstNonEmpty(sp, repo),
-					Role:    role,
-					Repo:    repo,
-					ScanDir: absDir,
-				})
-				if werr != nil {
-					return Fail(CodeError, werr)
+				var write bool
+				proj, write, err = runInitWizard(cmd, client, explicit, absDir)
+				if err != nil {
+					return Fail(CodeError, err)
 				}
 				if !write {
-					fmt.Fprintln(cmd.OutOrStdout(), "Aborted; nothing written.")
+					fmt.Fprintln(out, "Aborted; nothing written.")
 					return nil
 				}
-				site, apiURL, sp = params.Site, params.APIURL, params.Space
-				role, repo, productSlug = params.Role, params.Repo, params.ProductSlug
-				sources, documents = params.Sources, params.Documents
-				parent, home = params.Parent, params.Home
-				if params.Shared && sp != "" {
-					shared = []string{sp}
-				}
 			}
 
-			if apiURL == "" {
-				apiURL = config.DefaultAPIURL
-			}
-			if site == "" {
+			if proj.Site == "" {
 				return Failf(CodeError, "site is required (pass --site or answer the prompt)")
 			}
-
-			params := scaffoldParams{
-				Site:        site,
-				APIURL:      apiURL,
-				Space:       sp,
-				Parent:      parent,
-				Home:        home,
-				Shared:      shared,
-				Role:        role,
-				Repo:        repo,
-				ProductSlug: firstNonEmpty(productSlug, site),
-				Sources:     sources,
-				Documents:   documents,
-			}
-			if err := projectFromScaffold(params).Validate(path); err != nil {
+			if err := validateManifest(proj, absDir, path); err != nil {
 				return Fail(CodeError, err)
 			}
 
-			content := renderScaffold(params)
+			content := renderManifest(proj)
+			if dryRun {
+				fmt.Fprint(out, content)
+				for _, n := range notes {
+					fmt.Fprintln(cmd.ErrOrStderr(), "note: "+n)
+				}
+				return nil
+			}
 			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 				return Fail(CodeError, fmt.Errorf("write %s: %w", path, err))
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s\n", path)
-
-			if interactive && client != nil && site != "" {
-				ensureDeclaredSpaces(cmd, client, site, params)
+			fmt.Fprintf(out, "Wrote %s\n", path)
+			for _, n := range notes {
+				fmt.Fprintln(out, "  "+n)
 			}
-
-			if len(sources) == 0 && len(documents) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No source/document mappings declared yet — edit the file or re-run `gravity init`, then `gravity sync`.")
-			} else if interactive {
-				fmt.Fprintln(cmd.OutOrStdout(), "Note: `gravity sync` authors content as a draft + open proposal — pages appear under review until approved, not as live pages.")
+			if len(proj.Sources) == 0 && len(proj.Documents) == 0 {
+				fmt.Fprintln(out, "No OpenAPI spec or documentation Markdown found to map — add `sources`/`documents` to the file, then run `gravity sync`.")
+			} else if !migrate {
+				fmt.Fprintln(out, "Next: `gravity sync` creates the spaces and authors these pages as a draft + open proposal for review.")
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&space, "space", "", "default space to record")
-	cmd.Flags().StringVar(&role, "role", "", "this repo's role in the product (api|service|frontend|docs)")
-	cmd.Flags().BoolVarP(&nonInt, "yes", "y", false, "non-interactive; use flags/env without prompting")
+	cmd.Flags().StringVar(&space, "space", "", "default space to record (default: the repo name)")
+	cmd.Flags().StringVar(&role, "role", "", "this repo's role in the product, which sets its default unit kind (api|service|frontend|docs)")
+	cmd.Flags().BoolVarP(&nonInt, "yes", "y", false, "non-interactive: detect specs and docs and write without prompting")
 	cmd.Flags().StringVar(&outDir, "dir", "", "directory to write .gravity.yaml in (default: cwd)")
-	cmd.Flags().BoolVar(&confirm, "force", false, "overwrite an existing .gravity.yaml")
-	cmd.Flags().BoolVar(&migrate, "migrate", false, "upgrade a legacy .gravity.yaml in place, preserving its values")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing .gravity.yaml")
+	cmd.Flags().BoolVar(&migrate, "migrate", false, "upgrade an existing .gravity.yaml in place, preserving every value")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the file that would be written without writing it")
 	cmd.Flags().StringVar(&siteAlias, "site-slug", "", "")
 	cmd.Flags().StringVar(&urlAlias, "url", "", "")
 	_ = cmd.Flags().MarkHidden("site-slug")
@@ -193,50 +171,187 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 	return cmd
 }
 
-type initSeed struct {
-	Site    string
-	APIURL  string
-	Space   string
-	Role    string
-	Repo    string
-	ScanDir string
+type initInputs struct {
+	site   string
+	apiURL string
+	space  string
+	role   string
+	repo   string
 }
 
-type wizardResult struct {
-	Site        string
-	APIURL      string
-	Space       string
-	Parent      string
-	Home        string
-	Shared      bool
-	Role        string
-	Repo        string
-	ProductSlug string
-	Sources     []config.SourceMap
-	Documents   []config.DocMap
+func newManifest(in initInputs, productSlug string) *config.Project {
+	p := &config.Project{
+		Version: config.SchemaVersion,
+		Site:    in.site,
+		Product: config.Product{Slug: firstNonEmpty(productSlug, in.site), Repo: in.repo, Role: in.role},
+		Spaces:  config.Spaces{Default: firstNonEmpty(in.space, in.repo)},
+	}
+	if in.apiURL != "" && strings.TrimRight(in.apiURL, "/") != config.DefaultAPIURL {
+		p.APIURL = in.apiURL
+	}
+	return p
 }
 
-func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizardResult, bool, error) {
+func projectFromDetection(in initInputs, det docDetection) *config.Project {
+	p := newManifest(in, "")
+	p.Sources = specSources(det.specs, "")
+	p.Documents = docMappings(det.selected)
+	return p
+}
+
+func detectionNotes(det docDetection) []string {
+	var notes []string
+	if len(det.specs) > 0 {
+		notes = append(notes, fmt.Sprintf("mapped %d OpenAPI spec(s): %s", len(det.specs), strings.Join(det.specs, ", ")))
+	}
+	if len(det.selected) > 0 {
+		notes = append(notes, fmt.Sprintf("mapped %d Markdown doc(s): %s", len(det.selected), strings.Join(det.selected, ", ")))
+	}
+	if skipped := len(det.docs) - len(det.selected); skipped > 0 {
+		notes = append(notes, fmt.Sprintf("%d other Markdown file(s) left unmapped; add them under `documents` if they belong in the docs", skipped))
+	}
+	return notes
+}
+
+func specSources(specs []string, space string) []config.SourceMap {
+	out := make([]config.SourceMap, 0, len(specs))
+	used := map[string]bool{}
+	for _, s := range specs {
+		out = append(out, config.SourceMap{
+			Source: s,
+			Kind:   "openapi",
+			Space:  space,
+			Page:   uniqueSlug(specPageSlug(s), s, used),
+			Title:  "API Reference",
+		})
+	}
+	return out
+}
+
+func docMappings(files []string) []config.DocMap {
+	out := make([]config.DocMap, 0, len(files))
+	used := map[string]bool{}
+	for _, f := range files {
+		out = append(out, config.DocMap{
+			File:      f,
+			Page:      uniqueSlug(slugFromPath(f), f, used),
+			Ownership: "human",
+			As:        "page",
+		})
+	}
+	return out
+}
+
+func uniqueSlug(slug, file string, used map[string]bool) string {
+	if !used[slug] {
+		used[slug] = true
+		return slug
+	}
+	dir := filepath.Base(filepath.Dir(file))
+	cand := slugFromPath(dir + "-" + filepath.Base(file))
+	for i := 2; used[cand]; i++ {
+		cand = fmt.Sprintf("%s-%d", slug, i)
+	}
+	used[cand] = true
+	return cand
+}
+
+func validateManifest(p *config.Project, absDir, path string) error {
+	clone := *p
+	data := renderManifest(&clone)
+	parsed, err := config.ParseProject([]byte(data), path)
+	if err != nil {
+		return err
+	}
+	parsed.ApplyDefaults(absDir)
+	return parsed.Validate(path)
+}
+
+func migrateManifest(path string, in initInputs) (*config.Project, []string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, fmt.Errorf("no %s to migrate in %s", config.ProjectFileName, filepath.Dir(path))
+		}
+		return nil, nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	p, notes, err := config.ParseProjectForMigration(data, path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if p.LegacySpace != "" {
+		if p.Spaces.Default == "" && in.space == "" {
+			p.Spaces.Default = p.LegacySpace
+			notes = append(notes, fmt.Sprintf("moved the legacy top-level `space: %s` to spaces.default", p.LegacySpace))
+		} else {
+			notes = append(notes, fmt.Sprintf("dropped the legacy top-level `space: %s`", p.LegacySpace))
+		}
+		p.LegacySpace = ""
+	}
+	if p.Version < config.SchemaVersion {
+		p.Version = config.SchemaVersion
+	}
+	if in.site != "" && in.site != p.Site {
+		notes = append(notes, fmt.Sprintf("site set to %s from --site", in.site))
+		p.Site = in.site
+	}
+	if in.apiURL != "" && in.apiURL != p.APIURL {
+		notes = append(notes, fmt.Sprintf("apiUrl set to %s from --api-url", in.apiURL))
+		p.APIURL = in.apiURL
+	}
+	if in.space != "" && in.space != p.Spaces.Default {
+		notes = append(notes, fmt.Sprintf("spaces.default set to %s from --space", in.space))
+		p.Spaces.Default = in.space
+	}
+	if in.role != "" && in.role != p.Product.Role {
+		notes = append(notes, fmt.Sprintf("product.role set to %s from --role", in.role))
+		p.Product.Role = in.role
+	}
+	if hasYAMLComments(data) {
+		notes = append(notes, "comments are not carried over: the file is re-rendered from its settings, so copy any comments you want to keep from version control")
+	}
+	return p, notes, nil
+}
+
+func hasYAMLComments(data []byte) bool {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return false
+	}
+	var walk func(n *yaml.Node) bool
+	walk = func(n *yaml.Node) bool {
+		if n.HeadComment != "" || n.LineComment != "" || n.FootComment != "" {
+			return true
+		}
+		for _, c := range n.Content {
+			if walk(c) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(&root)
+}
+
+func runInitWizard(cmd *cobra.Command, client *api.Client, in initInputs, scanDir string) (*config.Project, bool, error) {
 	ctx := cmd.Context()
-	in := cmd.InOrStdin()
+	stdin := cmd.InOrStdin()
 	errOut := cmd.ErrOrStderr()
 
-	site := seed.Site
-	apiURL := seed.APIURL
-	defaultSpace := seed.Space
-	role := seed.Role
-	repo := seed.Repo
-	apiSpace := "api"
+	site := in.site
+	defaultSpace := firstNonEmpty(in.space, in.repo)
+	role := in.role
+	repo := in.repo
 
-	siteFld := siteField(ctx, client, errOut, &site, seed.Site)
-	form1 := huh.NewForm(huh.NewGroup(siteFld)).WithInput(in).WithOutput(errOut)
+	siteFld := siteField(ctx, client, errOut, &site, in.site)
+	form1 := huh.NewForm(huh.NewGroup(siteFld)).WithInput(stdin).WithOutput(errOut)
 	if err := form1.Run(); err != nil {
-		return wizardResult{}, false, err
+		return nil, false, err
 	}
 	if site == siteManualSentinel {
 		site = ""
 		if err := runInput(cmd, "Site slug", "The Gravity site this repo documents.", &site, requiredField); err != nil {
-			return wizardResult{}, false, err
+			return nil, false, err
 		}
 	}
 	site = strings.TrimSpace(site)
@@ -244,133 +359,108 @@ func runInitWizard(cmd *cobra.Command, client *api.Client, seed initSeed) (wizar
 
 	spaces := fetchSpaces(ctx, client, site, errOut)
 
-	specs, mds := detectDocSources(seed.ScanDir)
-	selectedSpecs := append([]string(nil), specs...)
-	selectedDocs := append([]string(nil), mds...)
+	det := detectDocSources(scanDir)
+	selectedSpecs := append([]string(nil), det.specs...)
+	selectedDocs := append([]string(nil), det.selected...)
 
 	groups := []*huh.Group{
 		huh.NewGroup(
-			huh.NewInput().Title("API URL").Value(&apiURL).Validate(optionalURL),
 			huh.NewInput().Title("Product slug").
-				Description("Logical product id; defaults to the site slug.").
+				Description("Logical product id shared by the repos that document one product; defaults to the site slug.").
 				Value(&productSlug),
 			huh.NewInput().Title("Repo name").
 				Description("This repo's unique name within the product.").
 				Value(&repo),
-			huh.NewSelect[string]().Title("Role (informational)").
+			huh.NewSelect[string]().Title("Role").
+				Description("What this repo is in the product; it sets the default unit kind `gravity docs generate` documents.").
 				Options(
-					huh.NewOption("(none)", ""),
-					huh.NewOption("api", "api"),
-					huh.NewOption("service", "service"),
-					huh.NewOption("frontend", "frontend"),
-					huh.NewOption("docs", "docs"),
+					huh.NewOption("(none — document features)", ""),
+					huh.NewOption("api — document services", "api"),
+					huh.NewOption("service — document services", "service"),
+					huh.NewOption("frontend — document features", "frontend"),
+					huh.NewOption("docs — a docs-only repo", "docs"),
 				).Value(&role),
 		),
 		huh.NewGroup(
-			spaceField("Default space", "Where this repo's pages live.", spaces, &defaultSpace, seed.Space),
+			spaceField("Default space", "Where this repo's pages live. `gravity sync` creates it if needed.", spaces, &defaultSpace, defaultSpace),
 		),
 	}
 
-	if len(specs) > 0 {
+	if len(det.specs) > 0 {
 		groups = append(groups, huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("OpenAPI specs to document").
-				Description("Each becomes machine-owned `api` blocks authored by `gravity sync`.").
-				Options(toOptions(specs)...).
+				Description("Each becomes machine-owned `api` blocks on an api-reference page in the default space.").
+				Options(toOptions(det.specs)...).
 				Value(&selectedSpecs),
-			spaceField("API docs space", "", spaces, &apiSpace, "api"),
 		))
 	}
-	if len(mds) > 0 {
+	if len(det.docs) > 0 {
 		groups = append(groups, huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Markdown docs to publish as pages").
-				Description("Each becomes a native-block page authored by `gravity sync`.").
-				Options(toOptions(mds)...).
+				Description("README.md and docs/** are preselected; tick anything else that belongs in the docs.").
+				Options(toOptions(det.docs)...).
 				Value(&selectedDocs),
 		))
 	}
 
-	form := huh.NewForm(groups...).WithInput(in).WithOutput(errOut)
+	form := huh.NewForm(groups...).WithInput(stdin).WithOutput(errOut)
 	if err := form.Run(); err != nil {
-		return wizardResult{}, false, err
+		return nil, false, err
 	}
 
 	if defaultSpace == spaceNewSentinel {
-		defaultSpace = seed.Space
+		defaultSpace = firstNonEmpty(in.space, in.repo)
 		if err := runInput(cmd, "New space slug", "Where this repo's pages live.", &defaultSpace, requiredField); err != nil {
-			return wizardResult{}, false, err
-		}
-	}
-	if apiSpace == spaceNewSentinel {
-		apiSpace = "api"
-		if err := runInput(cmd, "New API docs space slug", "", &apiSpace, requiredField); err != nil {
-			return wizardResult{}, false, err
+			return nil, false, err
 		}
 	}
 
-	if strings.TrimSpace(productSlug) == "" {
-		productSlug = site
-	}
 	res := wizardResult{
-		Site:        strings.TrimSpace(site),
-		APIURL:      strings.TrimSpace(apiURL),
-		Space:       strings.TrimSpace(defaultSpace),
-		Role:        role,
-		Repo:        strings.TrimSpace(repo),
-		ProductSlug: strings.TrimSpace(productSlug),
+		Space: strings.TrimSpace(defaultSpace),
 	}
-	for _, s := range selectedSpecs {
-		res.Sources = append(res.Sources, config.SourceMap{
-			Source: s,
-			Kind:   "openapi",
-			Space:  strings.TrimSpace(apiSpace),
-			Page:   specPageSlug(s),
-			Title:  "API Reference",
-		})
-	}
-	for _, m := range selectedDocs {
-		res.Documents = append(res.Documents, config.DocMap{
-			File:      m,
-			Page:      slugFromPath(m),
-			Ownership: "human",
-			As:        "page",
-		})
-	}
+	res.Documents = docMappings(selectedDocs)
 
 	if hierarchySupported(ctx, client) {
 		if err := runHierarchySteps(cmd, spaces, &res); err != nil {
-			return wizardResult{}, false, err
+			return nil, false, err
 		}
 	}
 
-	out := cmd.OutOrStdout()
-	var sharedList []string
+	p := newManifest(initInputs{
+		site:   site,
+		apiURL: in.apiURL,
+		space:  res.Space,
+		role:   role,
+		repo:   firstNonEmpty(strings.TrimSpace(repo), in.repo),
+	}, strings.TrimSpace(productSlug))
+	p.Sources = specSources(selectedSpecs, "")
+	p.Documents = res.Documents
+	p.Spaces.Parent = res.Parent
+	p.Spaces.Home = res.Home
 	if res.Shared && res.Space != "" {
-		sharedList = []string{res.Space}
+		p.Spaces.Shared = []string{res.Space}
 	}
-	fmt.Fprintf(out, "\n--- %s preview ---\n%s\n", config.ProjectFileName, renderScaffold(scaffoldParams{
-		Site:        res.Site,
-		APIURL:      firstNonEmpty(res.APIURL, config.DefaultAPIURL),
-		Space:       res.Space,
-		Parent:      res.Parent,
-		Home:        res.Home,
-		Shared:      sharedList,
-		Role:        res.Role,
-		Repo:        res.Repo,
-		ProductSlug: res.ProductSlug,
-		Sources:     res.Sources,
-		Documents:   res.Documents,
-	}))
+
+	fmt.Fprintf(cmd.OutOrStdout(), "\n--- %s preview ---\n%s\n", config.ProjectFileName, renderManifest(p))
 
 	write := true
 	confirmForm := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().Title(fmt.Sprintf("Write %s?", config.ProjectFileName)).Value(&write),
-	)).WithInput(cmd.InOrStdin()).WithOutput(cmd.ErrOrStderr())
+	)).WithInput(stdin).WithOutput(errOut)
 	if err := confirmForm.Run(); err != nil {
-		return wizardResult{}, false, err
+		return nil, false, err
 	}
-	return res, write, nil
+	return p, write, nil
+}
+
+type wizardResult struct {
+	Space     string
+	Parent    string
+	Home      string
+	Shared    bool
+	Documents []config.DocMap
 }
 
 const (
@@ -568,50 +658,6 @@ func fetchSpaces(ctx context.Context, client *api.Client, site string, notice io
 	return tree.Spaces
 }
 
-func ensureDeclaredSpaces(cmd *cobra.Command, client *api.Client, site string, p scaffoldParams) {
-	out := cmd.OutOrStdout()
-	withParent := p.Parent != "" && hierarchySupported(cmd.Context(), client)
-
-	type ensure struct{ slug, parent string }
-	seen := map[string]bool{}
-	var plan []ensure
-	add := func(slug, parent string) {
-		slug = strings.TrimSpace(slug)
-		if slug == "" || seen[slug] {
-			return
-		}
-		seen[slug] = true
-		plan = append(plan, ensure{slug: slug, parent: parent})
-	}
-	defaultSpace := firstNonEmpty(p.Space, p.Repo)
-	if withParent {
-		add(p.Parent, "")
-		add(defaultSpace, p.Parent)
-	} else {
-		add(defaultSpace, "")
-	}
-	for _, src := range p.Sources {
-		add(src.Space, "")
-	}
-	for _, e := range plan {
-		_, err := client.EnsureSpace(cmd.Context(), site, api.SpaceUpsertRequest{Slug: e.slug, Parent: e.parent})
-		if err == nil {
-			if e.parent != "" {
-				fmt.Fprintf(out, "Ensured space %q (subspace of %q) on site %q.\n", e.slug, e.parent, site)
-			} else {
-				fmt.Fprintf(out, "Ensured space %q on site %q.\n", e.slug, site)
-			}
-			continue
-		}
-		var apiErr *api.APIError
-		if errors.As(err, &apiErr) && (apiErr.IsAuth() || apiErr.IsUnavailable()) {
-			fmt.Fprintf(out, "Note: couldn't create space %q on %q (%s) — `gravity sync` will create it later.\n", e.slug, site, apiErr.Message)
-			continue
-		}
-		fmt.Fprintf(out, "Note: couldn't create space %q on %q: %v\n", e.slug, site, err)
-	}
-}
-
 func siteLabel(s api.SiteSummary) string {
 	if s.Name != "" && s.Name != s.Slug {
 		return s.Slug + " — " + s.Name
@@ -657,17 +703,6 @@ func requiredField(s string) error {
 	return nil
 }
 
-func optionalURL(s string) error {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	if u, err := url.Parse(s); err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") {
-		return errors.New("must be an absolute http(s) URL")
-	}
-	return nil
-}
-
 func toOptions(vals []string) []huh.Option[string] {
 	opts := make([]huh.Option[string], len(vals))
 	for i, v := range vals {
@@ -693,7 +728,26 @@ var skipScanDir = map[string]bool{
 	"build": true, "target": true, "out": true, "testdata": true,
 }
 
-func detectDocSources(dir string) (specs, mds []string) {
+var excludedDocPrefixes = []string{
+	"agents", "claude", "contributing", "code_of_conduct", "code-of-conduct",
+	"license", "security", "changelog", "history", "pull_request_template", "issue_template",
+	"licence", //nolint:misspell // British spelling of LICENSE files
+}
+
+const (
+	maxDetectedSpecs = 10
+	maxDetectedDocs  = 25
+	maxSelectedDocs  = 15
+)
+
+type docDetection struct {
+	specs    []string
+	docs     []string
+	selected []string
+}
+
+func detectDocSources(dir string) docDetection {
+	var det docDetection
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil //nolint:nilerr // skip unreadable entries
@@ -719,24 +773,63 @@ func detectDocSources(dir string) (specs, mds []string) {
 		switch ext {
 		case ".yaml", ".yml", ".json":
 			if strings.Contains(stem, "openapi") || strings.Contains(stem, "swagger") {
-				specs = append(specs, rel)
+				det.specs = append(det.specs, rel)
 			}
-		case ".md":
-			if name != "changelog.md" {
-				mds = append(mds, rel)
+		case ".md", ".markdown":
+			if !excludedDoc(stem) {
+				det.docs = append(det.docs, rel)
 			}
 		}
 		return nil
 	})
-	sort.Strings(specs)
-	sort.Strings(mds)
-	if len(specs) > 10 {
-		specs = specs[:10]
+	sort.Strings(det.specs)
+	sort.SliceStable(det.docs, func(i, j int) bool {
+		ri, rj := docRank(det.docs[i]), docRank(det.docs[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return det.docs[i] < det.docs[j]
+	})
+	if len(det.specs) > maxDetectedSpecs {
+		det.specs = det.specs[:maxDetectedSpecs]
 	}
-	if len(mds) > 25 {
-		mds = mds[:25]
+	if len(det.docs) > maxDetectedDocs {
+		det.docs = det.docs[:maxDetectedDocs]
 	}
-	return specs, mds
+	for _, d := range det.docs {
+		if sensibleDoc(d) && len(det.selected) < maxSelectedDocs {
+			det.selected = append(det.selected, d)
+		}
+	}
+	return det
+}
+
+func excludedDoc(stem string) bool {
+	for _, p := range excludedDocPrefixes {
+		if stem == p || strings.HasPrefix(stem, p+"-") || strings.HasPrefix(stem, p+"_") || strings.HasPrefix(stem, p+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func sensibleDoc(rel string) bool {
+	lower := strings.ToLower(rel)
+	if lower == "readme.md" {
+		return true
+	}
+	return strings.HasPrefix(lower, "docs/") || strings.HasPrefix(lower, "doc/")
+}
+
+func docRank(rel string) int {
+	switch {
+	case strings.EqualFold(rel, "README.md"):
+		return 0
+	case sensibleDoc(rel):
+		return 1
+	default:
+		return 2
+	}
 }
 
 func walkDepth(root, path string) int {
@@ -777,191 +870,6 @@ func specPageSlug(p string) string {
 		return "api-reference"
 	}
 	return s
-}
-
-type scaffoldParams struct {
-	Site        string
-	APIURL      string
-	Space       string
-	Parent      string
-	Home        string
-	Shared      []string
-	Role        string
-	Repo        string
-	ProductSlug string
-	Sources     []config.SourceMap
-	Documents   []config.DocMap
-}
-
-func projectFromScaffold(p scaffoldParams) *config.Project {
-	return &config.Project{
-		Version: config.SchemaVersion,
-		Site:    p.Site,
-		APIURL:  p.APIURL,
-		Product: config.Product{Slug: firstNonEmpty(p.ProductSlug, p.Site), Repo: p.Repo, Role: p.Role},
-		Spaces: config.Spaces{
-			Default: firstNonEmpty(p.Space, p.Repo),
-			Parent:  p.Parent,
-			Home:    p.Home,
-			Shared:  p.Shared,
-		},
-		Sources: p.Sources, Documents: p.Documents,
-		ReleaseNotes: config.ReleaseNotes{Space: firstNonEmpty(p.Space, "changelog"), Changelog: "CHANGELOG.md"},
-	}
-}
-
-const commentedSourcesExample = `# sources:
-#   - source: openapi/openapi.yaml   # repo-relative spec or code file
-#     kind: openapi                  # openapi | code
-#     space: api
-#     page: api-reference
-#     title: API Reference`
-
-const commentedDocumentsExample = `# documents:
-#   - file: docs/getting-started.md
-#     page: getting-started
-#     ownership: human               # human: editable in Gravity, seeded once (default)
-#                                    # machine: verbatim/code mirror, drift-locked, not editable
-#                                    # hybrid: repo stays source, machine fields refreshed
-#     as: page                       # page | release`
-
-func renderScaffold(p scaffoldParams) string {
-	productSlug := firstNonEmpty(p.ProductSlug, p.Site)
-	defaultSpace := firstNonEmpty(p.Space, p.Repo)
-	releaseSpace := firstNonEmpty(p.Space, "changelog")
-	roleLine := "  # role: api            # informational: api | service | frontend | docs"
-	if p.Role != "" {
-		roleLine = "  role: " + p.Role
-	}
-
-	return fmt.Sprintf(
-		`# .gravity.yaml — committed, non-secret CI config for the Gravity docs platform.
-# NEVER put a token here. Use the %s env var (CI) or `+"`gravity auth login`"+` (local).
-version: %d
-
-# --- Connection ---
-site: %s
-apiUrl: %s
-
-# --- Product / multi-repo identity ---
-# A product is one or more repos pointing at the same site, composing shared
-# docs and knowledge. `+"`repo`"+` is this repo's unique name within the product.
-product:
-  slug: %s
-  repo: %s
-%s
-
-# --- Spaces ---
-%s
-
-# --- Machine-owned, code-derived doc blocks (authored by `+"`gravity sync`"+`) ---
-%s
-
-# --- Verbatim Markdown documents -> pages or releases ---
-%s
-
-# --- Release notes (git-derived) ---
-releaseNotes:
-  space: %s
-  changelog: CHANGELOG.md
-
-# --- Nucleus knowledge namespace (shared across a product's repos) ---
-knowledge:
-  namespace: %s
-  scope: %s
-`,
-		config.EnvToken, config.SchemaVersion,
-		p.Site, p.APIURL,
-		productSlug, p.Repo, roleLine,
-		renderSpacesBlock(defaultSpace, p.Parent, p.Home, p.Shared),
-		renderSourcesBlock(p.Sources),
-		renderDocumentsBlock(p.Documents),
-		releaseSpace,
-		productSlug, p.Repo,
-	)
-}
-
-func renderSpacesBlock(defaultSpace, parent, home string, shared []string) string {
-	var b strings.Builder
-	b.WriteString("spaces:\n")
-	fmt.Fprintf(&b, "  default: %s\n", yamlScalar(defaultSpace))
-	if parent != "" {
-		fmt.Fprintf(&b, "  parent: %s\n", yamlScalar(parent))
-	} else {
-		b.WriteString("  # parent: platform      # nest `default` as a subspace of this top-level space\n")
-	}
-	if home != "" {
-		fmt.Fprintf(&b, "  home: %s\n", yamlScalar(home))
-	} else {
-		b.WriteString("  # home: overview        # page slug pinned as the space's home page\n")
-	}
-	if len(shared) > 0 {
-		quoted := make([]string, len(shared))
-		for i, s := range shared {
-			quoted[i] = yamlScalar(s)
-		}
-		fmt.Fprintf(&b, "  shared: [%s]\n", strings.Join(quoted, ", "))
-	} else {
-		b.WriteString("  # shared: [changelog]   # spaces co-fed by sibling repos (pages grouped per repo)")
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func renderSourcesBlock(sources []config.SourceMap) string {
-	if len(sources) == 0 {
-		return commentedSourcesExample
-	}
-	var b strings.Builder
-	b.WriteString("sources:\n")
-	for _, s := range sources {
-		fmt.Fprintf(&b, "  - source: %s\n", yamlScalar(s.Source))
-		if s.Kind != "" {
-			fmt.Fprintf(&b, "    kind: %s\n", yamlScalar(s.Kind))
-		}
-		if s.Space != "" {
-			fmt.Fprintf(&b, "    space: %s\n", yamlScalar(s.Space))
-		}
-		fmt.Fprintf(&b, "    page: %s\n", yamlScalar(s.Page))
-		if s.Title != "" {
-			fmt.Fprintf(&b, "    title: %s\n", yamlScalar(s.Title))
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func renderDocumentsBlock(documents []config.DocMap) string {
-	if len(documents) == 0 {
-		return commentedDocumentsExample
-	}
-	var b strings.Builder
-	b.WriteString("documents:\n")
-	for _, d := range documents {
-		fmt.Fprintf(&b, "  - file: %s\n", yamlScalar(d.File))
-		if d.Space != "" {
-			fmt.Fprintf(&b, "    space: %s\n", yamlScalar(d.Space))
-		}
-		if d.Page != "" {
-			fmt.Fprintf(&b, "    page: %s\n", yamlScalar(d.Page))
-		}
-		if d.Title != "" {
-			fmt.Fprintf(&b, "    title: %s\n", yamlScalar(d.Title))
-		}
-		if d.Ownership != "" {
-			fmt.Fprintf(&b, "    ownership: %s\n", yamlScalar(d.Ownership))
-		}
-		if d.As != "" {
-			fmt.Fprintf(&b, "    as: %s\n", yamlScalar(d.As))
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func yamlScalar(s string) string {
-	out, err := yaml.Marshal(s)
-	if err != nil {
-		return s
-	}
-	return strings.TrimSpace(string(out))
 }
 
 func firstNonEmpty(vals ...string) string {

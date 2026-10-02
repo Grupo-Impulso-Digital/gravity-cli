@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -25,6 +26,9 @@ const (
 	DefaultAuthorMaxTokens     = 8192
 	DefaultAuthorMaxIterations = 16
 )
+
+// DefaultPlanMaxTokens is the output budget of the docs-plan turn, which emits the whole unit inventory at once.
+const DefaultPlanMaxTokens = 16384
 
 // LLM is the subset of the API client the loop needs.
 type LLM interface {
@@ -85,6 +89,19 @@ func (r *Runner) callWithRetry(ctx context.Context, req api.MessagesRequest) (*a
 	return nil, lastErr
 }
 
+func rejectsForcedToolChoice(err error) bool {
+	var ae *api.APIError
+	return errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest
+}
+
+func withTerminalInstruction(system, terminal string) string {
+	instruction := fmt.Sprintf("This is your final turn. Call the %s tool now with your final result and do not call any other tool.", terminal)
+	if system == "" {
+		return instruction
+	}
+	return system + "\n\n" + instruction
+}
+
 func transientGatewayErr(err error) bool {
 	var ae *api.APIError
 	if errors.As(err, &ae) {
@@ -137,7 +154,16 @@ func (r *Runner) toolByName(name string) (*Tool, bool) {
 	return nil, false
 }
 
-// Run executes the loop until a terminal tool is called or a cap is reached.
+func (r *Runner) terminalTool() string {
+	for _, t := range r.Tools {
+		if t.Terminal {
+			return t.Def.Name
+		}
+	}
+	return ""
+}
+
+// Run executes the loop until a terminal tool is called or a cap is reached; the final turn forces the terminal tool.
 func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 	maxIter := r.MaxIterations
 	if maxIter <= 0 {
@@ -156,6 +182,7 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 	for _, t := range r.Tools {
 		defs = append(defs, t.Def)
 	}
+	terminal := r.terminalTool()
 
 	messages := []api.Message{api.UserText(initialUser)}
 	result := &Result{}
@@ -167,9 +194,13 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 		}
 	}()
 
+	forceNext := false
+	budgetSpent := false
+	forcingRejected := false
 	for iter := 0; iter < maxIter; iter++ {
 		result.Iterations = iter + 1
 
+		forced := terminal != "" && (forceNext || iter == maxIter-1)
 		req := api.MessagesRequest{
 			Model:      r.Model,
 			System:     r.System,
@@ -179,7 +210,22 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 			MaxTokens:  maxTokens,
 			Context:    r.Context,
 		}
+		if forced {
+			r.logf("agent: requiring %s on this turn", terminal)
+			if forcingRejected {
+				req.System = withTerminalInstruction(r.System, terminal)
+			} else {
+				req.ToolChoice = &api.ToolChoice{Type: api.ToolChoiceTool, Name: terminal}
+			}
+		}
 		resp, err := r.callWithRetry(ctx, req)
+		if err != nil && forced && !forcingRejected && rejectsForcedToolChoice(err) {
+			r.logf("agent: the model rejected a forced tool_choice; retrying with an explicit instruction instead")
+			forcingRejected = true
+			req.ToolChoice = &api.ToolChoice{Type: api.ToolChoiceAuto}
+			req.System = withTerminalInstruction(r.System, terminal)
+			resp, err = r.callWithRetry(ctx, req)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("llm request (iteration %d): %w", iter+1, err)
 		}
@@ -190,17 +236,24 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 		outTokens += resp.Usage.OutputTokens
 
 		if text := strings.TrimSpace(resp.TextContent()); text != "" {
-			r.logf("agent: 💭 %s", compactLog(text, 400))
+			r.logf("agent: says: %s", compactLog(text, 400))
 		}
 
 		toolUses := resp.ToolUses()
 		if len(toolUses) == 0 {
+			if terminal != "" && !forced && iter < maxIter-1 {
+				r.logf("agent: model ended its turn without %s; asking for it", terminal)
+				messages = append(messages, api.UserText(fmt.Sprintf(
+					"You ended your turn without calling %s. Call %s now with your final result.", terminal, terminal)))
+				forceNext = true
+				continue
+			}
 			r.logf("agent: model ended turn after %d iteration(s)", iter+1)
 			return result, nil
 		}
 
 		var toolResults []api.ContentPart
-		for _, use := range toolUses {
+		for i, use := range toolUses {
 			tool, ok := r.toolByName(use.Name)
 			if !ok {
 				r.logf("agent: model requested unknown tool %q", use.Name)
@@ -234,10 +287,24 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 
 			result.ToolCalls++
 			if result.ToolCalls > maxCalls {
-				r.logf("agent: hit tool-call cap (%d); returning partial result", maxCalls)
-				result.Stopped = true
-				result.StopReason = fmt.Sprintf("tool-call cap of %d reached", maxCalls)
-				return result, nil
+				if terminal == "" || budgetSpent {
+					r.logf("agent: hit tool-call cap (%d); returning partial result", maxCalls)
+					result.Stopped = true
+					result.StopReason = fmt.Sprintf("tool-call cap of %d reached", maxCalls)
+					return result, nil
+				}
+				r.logf("agent: hit tool-call cap (%d); requiring %s next", maxCalls, terminal)
+				budgetSpent = true
+				for _, rest := range toolUses[i:] {
+					toolResults = append(toolResults, api.ContentPart{
+						Type:      api.PartToolResult,
+						ToolUseID: rest.ID,
+						Content:   fmt.Sprintf("error: the tool-call budget is exhausted. Call %s now with your final result.", terminal),
+						IsError:   true,
+					})
+				}
+				forceNext = true
+				break
 			}
 
 			r.logf("agent: tool %s (%d) %s", use.Name, result.ToolCalls, compactLog(string(use.Input), 160))
@@ -263,6 +330,9 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 		}
 
 		messages = append(messages, api.ToolResult(toolResults...))
+		if forced {
+			forceNext = true
+		}
 	}
 
 	r.logf("agent: hit iteration cap (%d); returning partial result", maxIter)

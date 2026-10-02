@@ -10,15 +10,11 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/cli"
 )
 
-var version = "0.1.0-dev"
-
 func main() {
 	os.Exit(run())
 }
 
 func run() int {
-	cli.SetVersion(version)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

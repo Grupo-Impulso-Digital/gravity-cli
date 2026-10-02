@@ -14,6 +14,12 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
+// DefaultChangelog is the changelog file release notes are written to when nothing else is configured.
+const DefaultChangelog = "CHANGELOG.md"
+
+// DefaultReleaseNotesSpace is the space release notes land in when releaseNotes.space is unset.
+const DefaultReleaseNotesSpace = "changelog"
+
 // SchemaVersion is the highest .gravity.yaml schema version this CLI understands.
 const SchemaVersion = 1
 
@@ -228,7 +234,6 @@ type SourceMap struct {
 	Space      string `yaml:"space"`
 	Page       string `yaml:"page"`
 	Title      string `yaml:"title"`
-	Generator  string `yaml:"generator"`
 	Collection string `yaml:"collection"`
 }
 
@@ -253,7 +258,6 @@ type ReleaseNotes struct {
 // Knowledge declares the nucleus memory namespace shared across a product's repos.
 type Knowledge struct {
 	Namespace string `yaml:"namespace"`
-	Scope     string `yaml:"scope"`
 }
 
 // LoadProject reads and validates the project manifest in projectDir.
@@ -271,15 +275,15 @@ func LoadProject(projectDir string) (*Project, error) {
 		return nil, err
 	}
 
-	var p Project
-	if err := yaml.Unmarshal(data, &p); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+	p, err := ParseProject(data, path)
+	if err != nil {
+		return nil, err
 	}
-	p.applyDefaults(projectDir)
+	p.ApplyDefaults(projectDir)
 	if err := p.Validate(path); err != nil {
 		return nil, err
 	}
-	return &p, nil
+	return p, nil
 }
 
 func guardNoToken(data []byte, path string) error {
@@ -303,7 +307,8 @@ func guardNoToken(data []byte, path string) error {
 	return nil
 }
 
-func (p *Project) applyDefaults(projectDir string) {
+// ApplyDefaults fills every derived value the way LoadProject does.
+func (p *Project) ApplyDefaults(projectDir string) {
 	if p.Version == 0 {
 		p.Version = SchemaVersion
 	}
@@ -321,20 +326,13 @@ func (p *Project) applyDefaults(projectDir string) {
 		}
 	}
 	if p.ReleaseNotes.Space == "" {
-		if p.LegacySpace != "" {
-			p.ReleaseNotes.Space = p.LegacySpace
-		} else {
-			p.ReleaseNotes.Space = "changelog"
-		}
+		p.ReleaseNotes.Space = DefaultReleaseNotesSpace
 	}
 	if p.ReleaseNotes.Changelog == "" {
-		p.ReleaseNotes.Changelog = "CHANGELOG.md"
+		p.ReleaseNotes.Changelog = DefaultChangelog
 	}
 	if p.Knowledge.Namespace == "" {
 		p.Knowledge.Namespace = p.Product.Slug
-	}
-	if p.Knowledge.Scope == "" {
-		p.Knowledge.Scope = p.Product.Repo
 	}
 	if p.Discovery.Units == "" {
 		p.Discovery.Units = UnitsAuto

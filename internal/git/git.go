@@ -4,7 +4,6 @@ package git
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +23,7 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 	}
 	out, err := run(ctx, abs, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return nil, fmt.Errorf("not a git repository: %w", err)
+		return nil, err
 	}
 	return &Repo{Root: strings.TrimSpace(out)}, nil
 }
@@ -36,11 +35,7 @@ func run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return stdout.String(), fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
+		return stdout.String(), &Error{Args: args, Stderr: stderr.String(), Err: err}
 	}
 	return stdout.String(), nil
 }
@@ -49,49 +44,36 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	return run(ctx, r.Root, args...)
 }
 
-// LatestTag returns the most recent tag reachable from HEAD, or "" if none.
+// MarkerTag is the CI bookkeeping tag that records the last docs-synced commit.
+const MarkerTag = "docs-synced"
+
+// LatestTag returns the most recent release tag reachable from HEAD, or "" if none.
 func (r *Repo) LatestTag(ctx context.Context) (string, error) {
-	out, err := r.git(ctx, "describe", "--tags", "--abbrev=0")
-	if err != nil {
-		if strings.Contains(err.Error(), "No names found") ||
-			strings.Contains(err.Error(), "cannot describe") ||
-			strings.Contains(err.Error(), "No tags can describe") {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
+	return r.describeRelease(ctx, "HEAD")
 }
 
-// TagBefore returns the most recent tag reachable from ref's first parent, so a
+// TagBefore returns the most recent release tag reachable from ref's first parent, so a
 // release checkout sitting on its own tag ranges from the previous one.
 func (r *Repo) TagBefore(ctx context.Context, ref string) (string, error) {
-	out, err := r.git(ctx, "describe", "--tags", "--abbrev=0", ref+"^")
-	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "No names found") ||
-			strings.Contains(msg, "cannot describe") ||
-			strings.Contains(msg, "No tags can describe") ||
-			strings.Contains(msg, "Not a valid object name") ||
-			strings.Contains(msg, "unknown revision") {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
+	return r.describeRelease(ctx, ref+"^")
 }
 
-// FirstCommit returns the oldest commit hash reachable from HEAD.
-func (r *Repo) FirstCommit(ctx context.Context) (string, error) {
-	out, err := r.git(ctx, "rev-list", "--max-parents=0", "HEAD")
-	if err != nil {
-		return "", err
+func (r *Repo) describeRelease(ctx context.Context, rev string) (string, error) {
+	for _, filter := range [][]string{
+		{"--match", "v[0-9]*"},
+		{"--exclude", MarkerTag, "--exclude", MarkerTag + "-*"},
+	} {
+		args := append([]string{"describe", "--tags", "--abbrev=0"}, filter...)
+		out, err := r.git(ctx, append(args, rev)...)
+		if err == nil {
+			return strings.TrimSpace(out), nil
+		}
+		if !stderrHas(err, "No names found", "cannot describe", "No tags can describe",
+			"Not a valid object name", "unknown revision") {
+			return "", err
+		}
 	}
-	lines := strings.Fields(strings.TrimSpace(out))
-	if len(lines) == 0 {
-		return "", errors.New("repository has no commits")
-	}
-	return lines[len(lines)-1], nil
+	return "", nil
 }
 
 // CurrentBranch returns the checked-out branch name.
@@ -135,12 +117,31 @@ type Range struct {
 	To   string
 }
 
-// String renders the range as git range notation.
+// String renders the range as git range notation; an empty From is the root of history.
 func (rg Range) String() string {
+	if rg.From == "" {
+		return rg.To
+	}
 	return rg.From + ".." + rg.To
 }
 
-// ResolveRange determines the effective range given optional from/to overrides.
+// Since names the range start for people and prompts.
+func (rg Range) Since() string {
+	if rg.From == "" {
+		return "the start of history"
+	}
+	return rg.From
+}
+
+// ToolArgs renders the range as git_log/git_diff tool arguments.
+func (rg Range) ToolArgs() string {
+	if rg.From == "" {
+		return fmt.Sprintf("to=%q", rg.To)
+	}
+	return fmt.Sprintf("from=%q, to=%q", rg.From, rg.To)
+}
+
+// ResolveRange determines the effective range given optional from/to overrides; with no earlier tag From stays empty, the root of history.
 func (r *Repo) ResolveRange(ctx context.Context, from, to string) (Range, error) {
 	rng := Range{From: from, To: to}
 	if rng.To == "" {
@@ -151,15 +152,7 @@ func (r *Repo) ResolveRange(ctx context.Context, from, to string) (Range, error)
 		if err != nil {
 			return Range{}, err
 		}
-		if tag != "" {
-			rng.From = tag
-		} else {
-			first, err := r.FirstCommit(ctx)
-			if err != nil {
-				return Range{}, err
-			}
-			rng.From = first
-		}
+		rng.From = tag
 	}
 	return rng, nil
 }
@@ -213,10 +206,17 @@ func (r *Repo) LogOneline(ctx context.Context, from, to string, maxCount int) (s
 	return r.git(ctx, args...)
 }
 
-// Diff returns the unified diff between from and to.
+// Diff returns the unified diff between from and to; an empty from diffs from the empty tree.
 func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) {
 	if to == "" {
 		to = "HEAD"
+	}
+	if from == "" {
+		empty, err := r.git(ctx, "hash-object", "-t", "tree", "--stdin")
+		if err != nil {
+			return "", err
+		}
+		from = strings.TrimSpace(empty)
 	}
 	args := []string{"diff", "--no-color", rangeArg(from, to)}
 	if path != "" {

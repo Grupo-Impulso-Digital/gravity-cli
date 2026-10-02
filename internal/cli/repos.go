@@ -68,7 +68,7 @@ func runRepos(ctx context.Context, client *api.Client, req api.SetupPingRequest,
 	}
 	view := buildReposView(req, resp)
 	if jsonOut {
-		enc := json.NewEncoder(out)
+		enc := json.NewEncoder(rawWriter(out))
 		enc.SetIndent("", "  ")
 		return enc.Encode(view)
 	}

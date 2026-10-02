@@ -7,11 +7,11 @@ inputs:
     description: "Gravity API token (sk_live_...). Pass from a secret, e.g. secrets.GRAVITY_TOKEN."
     required: true
   api-url:
-    description: "Gravity API base URL. Defaults to the hosted platform; override for self-hosted."
+    description: "Gravity API base URL. Leave empty so .gravity.yaml (or the hosted default) wins; set it only for a self-hosted platform."
     required: false
-    default: "https://api.gravitydocs.io"
+    default: ""
   site:
-    description: "Site slug to operate on. Optional when set in .gravity.yaml."
+    description: "Site slug override. Leave empty so .gravity.yaml wins."
     required: false
     default: ""
   command:
@@ -19,41 +19,97 @@ inputs:
     required: true
     default: "check docs"
   args:
-    description: "Extra arguments appended to the command (e.g. '--openapi openapi.yaml --format github')."
+    description: "Extra arguments appended to the command (e.g. '--openapi openapi.yaml')."
     required: false
-    default: "--ci --format github"
+    default: ""
+  format:
+    description: "Output format for the commands that take --format (check api, check docs, coverage). Ignored by every other command."
+    required: false
+    default: "github"
   since:
     description: "Git ref appended as '--since <ref>' for an incremental 'docs generate'. Empty runs the full survey. Must be the previous SUCCESSFUL run's commit, never HEAD~1."
     required: false
     default: ""
   continue-on-findings:
-    description: "Treat exit 1 (findings) as success. Exit 2 (auth/network/bad config) still fails the step. Use on push/release jobs so documentation drift never gates a deploy."
+    description: "Treat exit 1 (findings) as success. Exit 2 (auth/network/bad config) and exit 3 (licence) still fail the step. Use on push/release jobs so documentation drift never gates a deploy."
     required: false
     default: "false"
   version:
-    description: "gravity CLI version to install: 'latest' (newest release), a release tag, or a git ref of this repo."
+    description: "gravity CLI to install: a major version (0, the default, installs the newest 0.x release), a release tag such as v0.3.0, latest, or source (builds the CLI from this action's own checkout, for the CLI repo's own CI)."
     required: false
-    default: "latest"
+    default: "0"
 
 runs:
   using: "composite"
   steps:
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: "1.25"
-        cache: false
-
-    - name: Install gravity
+    - name: Resolve gravity version
+      id: resolve
       shell: bash
       env:
-        GRAVITY_CLI_VERSION: ${{ inputs.version }}
+        GRAVITY_VERSION: ${{ inputs.version }}
+        GRAVITY_RESOLVE_ONLY: "1"
+        GH_TOKEN: ${{ github.token }}
       run: |
-        case "$GRAVITY_CLI_VERSION" in
-          v[0-9]*|latest) ;;
-          *) export GOPRIVATE=github.com/Grupo-Impulso-Digital/gravity-cli ;;
-        esac
-        go install "github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@${GRAVITY_CLI_VERSION}"
+        if [ "$GRAVITY_VERSION" = "source" ]; then
+          tag=source
+        else
+          tag="$(sh "${GITHUB_ACTION_PATH}/../../install.sh")"
+        fi
+        if [ -z "$tag" ]; then
+          echo "::error::could not resolve gravity version '$GRAVITY_VERSION'"
+          exit 2
+        fi
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        echo "dir=${RUNNER_TOOL_CACHE}/gravity/${tag}-${RUNNER_OS}-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache gravity
+      id: cache
+      if: steps.resolve.outputs.tag != 'source'
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.resolve.outputs.dir }}
+        key: gravity-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.tag }}
+
+    - name: Install gravity (release binary)
+      if: steps.resolve.outputs.tag != 'source' && steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
+      shell: bash
+      env:
+        GRAVITY_VERSION: ${{ steps.resolve.outputs.tag }}
+        GRAVITY_INSTALL_DIR: ${{ steps.resolve.outputs.dir }}
+      run: sh "${GITHUB_ACTION_PATH}/../../install.sh"
+
+    - name: Install gravity (release binary, Windows)
+      if: steps.resolve.outputs.tag != 'source' && steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        GRAVITY_VERSION: ${{ steps.resolve.outputs.tag }}
+        GRAVITY_INSTALL_DIR: ${{ steps.resolve.outputs.dir }}
+      run: '& (Join-Path $env:GITHUB_ACTION_PATH "../../install.ps1")'
+
+    - name: Set up Go (source build)
+      if: steps.resolve.outputs.tag == 'source'
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ github.action_path }}/../../go.mod
+        cache: false
+
+    - name: Build gravity (source)
+      if: steps.resolve.outputs.tag == 'source'
+      shell: bash
+      env:
+        GRAVITY_INSTALL_DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        mkdir -p "$GRAVITY_INSTALL_DIR"
+        cd "${GITHUB_ACTION_PATH}/../.."
+        go build -o "$GRAVITY_INSTALL_DIR/gravity" ./cmd/gravity
+
+    - name: Put gravity on PATH
+      shell: bash
+      env:
+        GRAVITY_INSTALL_DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        echo "$GRAVITY_INSTALL_DIR" >> "$GITHUB_PATH"
+        "$GRAVITY_INSTALL_DIR/gravity" version
 
     - name: Run gravity
       shell: bash
@@ -66,16 +122,24 @@ runs:
         # cannot become shell.
         GRAVITY_COMMAND: ${{ inputs.command }}
         GRAVITY_ARGS: ${{ inputs.args }}
+        GRAVITY_FORMAT: ${{ inputs.format }}
         GRAVITY_SINCE: ${{ inputs.since }}
         GRAVITY_CONTINUE_ON_FINDINGS: ${{ inputs.continue-on-findings }}
       run: |
         set -- $GRAVITY_COMMAND $GRAVITY_ARGS
+        case "$GRAVITY_COMMAND" in
+          "check api"|"check docs"|coverage)
+            case " $GRAVITY_ARGS " in
+              *" --format "*|*" --format="*|*" --json "*) ;;
+              *) [ -n "$GRAVITY_FORMAT" ] && set -- "$@" --format "$GRAVITY_FORMAT" ;;
+            esac
+            ;;
+        esac
         if [ -n "$GRAVITY_SINCE" ]; then
           set -- "$@" --since "$GRAVITY_SINCE"
         fi
 
-        # Exit codes: 0 pass, 1 findings, 2 error.
-        gravity "$@" && code=0 || code=$?
+        gravity --ci "$@" && code=0 || code=$?
 
         if [ "$code" -eq 1 ] && [ "$GRAVITY_CONTINUE_ON_FINDINGS" = "true" ]; then
           echo "::notice::gravity reported findings (exit 1); not failing the step."

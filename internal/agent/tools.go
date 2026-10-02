@@ -51,8 +51,17 @@ func truncate(s string, limit int, label string) string {
 	return s[:limit] + fmt.Sprintf("\n\n... [truncated %d of %d bytes of %s] ...", len(s)-limit, len(s), label)
 }
 
-// GitTools returns the read-only git tool set bound to repo.
+// GitTools returns the read-only git tool set bound to repo, reading files at HEAD.
 func GitTools(repo *git.Repo) []Tool {
+	return GitToolsAt(repo, "")
+}
+
+// GitToolsAt returns the read-only git tool set whose read_file reads at ref (HEAD when empty).
+func GitToolsAt(repo *git.Repo, ref string) []Tool {
+	readRef := ref
+	if readRef == "" {
+		readRef = "HEAD"
+	}
 	return []Tool{
 		{
 			Def: api.Tool{
@@ -183,7 +192,7 @@ func GitTools(repo *git.Repo) []Tool {
 		{
 			Def: api.Tool{
 				Name:        "read_file",
-				Description: "Read the contents of a tracked file at HEAD (size-capped). Use git_show for other refs.",
+				Description: fmt.Sprintf("Read the contents of a tracked file at %s, the end of the range under review (size-capped). Use git_show for other refs.", readRef),
 				InputSchema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -201,7 +210,7 @@ func GitTools(repo *git.Repo) []Tool {
 				if err != nil {
 					return "", err
 				}
-				out, err := repo.Show(ctx, "HEAD", clean)
+				out, err := repo.Show(ctx, readRef, clean)
 				if err != nil {
 					return "", err
 				}

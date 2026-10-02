@@ -47,7 +47,7 @@ func TestRetiredCaptureFlagsAreRejected(t *testing.T) {
 			t.Errorf("--%s has no replacement named", name)
 		}
 	}
-	for _, live := range []string{"space", "async", "timeout", "poll-interval", "require", "ci", "format", "dry-run", "connection", "brief", "brief-file"} {
+	for _, live := range []string{"space", "async", "timeout", "poll-interval", "require", "format", "dry-run", "connection", "brief", "brief-file"} {
 		if cmd.Flags().Lookup(live) == nil {
 			t.Errorf("--%s must survive the retarget", live)
 		}

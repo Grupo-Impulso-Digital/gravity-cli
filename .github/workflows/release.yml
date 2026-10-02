@@ -1,24 +1,28 @@
 name: release
 
-# Cut a release by pushing a semver tag:
-#   git tag v0.1.0 && git push origin v0.1.0
-# GoReleaser builds every OS/arch, uploads the archives + checksums as GitHub
-# Release assets, and pushes the Homebrew formula + Scoop manifest.
 on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
-  contents: write # create the GitHub Release and upload assets
+  contents: write
 
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # GoReleaser needs full history + tags for the changelog
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -26,15 +30,35 @@ jobs:
           cache: true
 
       - uses: goreleaser/goreleaser-action@v6
+        id: goreleaser
+        continue-on-error: true
         with:
           distribution: goreleaser
           version: "~> v2"
           args: release --clean
         env:
-          # default token: creates the release in THIS repo.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # PAT with write access to Grupo-Impulso-Digital/homebrew-tap +
-          # Grupo-Impulso-Digital/scoop-bucket (see AGENTS.md for exact scopes).
-          # Set it in repo settings → Secrets → Actions. Without it the release
-          # still ships binaries; only the tap/bucket publish steps fail.
           GORELEASER_TOKEN: ${{ secrets.GORELEASER_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ inputs.tag || github.ref_name }}
+
+      - name: Verify the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.goreleaser.outcome }}
+        run: |
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length' 2>/dev/null || echo 0)"
+          if [ "$assets" -eq 0 ]; then
+            echo "::error::GoReleaser did not publish $TAG"
+            exit 1
+          fi
+          if [ "$OUTCOME" != "success" ]; then
+            echo "::warning::$TAG is published with $assets assets, but GoReleaser failed after the release (usually the Homebrew tap or Scoop bucket: GORELEASER_TOKEN needs contents:write on Grupo-Impulso-Digital/homebrew-tap and Grupo-Impulso-Digital/scoop-bucket)"
+          fi
+
+      - name: Move the major tag of the GitHub action
+        if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
+        run: |
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          major="${TAG%%.*}"
+          git tag -f "$major" "$sha"
+          git push -f origin "refs/tags/$major"

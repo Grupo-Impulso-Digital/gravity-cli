@@ -46,8 +46,8 @@ func TestLoadProject_LegacySpace(t *testing.T) {
 	if p.Spaces.Default != "gravity-cli" {
 		t.Errorf("legacy space should map to spaces.default; got %q", p.Spaces.Default)
 	}
-	if p.ReleaseNotes.Space != "gravity-cli" {
-		t.Errorf("legacy space should map to releaseNotes.space; got %q", p.ReleaseNotes.Space)
+	if p.ReleaseNotes.Space != "changelog" {
+		t.Errorf("legacy space must not retarget release notes (never the docs space); got %q", p.ReleaseNotes.Space)
 	}
 }
 

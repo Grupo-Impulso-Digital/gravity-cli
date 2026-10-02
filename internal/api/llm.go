@@ -28,6 +28,7 @@ const (
 // Tool-choice types.
 const (
 	ToolChoiceAuto = "auto"
+	ToolChoiceTool = "tool"
 )
 
 // ContentPart is a single piece of message content.

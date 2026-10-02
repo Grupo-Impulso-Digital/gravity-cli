@@ -19,6 +19,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
 
 func newDocsCmd(gf *globalFlags) *cobra.Command {
@@ -44,13 +45,13 @@ func newDocsGenerateCmd(gf *globalFlags) *cobra.Command {
 		pageSlug    string
 		output      string
 		dryRun      bool
-		ci          bool
 		require     bool
 		from        string
 		save        string
 		since       string
 		kinds       []string
 		noInventory bool
+		jsonOut     bool
 	)
 	cmd := &cobra.Command{
 		Use:     "generate",
@@ -107,28 +108,39 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 			if err != nil {
 				return err
 			}
+			var rep *docsReport
+			if jsonOut {
+				rep = &docsReport{Site: siteSlug}
+			}
+			skip := func(reason string, w io.Writer) error {
+				if rep != nil {
+					rep.Skipped = reason
+					return writeJSON(cmd.OutOrStdout(), rep)
+				}
+				fmt.Fprintln(w, reason)
+				return nil
+			}
 
 			if from != "" {
 				targets, err := loadTargets(from)
 				if err != nil {
 					return Fail(CodeError, fmt.Errorf("load %s: %w", from, err))
 				}
-				return finishDocs(cmd, e, siteSlug, targets, output, dryRun, ci, from)
+				return finishDocs(cmd, e, siteSlug, targets, output, dryRun, from, rep)
 			}
 
 			repo, err := git.Open(cmd.Context(), ".")
 			if err != nil {
 				return Fail(CodeError, err)
 			}
-			logw := logWriter(cmd, ci)
+			logw := logWriter(cmd)
 
 			changes, err := resolveChangeScope(cmd.Context(), repo, e.proj, since)
 			if err != nil {
 				return err
 			}
 			if since != "" && changes.Len() == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "no changes since %s; nothing to do\n", since)
-				return nil
+				return skip(fmt.Sprintf("no changes since %s; nothing to do", since), cmd.OutOrStdout())
 			}
 			if changes != nil {
 				fmt.Fprintf(logw, "docs: change-scoped run — %d file(s) changed since %s\n", changes.Len(), since)
@@ -142,8 +154,7 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 				if require {
 					return Failf(CodeError, "docs generation is not yet available on this platform")
 				}
-				fmt.Fprintln(cmd.ErrOrStderr(), "note: docs generation is not yet available on this platform; skipping")
-				return nil
+				return skip("note: docs generation is not yet available on this platform; skipping", cmd.ErrOrStderr())
 			}
 			audienceOK := who.Features[featureBlockAudience]
 			if !audienceOK {
@@ -190,7 +201,7 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 					since == "" && pageSlug == ""), logw)
 			}
 
-			generator := "gravity docs generate v" + version
+			generator := "gravity docs generate v" + version.String()
 			changedUnits := changedUnitKeys(plan, changes)
 			var targets []syncTarget
 			var failedPages []string
@@ -201,6 +212,9 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 				}
 				if changes != nil && !shouldAuthor(p, byPage[p.space+"\x00"+p.slug], changedUnits, changes) {
 					fmt.Fprintf(logw, "skip %s/%s (unchanged since %s)\n", p.space, p.slug, since)
+					if rep != nil {
+						rep.Unchanged = append(rep.Unchanged, p.space+"/"+p.slug)
+					}
 					continue
 				}
 				pg.Audiences = p.audiences
@@ -248,7 +262,20 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 				})
 			}
 
+			if rep != nil {
+				rep.Planned = len(planned)
+				rep.Failed = failedPages
+				for _, t := range targets {
+					rep.Authored = append(rep.Authored, t.space+"/"+t.page.Slug)
+				}
+			}
 			if len(targets) == 0 && len(failedPages) > 0 {
+				if rep != nil {
+					rep.Authored = []string{}
+					if werr := writeJSON(cmd.OutOrStdout(), rep); werr != nil {
+						return werr
+					}
+				}
 				return Failf(CodeError, "all %d planned page(s) failed to author: %s", len(failedPages), strings.Join(failedPages, ", "))
 			}
 
@@ -256,7 +283,7 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 			if artifact == "" {
 				artifact = defaultDocsArtifact(repo.Root)
 			}
-			if err := finishDocs(cmd, e, siteSlug, targets, output, dryRun, ci, artifact); err != nil {
+			if err := finishDocs(cmd, e, siteSlug, targets, output, dryRun, artifact, rep); err != nil {
 				return err
 			}
 			if len(failedPages) > 0 {
@@ -274,13 +301,13 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 	cmd.Flags().StringVar(&pageSlug, "page", "", "author only the planned page with this slug")
 	cmd.Flags().StringVar(&output, "output", outputProposal, "proposal|stdout")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be posted without calling the API")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable docs generation as a hard error (exit 2)")
 	cmd.Flags().StringVar(&from, "from", "", "replay a saved doc set through sync, skipping the AI phases (use the file printed by a prior run)")
 	cmd.Flags().StringVar(&save, "save", "", "path to persist the authored doc set for replay (default .gravity/generated/docs.json)")
 	cmd.Flags().StringVar(&since, "since", "", "change-scoped run: survey and re-author only what <ref>..HEAD touched (use the previous successful run's sha, not HEAD~1)")
 	cmd.Flags().StringSliceVar(&kinds, "units", nil, "restrict the plan to these unit kinds: feature,service,system,api,capability")
 	cmd.Flags().BoolVar(&noInventory, "no-inventory", false, "skip publishing the unit inventory to the platform (author only)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the run summary and sync results as JSON (human logs go to stderr)")
 	return cmd
 }
 
@@ -577,17 +604,44 @@ func defaultDocsArtifact(repoRoot string) string {
 	return filepath.Join(repoRoot, ".gravity", "generated", "docs.json")
 }
 
-func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarget, output string, dryRun, ci bool, artifactPath string) error {
+type docsReport struct {
+	Site      string      `json:"site"`
+	Skipped   string      `json:"skipped,omitempty"`
+	Planned   int         `json:"planned"`
+	Authored  []string    `json:"authored"`
+	Unchanged []string    `json:"unchanged,omitempty"`
+	Failed    []string    `json:"failed,omitempty"`
+	Saved     string      `json:"saved,omitempty"`
+	Sync      *syncReport `json:"sync,omitempty"`
+}
+
+func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarget, output string, dryRun bool, artifactPath string, rep *docsReport) error {
 	out := cmd.OutOrStdout()
+	if rep != nil {
+		if rep.Authored == nil {
+			rep.Authored = []string{}
+			for _, t := range targets {
+				rep.Authored = append(rep.Authored, t.space+"/"+t.page.Slug)
+			}
+		}
+		out = cmd.ErrOrStderr()
+	}
 	if len(targets) == 0 {
+		if rep != nil {
+			return writeJSON(cmd.OutOrStdout(), rep)
+		}
 		fmt.Fprintln(out, "no pages authored")
 		return nil
 	}
 	if output == outputStdout {
-		printSyncStdout(out, targets)
+		printSyncStdout(cmd.OutOrStdout(), targets)
 		return nil
 	}
 	if dryRun {
+		if rep != nil {
+			rep.Sync = dryRunReport(siteSlug, targets)
+			return writeJSON(cmd.OutOrStdout(), rep)
+		}
 		return printSyncDryRun(out, targets)
 	}
 	if artifactPath != "" {
@@ -598,11 +652,22 @@ func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarge
 			fmt.Fprintf(out, "Saved authored docs to %s\n", artifactPath)
 		}
 	}
-	err := runSync(cmd.Context(), e.client, siteSlug, targets, true, hierarchyFromProject(e.proj), logWriter(cmd, ci), out)
+	var srep *syncReport
+	if rep != nil {
+		rep.Saved = artifactPath
+		srep = newSyncReport(siteSlug)
+		rep.Sync = srep
+	}
+	err := runSyncReport(cmd.Context(), e.client, siteSlug, targets, true, hierarchyFromProject(e.proj), logWriter(cmd), out, srep)
 	if err != nil && artifactPath != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"note: authored docs are saved at %s — fix the cause and replay with `gravity docs generate --from %s` (no AI re-run)\n",
 			artifactPath, artifactPath)
+	}
+	if rep != nil {
+		if werr := writeJSON(cmd.OutOrStdout(), rep); werr != nil {
+			return werr
+		}
 	}
 	return err
 }
@@ -623,6 +688,7 @@ func runDocsPlan(ctx context.Context, client *api.Client, repo *git.Repo, system
 		Tools:         append(tools, agent.SubmitDocPlanTool()),
 		Context:       mctx,
 		Log:           logw,
+		MaxTokens:     agent.DefaultPlanMaxTokens,
 		MaxIterations: agent.DefaultAuthorMaxIterations,
 	}
 	kickoff := fmt.Sprintf(
@@ -790,12 +856,17 @@ func runDocsAuthor(ctx context.Context, client *api.Client, repo *git.Repo, syst
 	return parsed, false, err
 }
 
+const (
+	authorBlockTextLimit = 800
+	authorDigestLimit    = 24 * 1024
+)
+
 func pageBlockDigest(blocks []api.ContentBlock) string {
 	if len(blocks) == 0 {
 		return "(none — this is a new page)"
 	}
 	var b strings.Builder
-	for _, blk := range blocks {
+	for i, blk := range blocks {
 		aud := "everyone"
 		if len(blk.Audiences) > 0 {
 			aud = strings.Join(blk.Audiences, ",")
@@ -804,7 +875,15 @@ func pageBlockDigest(blocks []api.ContentBlock) string {
 		if key == "" {
 			key = "(server returned no key)"
 		}
-		fmt.Fprintf(&b, "- key=%s type=%s ownership=%s audiences=%s\n", key, blk.Type, blk.Ownership, aud)
+		entry := fmt.Sprintf("- key=%s type=%s ownership=%s audiences=%s\n", key, blk.Type, blk.Ownership, aud)
+		if text := docs.BlockText(blk); text != "" {
+			entry += "  text: " + docs.ClipText(text, authorBlockTextLimit) + "\n"
+		}
+		if b.Len()+len(entry) > authorDigestLimit {
+			fmt.Fprintf(&b, "[... %d more block(s) omitted to stay within the digest budget]\n", len(blocks)-i)
+			break
+		}
+		b.WriteString(entry)
 	}
 	return b.String()
 }

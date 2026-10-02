@@ -68,12 +68,14 @@ func newNucleusQueryCmd(gf *globalFlags) *cobra.Command {
 		format    string
 		limit     int
 		require   bool
+		jsonOut   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "query <text>",
 		Short: "Recall the memories most relevant to a query",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			format = jsonFormat(format, jsonOut)
 			if err := validateTextJSON(format); err != nil {
 				return err
 			}
@@ -121,6 +123,7 @@ func newNucleusQueryCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&namespace, "namespace", "", "knowledge namespace (default: config knowledge.namespace, else site)")
 	cmd.Flags().IntVar(&limit, "limit", 8, "max memories to return")
 	cmd.Flags().StringVar(&format, "format", "text", "text|json")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "shorthand for --format json")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable nucleus as a hard error (exit 2)")
 	return cmd
 }
@@ -130,7 +133,6 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 		namespace string
 		from      string
 		to        string
-		ci        bool
 		require   bool
 		dryRun    bool
 	)
@@ -160,7 +162,15 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 			if err != nil {
 				return Fail(CodeError, fmt.Errorf("resolve range: %w", err))
 			}
-			logw := logWriter(cmd, ci)
+			commits, err := repo.Log(cmd.Context(), rng.From, rng.To, 1)
+			if err != nil {
+				return Fail(CodeError, err)
+			}
+			if len(commits) == 0 {
+				fmt.Fprintf(out, "no commits in range %s; nothing to do\n", rng.String())
+				return nil
+			}
+			logw := logWriter(cmd)
 			atoms, err := runNucleusDistill(cmd.Context(), e.client, repo, rng, logw,
 				&api.MessagesContext{Site: e.cfg.Site, Space: e.cfg.Space, Namespace: ns})
 			if err != nil {
@@ -211,9 +221,8 @@ func newNucleusSyncCmd(gf *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "knowledge namespace (default: config knowledge.namespace, else site)")
-	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag/first commit)")
+	cmd.Flags().StringVar(&from, "from", "", "start git ref (default: latest tag, else the start of history)")
 	cmd.Flags().StringVar(&to, "to", "", "end git ref (default: HEAD)")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable nucleus as a hard error (exit 2)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print distilled memories without contributing them")
 	return cmd
@@ -261,7 +270,7 @@ func spaceID(ctx context.Context, client *api.Client, site, spaceSlug string) st
 }
 
 func runNucleusDistill(ctx context.Context, client *api.Client, repo *git.Repo, rng git.Range, logw io.Writer, mctx *api.MessagesContext) (agent.AtomsInput, error) {
-	tools := append(agent.GitTools(repo), agent.SubmitAtomsTool())
+	tools := append(agent.GitToolsAt(repo, rng.To), agent.SubmitAtomsTool())
 	runner := &agent.Runner{
 		Client:  client,
 		System:  resolvePrompt(ctx, client, prompts.NameNucleus, logw),
@@ -271,8 +280,8 @@ func runNucleusDistill(ctx context.Context, client *api.Client, repo *git.Repo, 
 	}
 	kickoff := fmt.Sprintf(
 		"Distill durable memories from the changes between %s and %s. "+
-			"Start with git_log(from=%q, to=%q), inspect the diffs, then call submit_atoms.",
-		rng.From, rng.To, rng.From, rng.To,
+			"Start with git_log(%s), inspect the diffs, then call submit_atoms.",
+		rng.Since(), rng.To, rng.ToolArgs(),
 	)
 	res, err := runner.Run(ctx, kickoff)
 	if err != nil {

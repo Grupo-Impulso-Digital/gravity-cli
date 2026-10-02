@@ -1,7 +1,7 @@
 BINARY    := gravity
 PKG       := ./cmd/gravity
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS   := -X main.version=$(VERSION)
+LDFLAGS   := -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version=$(VERSION)
 GOLANGCI  := go tool golangci-lint
 
 .DEFAULT_GOAL := build

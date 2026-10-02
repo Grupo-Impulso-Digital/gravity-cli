@@ -122,19 +122,22 @@ func TestResolveRangeNoTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	first, err := repo.FirstCommit(ctx)
-	if err != nil {
-		t.Fatalf("first commit: %v", err)
-	}
 	rng, err := repo.ResolveRange(ctx, "", "")
 	if err != nil {
 		t.Fatalf("resolve range: %v", err)
 	}
-	if rng.From != first {
-		t.Errorf("with no tags, from should be first commit %q, got %q", first, rng.From)
+	if rng.From != "" {
+		t.Errorf("with no tags, from should be the root of history, got %q", rng.From)
 	}
 	if rng.To != "HEAD" {
 		t.Errorf("expected to=HEAD, got %q", rng.To)
+	}
+	commits, err := repo.Log(ctx, rng.From, rng.To, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 1 || commits[0].Subject != "initial" {
+		t.Errorf("the root commit belongs to the range: %+v", commits)
 	}
 }
 
@@ -257,15 +260,165 @@ func TestResolveRangeOnATaggedHead(t *testing.T) {
 		t.Errorf("a release checkout on v1.1.0 must range from v1.0.0, got %q", rng.From)
 	}
 
-	first, err := repo.FirstCommit(ctx)
-	if err != nil {
-		t.Fatalf("first commit: %v", err)
-	}
 	rng, err = repo.ResolveRange(ctx, "", "v1.0.0")
 	if err != nil {
 		t.Fatalf("resolve range to v1.0.0: %v", err)
 	}
-	if rng.From != first {
-		t.Errorf("the first tag must range from the first commit %q, got %q", first, rng.From)
+	if rng.From != "" {
+		t.Errorf("the first tag must range from the root of history, got %q", rng.From)
+	}
+}
+
+func TestResolveRangeTagOnTheRootCommit(t *testing.T) {
+	dir := t.TempDir()
+	run := gitRunner(t, dir)
+	run("init", "-q")
+	run("config", "commit.gpgsign", "false")
+	commitFile(t, run, dir, "a.txt")
+	run("tag", "v0.1.0")
+	ctx := context.Background()
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	rng, err := repo.ResolveRange(ctx, "", "")
+	if err != nil {
+		t.Fatalf("resolve range: %v", err)
+	}
+	if rng.From != "" || rng.String() != "HEAD" || rng.Since() != "the start of history" || rng.ToolArgs() != `to="HEAD"` {
+		t.Fatalf("a release on the root commit ranges over the whole history: %+v (%s)", rng, rng.String())
+	}
+	commits, err := repo.Log(ctx, rng.From, rng.To, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 1 || commits[0].Subject != "add a.txt" {
+		t.Fatalf("the root commit is the release: %+v", commits)
+	}
+	diff, err := repo.Diff(ctx, rng.From, rng.To, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "+++ b/a.txt") || !strings.Contains(diff, "+a.txt") {
+		t.Fatalf("the diff of the root release is the whole tree:\n%s", diff)
+	}
+	tagged, err := repo.Diff(ctx, "", "v0.1.0", "a.txt")
+	if err != nil || !strings.Contains(tagged, "+a.txt") {
+		t.Fatalf("diff from the root to a tag = %q, %v", tagged, err)
+	}
+}
+
+func gitRunner(t *testing.T, dir string) func(args ...string) {
+	t.Helper()
+	env := append(
+		os.Environ(),
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
+	)
+	return func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+}
+
+func commitFile(t *testing.T, run func(args ...string), dir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-q", "-m", "add "+name)
+}
+
+func TestResolveRangeIgnoresDocsSyncedMarker(t *testing.T) {
+	dir := t.TempDir()
+	run := gitRunner(t, dir)
+	run("init", "-q")
+	run("config", "commit.gpgsign", "false")
+	commitFile(t, run, dir, "base.txt")
+	run("tag", "v1.0.0")
+	commitFile(t, run, dir, "one.txt")
+	commitFile(t, run, dir, "two.txt")
+	run("tag", git.MarkerTag)
+	commitFile(t, run, dir, "three.txt")
+	run("tag", "v1.1.0")
+
+	ctx := context.Background()
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng, err := repo.ResolveRange(ctx, "", "v1.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rng.From != "v1.0.0" {
+		t.Fatalf("range = %s, want v1.0.0..v1.1.0", rng)
+	}
+	commits, err := repo.Log(ctx, rng.From, rng.To, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 3 {
+		t.Errorf("got %d commits in %s, want 3", len(commits), rng)
+	}
+
+	run("tag", "-d", "v1.1.0")
+	run("tag", "-f", git.MarkerTag)
+	latest, err := repo.LatestTag(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest != "v1.0.0" {
+		t.Errorf("LatestTag = %q, want v1.0.0", latest)
+	}
+}
+
+func TestTagBeforeFallsBackToNonSemverTags(t *testing.T) {
+	dir := t.TempDir()
+	run := gitRunner(t, dir)
+	run("init", "-q")
+	run("config", "commit.gpgsign", "false")
+	commitFile(t, run, dir, "base.txt")
+	run("tag", "release-1")
+	commitFile(t, run, dir, "one.txt")
+	run("tag", git.MarkerTag)
+	commitFile(t, run, dir, "two.txt")
+
+	ctx := context.Background()
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := repo.TagBefore(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag != "release-1" {
+		t.Errorf("TagBefore = %q, want release-1", tag)
+	}
+
+	only := t.TempDir()
+	runOnly := gitRunner(t, only)
+	runOnly("init", "-q")
+	runOnly("config", "commit.gpgsign", "false")
+	commitFile(t, runOnly, only, "base.txt")
+	runOnly("tag", git.MarkerTag)
+	commitFile(t, runOnly, only, "one.txt")
+	repoOnly, err := git.Open(ctx, only)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err = repoOnly.TagBefore(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag != "" {
+		t.Errorf("TagBefore = %q, want no tag when only the marker exists", tag)
 	}
 }

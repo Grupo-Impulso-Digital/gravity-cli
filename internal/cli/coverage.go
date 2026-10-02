@@ -24,8 +24,8 @@ func newCoverageCmd(gf *globalFlags) *cobra.Command {
 		format   string
 		minRatio float64
 		all      bool
-		ci       bool
 		require  bool
+		jsonOut  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "coverage",
@@ -45,6 +45,7 @@ Exit codes: 0 at or above the bar, 1 below it (or a required page missing),
 2 on an auth/network/config error.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format = jsonFormat(format, jsonOut)
 			if err := validateFormat(format); err != nil {
 				return err
 			}
@@ -86,7 +87,10 @@ Exit codes: 0 at or above the bar, 1 below it (or a required page missing),
 					opts.remoteKey = ref.RemoteKey
 				}
 			}
-			return runCoverage(cmd.Context(), e.client, opts, logWriter(cmd, ci), cmd.OutOrStdout())
+			if skip, gerr := e.gateFeature(cmd.Context(), featureCoverage, "coverage reporting", logWriter(cmd), require); skip || gerr != nil {
+				return gerr
+			}
+			return runCoverage(cmd.Context(), e.client, opts, logWriter(cmd), cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&site, "site", "", "site slug")
@@ -95,7 +99,7 @@ Exit codes: 0 at or above the bar, 1 below it (or a required page missing),
 	cmd.Flags().Float64Var(&minRatio, "min", 0, "minimum documented ratio 0..1 (default: coverage.min from .gravity.yaml)")
 	cmd.Flags().BoolVar(&all, "all", false, "report every repo publishing to the site, not just this one")
 	cmd.Flags().StringVar(&format, "format", output.FormatText, "text|json|github")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "shorthand for --format json")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable coverage reporting as a hard error (exit 2)")
 	return cmd
 }
@@ -185,7 +189,7 @@ func runCoverage(ctx context.Context, client *api.Client, opts coverageOpts, log
 
 	switch opts.format {
 	case output.FormatJSON:
-		enc := json.NewEncoder(out)
+		enc := json.NewEncoder(rawWriter(out))
 		enc.SetIndent("", "  ")
 		view := coverageView{
 			Site: opts.site, Repo: opts.remoteKey, Kind: opts.kind, Min: opts.min,
@@ -201,7 +205,7 @@ func runCoverage(ctx context.Context, client *api.Client, opts coverageOpts, log
 			return Fail(CodeError, err)
 		}
 	case output.FormatGitHub:
-		if err := output.Render(out, res, output.FormatGitHub); err != nil {
+		if err := output.Render(rawWriter(out), res, output.FormatGitHub); err != nil {
 			return Fail(CodeError, err)
 		}
 	default:
