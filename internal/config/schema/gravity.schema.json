@@ -19,7 +19,7 @@
             "type": "string",
             "format": "uri",
             "pattern": "^https?://",
-            "description": "Gravity API base URL. Defaults to https://api.gravitydocs.io. The GRAVITY_API_URL environment variable and --api-url flag override it."
+            "description": "Gravity API base URL: https; plain http only for localhost. Defaults to https://api.gravitydocs.io. The GRAVITY_API_URL environment variable and --api-url flag override it."
         },
         "appPasses": {
             "enum": ["allow", "ignore"],

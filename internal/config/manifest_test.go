@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-const pinnedSchemaSHA256 = "95b65d903a0b9a4bcf54f78aee50556ad2dccdaf669a75b77f81756e44b1009f"
+const pinnedSchemaSHA256 = "bfddbd0608e24e2d907c2faaecb426e91cbd4eef76d68d23cae48d394958aa9d"
 
 func TestEmbeddedSchemaIsPinned(t *testing.T) {
 	sum := sha256.Sum256(SchemaJSON())
