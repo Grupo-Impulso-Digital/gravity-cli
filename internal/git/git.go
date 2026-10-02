@@ -24,7 +24,7 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 	}
 	out, err := run(ctx, abs, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return nil, fmt.Errorf("not a git repository: %w", err)
+		return nil, err
 	}
 	return &Repo{Root: strings.TrimSpace(out)}, nil
 }
@@ -36,11 +36,7 @@ func run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return stdout.String(), fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
+		return stdout.String(), &Error{Args: args, Stderr: stderr.String(), Err: err}
 	}
 	return stdout.String(), nil
 }
@@ -53,9 +49,7 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 func (r *Repo) LatestTag(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "describe", "--tags", "--abbrev=0")
 	if err != nil {
-		if strings.Contains(err.Error(), "No names found") ||
-			strings.Contains(err.Error(), "cannot describe") ||
-			strings.Contains(err.Error(), "No tags can describe") {
+		if stderrHas(err, "No names found", "cannot describe", "No tags can describe") {
 			return "", nil
 		}
 		return "", err
@@ -68,12 +62,8 @@ func (r *Repo) LatestTag(ctx context.Context) (string, error) {
 func (r *Repo) TagBefore(ctx context.Context, ref string) (string, error) {
 	out, err := r.git(ctx, "describe", "--tags", "--abbrev=0", ref+"^")
 	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "No names found") ||
-			strings.Contains(msg, "cannot describe") ||
-			strings.Contains(msg, "No tags can describe") ||
-			strings.Contains(msg, "Not a valid object name") ||
-			strings.Contains(msg, "unknown revision") {
+		if stderrHas(err, "No names found", "cannot describe", "No tags can describe",
+			"Not a valid object name", "unknown revision") {
 			return "", nil
 		}
 		return "", err

@@ -19,6 +19,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
 
 func newDocsCmd(gf *globalFlags) *cobra.Command {
@@ -44,7 +45,6 @@ func newDocsGenerateCmd(gf *globalFlags) *cobra.Command {
 		pageSlug    string
 		output      string
 		dryRun      bool
-		ci          bool
 		require     bool
 		from        string
 		save        string
@@ -113,14 +113,14 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 				if err != nil {
 					return Fail(CodeError, fmt.Errorf("load %s: %w", from, err))
 				}
-				return finishDocs(cmd, e, siteSlug, targets, output, dryRun, ci, from)
+				return finishDocs(cmd, e, siteSlug, targets, output, dryRun, from)
 			}
 
 			repo, err := git.Open(cmd.Context(), ".")
 			if err != nil {
 				return Fail(CodeError, err)
 			}
-			logw := logWriter(cmd, ci)
+			logw := logWriter(cmd)
 
 			changes, err := resolveChangeScope(cmd.Context(), repo, e.proj, since)
 			if err != nil {
@@ -190,7 +190,7 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 					since == "" && pageSlug == ""), logw)
 			}
 
-			generator := "gravity docs generate v" + version
+			generator := "gravity docs generate v" + version.String()
 			changedUnits := changedUnitKeys(plan, changes)
 			var targets []syncTarget
 			var failedPages []string
@@ -256,7 +256,7 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 			if artifact == "" {
 				artifact = defaultDocsArtifact(repo.Root)
 			}
-			if err := finishDocs(cmd, e, siteSlug, targets, output, dryRun, ci, artifact); err != nil {
+			if err := finishDocs(cmd, e, siteSlug, targets, output, dryRun, artifact); err != nil {
 				return err
 			}
 			if len(failedPages) > 0 {
@@ -274,7 +274,6 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 	cmd.Flags().StringVar(&pageSlug, "page", "", "author only the planned page with this slug")
 	cmd.Flags().StringVar(&output, "output", outputProposal, "proposal|stdout")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be posted without calling the API")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable docs generation as a hard error (exit 2)")
 	cmd.Flags().StringVar(&from, "from", "", "replay a saved doc set through sync, skipping the AI phases (use the file printed by a prior run)")
 	cmd.Flags().StringVar(&save, "save", "", "path to persist the authored doc set for replay (default .gravity/generated/docs.json)")
@@ -577,7 +576,7 @@ func defaultDocsArtifact(repoRoot string) string {
 	return filepath.Join(repoRoot, ".gravity", "generated", "docs.json")
 }
 
-func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarget, output string, dryRun, ci bool, artifactPath string) error {
+func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarget, output string, dryRun bool, artifactPath string) error {
 	out := cmd.OutOrStdout()
 	if len(targets) == 0 {
 		fmt.Fprintln(out, "no pages authored")
@@ -598,7 +597,7 @@ func finishDocs(cmd *cobra.Command, e *env, siteSlug string, targets []syncTarge
 			fmt.Fprintf(out, "Saved authored docs to %s\n", artifactPath)
 		}
 	}
-	err := runSync(cmd.Context(), e.client, siteSlug, targets, true, hierarchyFromProject(e.proj), logWriter(cmd, ci), out)
+	err := runSync(cmd.Context(), e.client, siteSlug, targets, true, hierarchyFromProject(e.proj), logWriter(cmd), out)
 	if err != nil && artifactPath != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"note: authored docs are saved at %s — fix the cause and replay with `gravity docs generate --from %s` (no AI re-run)\n",
@@ -623,6 +622,7 @@ func runDocsPlan(ctx context.Context, client *api.Client, repo *git.Repo, system
 		Tools:         append(tools, agent.SubmitDocPlanTool()),
 		Context:       mctx,
 		Log:           logw,
+		MaxTokens:     agent.DefaultPlanMaxTokens,
 		MaxIterations: agent.DefaultAuthorMaxIterations,
 	}
 	kickoff := fmt.Sprintf(
@@ -790,12 +790,17 @@ func runDocsAuthor(ctx context.Context, client *api.Client, repo *git.Repo, syst
 	return parsed, false, err
 }
 
+const (
+	authorBlockTextLimit = 800
+	authorDigestLimit    = 24 * 1024
+)
+
 func pageBlockDigest(blocks []api.ContentBlock) string {
 	if len(blocks) == 0 {
 		return "(none — this is a new page)"
 	}
 	var b strings.Builder
-	for _, blk := range blocks {
+	for i, blk := range blocks {
 		aud := "everyone"
 		if len(blk.Audiences) > 0 {
 			aud = strings.Join(blk.Audiences, ",")
@@ -804,7 +809,15 @@ func pageBlockDigest(blocks []api.ContentBlock) string {
 		if key == "" {
 			key = "(server returned no key)"
 		}
-		fmt.Fprintf(&b, "- key=%s type=%s ownership=%s audiences=%s\n", key, blk.Type, blk.Ownership, aud)
+		entry := fmt.Sprintf("- key=%s type=%s ownership=%s audiences=%s\n", key, blk.Type, blk.Ownership, aud)
+		if text := docs.BlockText(blk); text != "" {
+			entry += "  text: " + docs.ClipText(text, authorBlockTextLimit) + "\n"
+		}
+		if b.Len()+len(entry) > authorDigestLimit {
+			fmt.Fprintf(&b, "[... %d more block(s) omitted to stay within the digest budget]\n", len(blocks)-i)
+			break
+		}
+		b.WriteString(entry)
 	}
 	return b.String()
 }

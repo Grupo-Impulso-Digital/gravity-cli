@@ -3,39 +3,49 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/output"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
 func newCheckAPICmd(gf *globalFlags) *cobra.Command {
 	var (
 		site    string
+		space   string
 		openapi string
-		ci      bool
 		format  string
+		jsonOut bool
 	)
 	cmd := &cobra.Command{
 		Use:   "api",
-		Short: "Check API-doc drift between the spec/code and documented api blocks",
+		Short: "Check API-doc drift between the spec and the documented api blocks",
 		Long: `Pull the documented api blocks for the site and compare them to the source.
 
-With --openapi, diff the spec operations against the documented blocks:
+Every OpenAPI spec mapped in .gravity.yaml sources[] is diffed against the api
+blocks on its page (--openapi diffs one spec of your choice instead):
   undocumented  in the spec but not documented
   orphaned      documented but not in the spec
-  changed       documented but the summary/params differ
+  changed       documented but the summary differs
 
-Without --openapi, verify each block whose source binding has a hash and a
+With no spec at all, verify each block whose source binding has a hash and a
 repo-resident ref by recomputing its sha256, flagging stale mismatches. Blocks
 without a verifiable binding are skipped and counted (never silently).
+
+Only this repo's blocks are checked: the pages the platform attributes to it, or,
+before any attribution exists, the spaces .gravity.yaml declares (--space
+overrides).
 
 Exit codes: 0 no findings, 1 findings, 2 error.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format = jsonFormat(format, jsonOut)
 			if err := validateFormat(format); err != nil {
 				return err
 			}
@@ -53,41 +63,137 @@ Exit codes: 0 no findings, 1 findings, 2 error.`,
 			if err != nil {
 				return err
 			}
+			repo, err := git.Open(cmd.Context(), ".")
+			if err != nil {
+				return Fail(CodeError, err)
+			}
 
 			blocks, err := e.client.APIBlocks(cmd.Context(), siteSlug)
 			if err != nil {
 				return Fail(CodeError, fmt.Errorf("fetch api blocks: %w", err))
 			}
+			tree, err := e.client.SiteTree(cmd.Context(), siteSlug)
+			if err != nil {
+				return Fail(CodeError, fmt.Errorf("read site %q: %w", siteSlug, err))
+			}
+			myRemoteKey := ""
+			if ref := repoRefFor(cmd.Context(), repo, e.proj); ref != nil {
+				myRemoteKey = ref.RemoteKey
+			}
+			scope, err := resolveRepoScope(myRemoteKey, anyPageRefAttributed(tree.Pages), e.proj, space)
+			if err != nil {
+				return Fail(CodeError, err)
+			}
+			scoped := scopeAPIBlocks(blocks, tree.Pages, scope)
+			note := scopeNote(scope, len(scoped), len(blocks), "api block(s)")
 
-			res := output.Result{Command: "check api", Site: siteSlug}
-
-			if openapi != "" {
-				res, err = diffAgainstSpec(openapi, blocks, siteSlug)
+			specs := apiSpecs(e.proj, openapi)
+			var res output.Result
+			if len(specs) > 0 {
+				res, err = diffSpecs(repo.Root, specs, scoped, siteSlug, openapi != "")
 				if err != nil {
 					return Fail(CodeError, err)
 				}
 			} else {
-				repo, err := git.Open(cmd.Context(), ".")
-				if err != nil {
-					return Fail(CodeError, err)
-				}
-				res = verifyAPIBindings(repo.Root, blocks, siteSlug)
+				res = verifyAPIBindings(repo.Root, scoped, siteSlug)
 			}
-
-			if err := output.Render(cmd.OutOrStdout(), res, format); err != nil {
-				return Fail(CodeError, err)
-			}
-			if len(res.Findings) > 0 {
-				return Fail(CodeFindings, nil)
-			}
-			return nil
+			res.Notes = append([]string{note}, res.Notes...)
+			return renderCheck(cmd, res, format)
 		},
 	}
 	cmd.Flags().StringVar(&site, "site", "", "site slug")
-	cmd.Flags().StringVar(&openapi, "openapi", "", "path to an OpenAPI spec to diff against")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
+	cmd.Flags().StringVar(&space, "space", "", "check only this space's api blocks (default: this repo's pages)")
+	cmd.Flags().StringVar(&openapi, "openapi", "", "diff this OpenAPI spec instead of the sources[] specs in .gravity.yaml")
 	cmd.Flags().StringVar(&format, "format", output.FormatText, "text|json|github")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "shorthand for --format json")
 	return cmd
+}
+
+type apiSpec struct {
+	path  string
+	space string
+	page  string
+}
+
+func apiSpecs(proj *config.Project, flag string) []apiSpec {
+	if flag != "" {
+		return []apiSpec{{path: flag}}
+	}
+	if proj == nil {
+		return nil
+	}
+	var out []apiSpec
+	for _, s := range proj.Sources {
+		if s.Kind != "" && s.Kind != "openapi" {
+			continue
+		}
+		sp, slug, _ := proj.PageTarget(s.Space, s.Page, s.Collection)
+		out = append(out, apiSpec{path: s.Source, space: sp, page: slug})
+	}
+	return out
+}
+
+func anyPageRefAttributed(pages []api.PageRef) bool {
+	for _, p := range pages {
+		if p.RepoRemoteKey != nil && *p.RepoRemoteKey != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func scopeAPIBlocks(blocks []api.APIBlock, pages []api.PageRef, scope repoScope) []api.APIBlock {
+	owner := make(map[string]*string, len(pages))
+	for i := range pages {
+		owner[pages[i].ID] = pages[i].RepoRemoteKey
+	}
+	out := make([]api.APIBlock, 0, len(blocks))
+	for _, b := range blocks {
+		if scope.includes(b.SpaceSlug, b.PageSlug, owner[b.PageID]) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func (s apiSpec) owns(b api.APIBlock) bool {
+	if s.space == "" && s.page == "" {
+		return true
+	}
+	if b.SourceBinding != nil && b.SourceBinding.Ref == s.path {
+		return true
+	}
+	return b.SpaceSlug == s.space && b.PageSlug == s.page
+}
+
+func diffSpecs(repoRoot string, specs []apiSpec, blocks []api.APIBlock, siteSlug string, explicit bool) (output.Result, error) {
+	res := output.Result{Command: "check api", Site: siteSlug}
+	for _, spec := range specs {
+		path := spec.path
+		if !explicit {
+			clean, err := pathsafe.Rel(spec.path)
+			if err != nil {
+				return output.Result{}, fmt.Errorf("sources: %s: %w", spec.path, err)
+			}
+			path = filepath.Join(repoRoot, clean)
+		}
+		var mine []api.APIBlock
+		for _, b := range blocks {
+			if spec.owns(b) {
+				mine = append(mine, b)
+			}
+		}
+		one, err := diffAgainstSpec(path, mine, siteSlug)
+		if err != nil {
+			return output.Result{}, err
+		}
+		for i := range one.Notes {
+			one.Notes[i] = spec.path + ": " + one.Notes[i]
+		}
+		res.Findings = append(res.Findings, one.Findings...)
+		res.Notes = append(res.Notes, one.Notes...)
+	}
+	return res, nil
 }
 
 func diffAgainstSpec(specPath string, blocks []api.APIBlock, siteSlug string) (output.Result, error) {

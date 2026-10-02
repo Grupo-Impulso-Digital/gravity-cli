@@ -328,9 +328,27 @@ func TestRunCoverageGitHubFormat(t *testing.T) {
 	}
 }
 
-func TestRunCoverageUnavailable(t *testing.T) {
+func TestRunCoverageNotFoundIsAnError(t *testing.T) {
 	srv, _ := coverageServer(t, http.StatusNotFound, map[string]any{
-		"error": map[string]string{"code": "not_found", "message": "no such route"},
+		"error": map[string]string{"code": "not_found", "message": "Site not found."},
+	}, nil)
+	client := api.New(srv.URL, "sk_live_test")
+
+	var logs bytes.Buffer
+	err := runCoverage(context.Background(), client, coverageOpts{
+		site: "orbit", format: output.FormatText,
+	}, &logs, io.Discard)
+	if CodeFor(err) != CodeError {
+		t.Fatalf("a 404 must be an operational error, not a skipped feature; got %v", err)
+	}
+	if strings.Contains(logs.String(), "not yet available") {
+		t.Errorf("a 404 must never read as an unavailable feature; got:\n%s", logs.String())
+	}
+}
+
+func TestRunCoverageExplicitUnknownRouteSkips(t *testing.T) {
+	srv, _ := coverageServer(t, http.StatusNotFound, map[string]any{
+		"error": map[string]string{"code": "unknown_route", "message": "no such route"},
 	}, nil)
 	client := api.New(srv.URL, "sk_live_test")
 
@@ -338,12 +356,11 @@ func TestRunCoverageUnavailable(t *testing.T) {
 	if err := runCoverage(context.Background(), client, coverageOpts{
 		site: "orbit", format: output.FormatText,
 	}, &logs, io.Discard); err != nil {
-		t.Fatalf("an unavailable feature must skip, got %v", err)
+		t.Fatalf("an explicit unknown_route must skip, got %v", err)
 	}
-	if !strings.Contains(logs.String(), "coverage reporting is not yet available") {
+	if !strings.Contains(logs.String(), "coverage reporting is not available") {
 		t.Errorf("expected a skip notice; got:\n%s", logs.String())
 	}
-
 	err := runCoverage(context.Background(), client, coverageOpts{
 		site: "orbit", format: output.FormatText, require: true,
 	}, io.Discard, io.Discard)

@@ -151,7 +151,11 @@ func newAuthStatusCmd(gf *globalFlags) *cobra.Command {
 			path, _ := config.UserConfigPath()
 			fmt.Fprintf(out, "Config file: %s\n", path)
 			fmt.Fprintf(out, "API URL:     %s\n", e.cfg.APIURL)
-			fmt.Fprintf(out, "Token:       %s  (%s)\n", tokenState(e.cfg.Token), tokenSource(gf.token))
+			if e.cfg.Token == "" {
+				fmt.Fprintln(out, "Token:       not set")
+			} else {
+				fmt.Fprintf(out, "Token:       set  (%s)\n", tokenSource(gf.token))
+			}
 
 			if e.cfg.Token == "" {
 				fmt.Fprintln(out, "\nNot signed in. Run `gravity auth login` to store a token.")

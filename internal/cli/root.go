@@ -10,27 +10,27 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
-
-var version = "0.1.0-dev"
-
-// SetVersion lets main override the version string.
-func SetVersion(v string) {
-	if v != "" {
-		version = v
-	}
-}
 
 type globalFlags struct {
 	token  string
 	apiURL string
 	site   string
+	ci     bool
+	track  *envTracker
+}
+
+type envTracker struct {
+	env *env
 }
 
 type env struct {
-	cfg    config.Config
-	proj   *config.Project
-	client *api.Client
+	cfg         config.Config
+	proj        *config.Project
+	client      *api.Client
+	featureSet  map[string]bool
+	targetSpace string
 }
 
 func resolveEnv(gf globalFlags, spaceFlag string) (*env, error) {
@@ -47,7 +47,11 @@ func resolveEnv(gf globalFlags, spaceFlag string) (*env, error) {
 	if err != nil {
 		return nil, Fail(CodeError, err)
 	}
-	return &env{cfg: cfg, proj: proj, client: api.New(cfg.APIURL, cfg.Token)}, nil
+	e := &env{cfg: cfg, proj: proj, client: api.New(cfg.APIURL, cfg.Token)}
+	if gf.track != nil {
+		gf.track.env = e
+	}
+	return e, nil
 }
 
 func (e *env) requireAuth() error {
@@ -69,7 +73,7 @@ func (e *env) requireSite() (string, error) {
 
 // NewRootCommand assembles the full command tree.
 func NewRootCommand() *cobra.Command {
-	gf := &globalFlags{}
+	gf := &globalFlags{track: &envTracker{}}
 
 	root := &cobra.Command{
 		Use:           "gravity",
@@ -77,12 +81,20 @@ func NewRootCommand() *cobra.Command {
 		Long:          "gravity is a CI/pipeline companion for the Gravity docs platform.\nIt generates release notes, checks API-doc drift, and checks docs completeness against code.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Version:       version,
+		Version:       version.String(),
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			if ciMode(*gf) {
+				root := cmd.Root()
+				root.SetOut(plainWriter(cmd.OutOrStdout()))
+				root.SetErr(plainWriter(cmd.ErrOrStderr()))
+			}
+		},
 	}
 
 	root.PersistentFlags().StringVar(&gf.token, "token", "", "API token (sk_live_...); overrides env and config")
 	root.PersistentFlags().StringVar(&gf.apiURL, "api-url", "", "Gravity API base URL; overrides env and config")
 	root.PersistentFlags().StringVar(&gf.site, "site", "", "site slug; overrides env and config")
+	root.PersistentFlags().BoolVar(&gf.ci, "ci", false, "CI mode: never prompt, plain ASCII output without emoji (also on when CI=true)")
 
 	root.AddCommand(
 		newVersionCmd(),
@@ -100,7 +112,23 @@ func NewRootCommand() *cobra.Command {
 		newCaptureCmd(gf),
 		newNucleusCmd(gf),
 	)
+	explainErrors(root, gf.track)
 	return root
+}
+
+func explainErrors(cmd *cobra.Command, track *envTracker) {
+	if run := cmd.RunE; run != nil {
+		cmd.RunE = func(c *cobra.Command, args []string) error {
+			err := run(c, args)
+			if err != nil && track != nil {
+				err = explainNotFound(c.Context(), track.env, err)
+			}
+			return err
+		}
+	}
+	for _, sub := range cmd.Commands() {
+		explainErrors(sub, track)
+	}
 }
 
 // Execute runs the root command and returns the process exit code.

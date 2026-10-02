@@ -18,7 +18,7 @@ func resolvePrompt(ctx context.Context, client *api.Client, name string, w io.Wr
 	}
 	if err != nil {
 		var ae *api.APIError
-		if !errors.As(err, &ae) || !ae.IsUnavailable() {
+		if !errors.As(err, &ae) || (!ae.IsUnavailable() && !ae.IsNotFound()) {
 			fmt.Fprintf(w, "note: using built-in %s prompt (%v)\n", name, err)
 		}
 	}

@@ -36,7 +36,6 @@ func newCaptureCmd(gf *globalFlags) *cobra.Command {
 		timeout      time.Duration
 		pollInterval time.Duration
 		require      bool
-		ci           bool
 		format       string
 		dryRun       bool
 		retired      struct {
@@ -106,6 +105,9 @@ Where the platform has no Doc Agent configured, the command reports it and exits
 			if dryRun {
 				return writeJSON(out, req)
 			}
+			if skip, gerr := e.gateFeature(cmd.Context(), featureDocAgentRuns, "the Doc Agent", cmd.ErrOrStderr(), require); skip || gerr != nil {
+				return gerr
+			}
 			req.Repo = attributedRepo(cmd.Context(), e)
 
 			run, err := e.client.StartDocAgentRun(cmd.Context(), site, req)
@@ -116,7 +118,7 @@ Where the platform has no Doc Agent configured, the command reports it and exits
 				return Fail(CodeError, fmt.Errorf("start doc agent run: %w", err))
 			}
 
-			logw := logWriter(cmd, ci)
+			logw := logWriter(cmd)
 			if async {
 				fmt.Fprintf(out, "Launched Doc Agent run %s (status=%s)\n", run.RunID, run.Status)
 				if run.StatusURL != "" {
@@ -145,7 +147,6 @@ Where the platform has no Doc Agent configured, the command reports it and exits
 	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "max time to wait for completion")
 	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 5*time.Second, "status poll interval when waiting")
 	cmd.Flags().BoolVar(&require, "require", false, "treat an unavailable Doc Agent as a hard error (exit 2)")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
 	cmd.Flags().StringVar(&format, "format", "text", "text|json")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the request without launching")
 
@@ -165,8 +166,8 @@ Where the platform has no Doc Agent configured, the command reports it and exits
 }
 
 func attributedRepo(ctx context.Context, e *env) *api.RepoRef {
-	who, err := e.client.WhoAmI(ctx)
-	if err != nil || !who.Features[featureRepos] {
+	feats, err := e.features(ctx)
+	if err != nil || !feats[featureRepos] {
 		return nil
 	}
 	return localRepoRef(ctx, e.proj)
@@ -210,6 +211,9 @@ func newCaptureStatusCmd(gf *globalFlags) *cobra.Command {
 			site, err := e.requireSite()
 			if err != nil {
 				return err
+			}
+			if skip, gerr := e.gateFeature(cmd.Context(), featureDocAgentRuns, "the Doc Agent", cmd.ErrOrStderr(), false); skip || gerr != nil {
+				return gerr
 			}
 			run, err := e.client.DocAgentRunStatus(cmd.Context(), site, args[0])
 			if err != nil {

@@ -21,3 +21,10 @@ func validateFormat(format string) error {
 	}
 	return nil
 }
+
+func jsonFormat(format string, jsonOut bool) string {
+	if jsonOut {
+		return output.FormatJSON
+	}
+	return format
+}

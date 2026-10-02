@@ -17,7 +17,8 @@ func TestIsUnavailable(t *testing.T) {
 		err  *api.APIError
 		want bool
 	}{
-		{&api.APIError{StatusCode: http.StatusNotFound}, true},
+		{&api.APIError{StatusCode: http.StatusNotFound}, false},
+		{&api.APIError{StatusCode: http.StatusNotFound, Code: "unknown_route"}, true},
 		{&api.APIError{StatusCode: http.StatusNotImplemented}, true},
 		{&api.APIError{StatusCode: http.StatusBadGateway, Code: "not_implemented"}, true},
 		{&api.APIError{StatusCode: http.StatusOK, Code: "feature_disabled"}, true},

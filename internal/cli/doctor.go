@@ -91,9 +91,15 @@ func printConfigSummary(out io.Writer, gf *globalFlags, e *env) {
 		}
 	}
 	fmt.Fprintf(out, "API URL: %s  (%s)\n", e.cfg.APIURL, apiSrc)
-	fmt.Fprintf(out, "Site:    %s  (%s)\n", orUnset(e.cfg.Site), srcOrUnset(fieldSource(gf.site, config.EnvSite, projSite)))
-	fmt.Fprintf(out, "Space:   %s  (%s)\n", orUnset(e.cfg.Space), srcOrUnset(fieldSource("", config.EnvSpace, projSpace)))
-	fmt.Fprintf(out, "Token:   %s  (%s)\n", tokenState(e.cfg.Token), tokenSource(gf.token))
+	fmt.Fprintf(out, "Site:    %s\n", describeSetting(e.cfg.Site, fieldSource(gf.site, config.EnvSite, projSite),
+		"pass --site, set "+config.EnvSite+", or add `site:` to "+config.ProjectFileName))
+	fmt.Fprintf(out, "Space:   %s\n", describeSetting(e.cfg.Space, firstNonEmpty(fieldSource("", config.EnvSpace, projSpace), "derived from the repo name"),
+		"set "+config.EnvSpace+" or add `spaces.default` to "+config.ProjectFileName))
+	if e.cfg.Token == "" {
+		fmt.Fprintf(out, "Token:   not set — set %s (CI) or run `gravity auth login`\n", config.EnvToken)
+	} else {
+		fmt.Fprintf(out, "Token:   set  (%s)\n", tokenSource(gf.token))
+	}
 
 	if e.proj != nil {
 		fmt.Fprintf(out, "\nProject: %s\n", config.ProjectFileName)
@@ -141,23 +147,19 @@ func tokenSource(flagVal string) string {
 	return "unset"
 }
 
-func tokenState(token string) string {
-	if token == "" {
-		return "(unset)"
+func describeSetting(value, source, hint string) string {
+	if value == "" {
+		return "not set — " + hint
 	}
-	return "set"
+	if source == "" {
+		return value
+	}
+	return value + "  (" + source + ")"
 }
 
 func orUnset(s string) string {
 	if s == "" {
 		return "(unset)"
-	}
-	return s
-}
-
-func srcOrUnset(s string) string {
-	if s == "" {
-		return "unset"
 	}
 	return s
 }

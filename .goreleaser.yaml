@@ -21,9 +21,9 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      # matches the Makefile's version wiring (main.version). -s -w strips the
+      # matches the Makefile's version wiring (internal/version.Version). -s -w strips the
       # symbol table + DWARF to shrink the download.
-      - -s -w -X main.version={{ .Version }}
+      - -s -w -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{ .Version }}
     goos:
       - linux
       - darwin

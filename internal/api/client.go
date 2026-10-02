@@ -10,8 +10,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
 
 // Client talks to the Gravity platform.
@@ -27,7 +30,7 @@ func New(baseURL, token string) *Client {
 	return &Client{
 		BaseURL:   strings.TrimRight(baseURL, "/"),
 		Token:     token,
-		UserAgent: "gravity-cli",
+		UserAgent: version.UserAgent(),
 		HTTPClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -66,10 +69,9 @@ func (e *APIError) isLicense() bool {
 	return e.Code == CodeModuleDisabled || e.Code == CodeSeatLimit
 }
 
-// IsUnavailable reports that the platform does not (yet) implement this route.
+// IsUnavailable reports that the platform explicitly declined the route as not implemented or disabled.
 func (e *APIError) IsUnavailable() bool {
-	switch e.StatusCode {
-	case http.StatusNotFound, http.StatusNotImplemented:
+	if e.StatusCode == http.StatusNotImplemented {
 		return true
 	}
 	switch e.Code {
@@ -77,6 +79,11 @@ func (e *APIError) IsUnavailable() bool {
 		return true
 	}
 	return false
+}
+
+// IsNotFound reports a 404 that is not an explicit unknown-route answer.
+func (e *APIError) IsNotFound() bool {
+	return e.StatusCode == http.StatusNotFound && !e.IsUnavailable()
 }
 
 type errorEnvelope struct {
@@ -139,7 +146,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			apiErr.Message = env.Error.Message
 		}
 		if apiErr.Message == "" {
-			apiErr.Message = strings.TrimSpace(string(data))
+			apiErr.Message = summarizeBody(resp.StatusCode, resp.Header.Get("Content-Type"), data)
 		}
 		return classifyLicense(apiErr, env.Error.Module)
 	}
@@ -170,4 +177,41 @@ func (c *Client) Patch(ctx context.Context, path string, body, out any) error {
 // Delete issues a DELETE request.
 func (c *Client) Delete(ctx context.Context, path string, out any) error {
 	return c.do(ctx, http.MethodDelete, path, nil, nil, out)
+}
+
+const maxErrorSummary = 200
+
+var htmlTitleRE = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+
+func summarizeBody(status int, contentType string, data []byte) string {
+	body := strings.TrimSpace(string(data))
+	fallback := http.StatusText(status)
+	if body == "" {
+		return fallback
+	}
+	if strings.Contains(strings.ToLower(contentType), "html") || strings.HasPrefix(body, "<") {
+		if m := htmlTitleRE.FindStringSubmatch(body); m != nil {
+			if title := strings.Join(strings.Fields(m[1]), " "); title != "" {
+				return clip(title, maxErrorSummary)
+			}
+		}
+		if fallback == "" {
+			return "unexpected HTML error page"
+		}
+		return fallback
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return clip(line, maxErrorSummary)
+		}
+	}
+	return fallback
+}
+
+func clip(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit]) + "…"
 }

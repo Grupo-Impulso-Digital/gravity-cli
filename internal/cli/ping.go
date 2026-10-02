@@ -17,6 +17,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
 
 func newPingCmd(gf *globalFlags) *cobra.Command {
@@ -72,7 +73,7 @@ func runPing(ctx context.Context, client *api.Client, req api.SetupPingRequest, 
 func buildPingRequest(ctx context.Context, e *env) api.SetupPingRequest {
 	req := api.SetupPingRequest{
 		CLI: api.PingCLI{
-			Version: version,
+			Version: version.String(),
 			OS:      runtime.GOOS,
 			Arch:    runtime.GOARCH,
 		},

@@ -14,6 +14,9 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
+// DefaultChangelog is the changelog file release notes are written to when nothing else is configured.
+const DefaultChangelog = "CHANGELOG.md"
+
 // SchemaVersion is the highest .gravity.yaml schema version this CLI understands.
 const SchemaVersion = 1
 
@@ -328,7 +331,7 @@ func (p *Project) applyDefaults(projectDir string) {
 		}
 	}
 	if p.ReleaseNotes.Changelog == "" {
-		p.ReleaseNotes.Changelog = "CHANGELOG.md"
+		p.ReleaseNotes.Changelog = DefaultChangelog
 	}
 	if p.Knowledge.Namespace == "" {
 		p.Knowledge.Namespace = p.Product.Slug

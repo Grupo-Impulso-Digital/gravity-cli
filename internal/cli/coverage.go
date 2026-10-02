@@ -24,7 +24,6 @@ func newCoverageCmd(gf *globalFlags) *cobra.Command {
 		format   string
 		minRatio float64
 		all      bool
-		ci       bool
 		require  bool
 	)
 	cmd := &cobra.Command{
@@ -86,7 +85,10 @@ Exit codes: 0 at or above the bar, 1 below it (or a required page missing),
 					opts.remoteKey = ref.RemoteKey
 				}
 			}
-			return runCoverage(cmd.Context(), e.client, opts, logWriter(cmd, ci), cmd.OutOrStdout())
+			if skip, gerr := e.gateFeature(cmd.Context(), featureCoverage, "coverage reporting", logWriter(cmd), require); skip || gerr != nil {
+				return gerr
+			}
+			return runCoverage(cmd.Context(), e.client, opts, logWriter(cmd), cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&site, "site", "", "site slug")
@@ -95,7 +97,6 @@ Exit codes: 0 at or above the bar, 1 below it (or a required page missing),
 	cmd.Flags().Float64Var(&minRatio, "min", 0, "minimum documented ratio 0..1 (default: coverage.min from .gravity.yaml)")
 	cmd.Flags().BoolVar(&all, "all", false, "report every repo publishing to the site, not just this one")
 	cmd.Flags().StringVar(&format, "format", output.FormatText, "text|json|github")
-	cmd.Flags().BoolVar(&ci, "ci", false, "non-interactive, machine-friendly logs")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable coverage reporting as a hard error (exit 2)")
 	return cmd
 }
