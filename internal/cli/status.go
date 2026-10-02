@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -197,7 +198,7 @@ func capabilityWarnings(s *session, conn *api.ConnectResponse, plan *api.Plan, n
 			case left <= 0:
 				add("token_expired", "", "the token expired on "+t.Format("2006-01-02")+"; run `gravity login` again")
 			case left < 14*24*time.Hour:
-				add("token_expiring", "", fmt.Sprintf("the token expires in %d days (%s); run `gravity login` to renew it", int(left.Hours()/24)+1, t.Format("2006-01-02")))
+				add("token_expiring", "", fmt.Sprintf("the token expires in %s (%s); run `gravity login` to renew it", plural(int(math.Ceil(left.Hours()/24)), "day", "days"), t.Format("2006-01-02")))
 			}
 		}
 	}

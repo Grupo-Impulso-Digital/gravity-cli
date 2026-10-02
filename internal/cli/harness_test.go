@@ -24,6 +24,8 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
+var fixedNow = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+
 type request struct {
 	Method string
 	Path   string
@@ -114,6 +116,7 @@ type harness struct {
 	opened   []string
 	bases    []string
 	prompts  *countingPrompter
+	prompter ui.Prompter
 	secrets  cisetup.Runner
 }
 
@@ -190,7 +193,11 @@ func (h *harness) run(args ...string) int {
 	h.stdout.Reset()
 	h.stderr.Reset()
 	stdin := strings.NewReader(h.stdin)
-	h.prompts = &countingPrompter{inner: &ui.HuhPrompter{In: stdin, Out: &h.stderr, Accessible: true}}
+	var inner ui.Prompter = &ui.HuhPrompter{In: stdin, Out: &h.stderr, Accessible: true}
+	if h.prompter != nil {
+		inner = h.prompter
+	}
+	h.prompts = &countingPrompter{inner: inner}
 	a := &app{
 		prompts:      h.prompts,
 		secretRunner: h.secrets,
@@ -198,6 +205,7 @@ func (h *harness) run(args ...string) int {
 		stdout:       &h.stdout,
 		stderr:       &h.stderr,
 		terminal:     h.terminal,
+		clock:        func() time.Time { return fixedNow },
 		getenv:       func(k string) string { return h.env[k] },
 		openBrowser: func(u string) error {
 			h.opened = append(h.opened, u)

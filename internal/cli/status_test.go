@@ -41,3 +41,14 @@ func TestStatusSurvivesAMissingPlan(t *testing.T) {
 		t.Fatalf("out = %s", h.stdout.String())
 	}
 }
+
+func TestStatusReportsAnExpiredToken(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	h.platform.json("GET /api/v1/whoami", 200, strings.Replace(whoamiUser, `"expiresAt":"2026-12-30T12:00:00Z"`, `"expiresAt":"2026-09-30T12:00:00Z"`, 1))
+	expectCode(t, h, h.run("status", "--json"), 0)
+	warnings := h.envelope()["data"].(map[string]any)["capabilityWarnings"].([]any)
+	if len(warnings) == 0 || warnings[0].(map[string]any)["code"] != "token_expired" {
+		t.Fatalf("capability warnings = %v", warnings)
+	}
+}
