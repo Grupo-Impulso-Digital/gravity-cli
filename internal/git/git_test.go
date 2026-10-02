@@ -139,6 +139,42 @@ func TestDiffAndShow(t *testing.T) {
 	}
 }
 
+func TestDiffFromTheRootOfHistory(t *testing.T) {
+	dir := t.TempDir()
+	run := gitRunner(t, dir)
+	run("init", "-q")
+	run("config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "a.txt")
+	run("commit", "-q", "-m", "add a.txt")
+	run("tag", "v0.1.0")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := repo.Diff(ctx, "", "HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "+++ b/a.txt") || !strings.Contains(diff, "+a.txt") || strings.Contains(diff, "dirty") {
+		t.Fatalf("the diff of a root release is the whole committed tree:\n%s", diff)
+	}
+	tagged, err := repo.Diff(ctx, "", "v0.1.0", "a.txt")
+	if err != nil || !strings.Contains(tagged, "+a.txt") {
+		t.Fatalf("diff from the root to a tag = %q, %v", tagged, err)
+	}
+	log, err := repo.LogOneline(ctx, "", "HEAD", 0)
+	if err != nil || !strings.Contains(log, "add a.txt") {
+		t.Fatalf("the root commit belongs to a root range: %q, %v", log, err)
+	}
+}
+
 func gitRunner(t *testing.T, dir string) func(args ...string) {
 	t.Helper()
 	env := append(

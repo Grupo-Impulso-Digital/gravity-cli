@@ -124,13 +124,20 @@ func (r *Repo) LogOneline(ctx context.Context, from, to string, maxCount int) (s
 	return r.git(ctx, args...)
 }
 
-// Diff returns the unified diff between from and to.
+// Diff returns the unified diff between from and to; an empty from diffs from the empty tree.
 func (r *Repo) Diff(ctx context.Context, from, to, path string) (string, error) {
 	if to == "" {
 		to = "HEAD"
 	}
 	if err := validateRefs(from, to); err != nil {
 		return "", err
+	}
+	if from == "" {
+		tree, err := r.EmptyTree(ctx)
+		if err != nil {
+			return "", err
+		}
+		from = tree
 	}
 	args := []string{"diff", "--no-color", "--end-of-options", rangeArg(from, to), "--"}
 	if path != "" {

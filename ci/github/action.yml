@@ -54,6 +54,10 @@ runs:
         else
           tag="$(sh "$GITHUB_ACTION_PATH/../../install.sh")"
         fi
+        if [ -z "$tag" ]; then
+          echo "::error::could not resolve gravity version '$GRAVITY_VERSION'"
+          exit 2
+        fi
         echo "tag=$tag" >> "$GITHUB_OUTPUT"
         echo "dir=$RUNNER_TOOL_CACHE/gravity/$tag-$RUNNER_OS-$RUNNER_ARCH" >> "$GITHUB_OUTPUT"
 
