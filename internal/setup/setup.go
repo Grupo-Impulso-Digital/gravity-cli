@@ -50,7 +50,7 @@ func namePrefix(name string) string {
 	return name
 }
 
-// RankProducts orders the product answers by sibling evidence; the first entry is the --yes answer.
+// RankProducts orders the product answers by sibling evidence, an org's only product first when nothing points elsewhere; the first entry is the --yes answer.
 func RankProducts(products []api.ProductSummary, remoteKey, repoName string) []ProductOption {
 	owner := ownerOf(remoteKey)
 	prefix := namePrefix(repoName)
@@ -84,6 +84,9 @@ func RankProducts(products []api.ProductSummary, remoteKey, repoName string) []P
 		if p.Slug == newSlug {
 			taken = true
 		}
+	}
+	if len(products) == 1 && len(scored) == 0 && !taken {
+		return append(rest, ProductOption{Slug: newSlug, New: true, Repos: []string{}})
 	}
 	if !taken {
 		out = append(out, ProductOption{Slug: newSlug, New: true, Repos: []string{}})

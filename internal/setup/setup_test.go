@@ -36,6 +36,10 @@ func TestRankProductsPrefersSiblings(t *testing.T) {
 	if len(same) != 1 || same[0].New {
 		t.Fatalf("an existing product with the repository's slug wins: %+v", same)
 	}
+	only := RankProducts([]api.ProductSummary{{Product: api.Product{Slug: "acme", Name: "Acme"}}}, "gitlab.com/other/tool", "tool")
+	if len(only) != 2 || only[0].Slug != "acme" || only[0].New || !only[1].New || only[1].Slug != "tool" {
+		t.Fatalf("an org's only product comes first without sibling evidence: %+v", only)
+	}
 }
 
 func TestDefaultSite(t *testing.T) {
