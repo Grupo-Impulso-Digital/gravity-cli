@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Require the major-pinned 0.x release before 1.x
-        if: startsWith(github.ref_name, 'v1.')
+        if: startsWith(inputs.tag || github.ref_name, 'v1.')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -37,9 +42,12 @@ jobs:
   goreleaser:
     needs: gate
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
 
       - uses: actions/setup-go@v5
@@ -48,6 +56,8 @@ jobs:
           cache: true
 
       - uses: goreleaser/goreleaser-action@v6
+        id: goreleaser
+        continue-on-error: true
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -55,10 +65,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_TOKEN: ${{ secrets.GORELEASER_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ inputs.tag || github.ref_name }}
+
+      - name: Verify the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.goreleaser.outcome }}
+        run: |
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length' 2>/dev/null || echo 0)"
+          if [ "$assets" -eq 0 ]; then
+            echo "::error::GoReleaser did not publish $TAG"
+            exit 1
+          fi
+          if [ "$OUTCOME" != "success" ]; then
+            echo "::warning::$TAG is published with $assets assets, but GoReleaser failed after the release (usually the Homebrew tap or Scoop bucket: GORELEASER_TOKEN needs contents:write on Grupo-Impulso-Digital/homebrew-tap and Grupo-Impulso-Digital/scoop-bucket)"
+          fi
 
       - name: Move the major tag of the GitHub action
-        if: ${{ !contains(github.ref_name, '-') }}
+        if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
         run: |
-          major="${GITHUB_REF_NAME%%.*}"
-          git tag -f "$major" "$GITHUB_SHA"
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          major="${TAG%%.*}"
+          git tag -f "$major" "$sha"
           git push -f origin "refs/tags/$major"

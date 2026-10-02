@@ -89,6 +89,15 @@ via `-X …/internal/version.Version={{.Version}}` (plus `Commit` and `Date`),
 the same symbols the Makefile sets; an unstamped `go install` build falls back
 to `debug.ReadBuildInfo`.
 
+- Releases are cut by `.github/workflows/auto-release.yml`. On every push to
+  `main` it reads the first `## vX.Y.Z` heading of `CHANGELOG.md`; when that
+  heading carries a date instead of `Unreleased` and the tag does not exist, it
+  tags the commit and runs `release.yml` (GoReleaser, then the `v<major>` tag
+  the GitHub action is pinned to). To ship, date the top section in the PR.
+- Pushing a `v*` tag by hand still runs `release.yml` directly.
+- A Homebrew tap or Scoop bucket failure (the `GORELEASER_TOKEN` PAT needs
+  contents:write on `homebrew-tap` and `scoop-bucket`) leaves a warning on the
+  run; the GitHub release and the major tag still ship.
 - **1.0 release gate.** A `v1.*` tag fails its `gate` job unless a `v0.x`
   release exists whose action and `install.sh` default to major `0` (milestone
   C0.1): without it every v0.3 pipeline would install 1.0 and break. The 1.0

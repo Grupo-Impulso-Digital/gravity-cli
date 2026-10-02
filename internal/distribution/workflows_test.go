@@ -90,7 +90,7 @@ func TestReleaseRequiresTheMajorPinnedZeroRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(data)
-	if !strings.Contains(s, "needs: gate") || !strings.Contains(s, "startsWith(github.ref_name, 'v1.')") {
+	if !strings.Contains(s, "needs: gate") || !strings.Contains(s, "startsWith(inputs.tag || github.ref_name, 'v1.')") {
 		t.Fatal("goreleaser must wait for the v0 gate on v1 tags")
 	}
 }
