@@ -15,9 +15,7 @@ steps:
     fetchDepth: 0
   - script: |
       curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 GRAVITY_INSTALL_DIR="$HOME/.local/bin" sh
-      echo "##vso[task.prependpath]$HOME/.local/bin"
-    displayName: Install gravity
-  - script: gravity run
+      "$HOME/.local/bin/gravity" run
     displayName: Gravity
     env:
       GRAVITY_TOKEN: $(GRAVITY_TOKEN)

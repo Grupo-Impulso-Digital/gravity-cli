@@ -1,24 +1,46 @@
 name: release
 
-# Cut a release by pushing a semver tag:
-#   git tag v0.1.0 && git push origin v0.1.0
-# GoReleaser builds every OS/arch, uploads the archives + checksums as GitHub
-# Release assets, and pushes the Homebrew formula + Scoop manifest.
 on:
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write # create the GitHub Release and upload assets
+  contents: write
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the major-pinned 0.x release before 1.x
+        if: startsWith(github.ref_name, 'v1.')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == false) | .tag_name | select(test("^v0\\.[0-9]+\\.[0-9]+$"))] | first // empty')"
+          if [ -z "$tag" ]; then
+            echo "::error::no v0.x release exists; ship the major-pinned v0.3.x release (milestone C0.1) before any v1 tag"
+            exit 1
+          fi
+          action="$(gh api "repos/$GITHUB_REPOSITORY/contents/ci/github/action.yml?ref=$tag" --jq .content | base64 -d)"
+          installer="$(gh api "repos/$GITHUB_REPOSITORY/contents/install.sh?ref=$tag" --jq .content | base64 -d)"
+          if ! printf '%s\n' "$action" | grep -Eq "default: ['\"]?0['\"]?$"; then
+            echo "::error::$tag's ci/github action still defaults to latest; v0.x pipelines would install 1.0"
+            exit 1
+          fi
+          if ! printf '%s\n' "$installer" | grep -Eq 'GRAVITY_VERSION:?[=-]"?0"?[^0-9.]'; then
+            echo "::error::$tag's install.sh does not default to major 0"
+            exit 1
+          fi
+          echo "$tag pins v0 pipelines to major 0"
+
   goreleaser:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # GoReleaser needs full history + tags for the changelog
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -31,10 +53,12 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          # default token: creates the release in THIS repo.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # PAT with write access to Grupo-Impulso-Digital/homebrew-tap +
-          # Grupo-Impulso-Digital/scoop-bucket (see AGENTS.md for exact scopes).
-          # Set it in repo settings → Secrets → Actions. Without it the release
-          # still ships binaries; only the tap/bucket publish steps fail.
           GORELEASER_TOKEN: ${{ secrets.GORELEASER_TOKEN }}
+
+      - name: Move the major tag of the GitHub action
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          major="${GITHUB_REF_NAME%%.*}"
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"

@@ -349,6 +349,10 @@ const gitlabTemplate = `gravity:
     - curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
   script:
     - gravity run
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality-report.json
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -451,9 +455,7 @@ steps:
     fetchDepth: 0
   - script: |
       curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 GRAVITY_INSTALL_DIR="$HOME/.local/bin" sh
-      echo "##vso[task.prependpath]$HOME/.local/bin"
-    displayName: Install gravity
-  - script: gravity run
+      "$HOME/.local/bin/gravity" run
     displayName: Gravity
     env:
       GRAVITY_TOKEN: $(GRAVITY_TOKEN)
