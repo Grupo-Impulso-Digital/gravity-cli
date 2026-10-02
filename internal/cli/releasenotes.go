@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -47,9 +48,10 @@ Output modes:
   stdout    print the notes as markdown
 
 The proposal lands in releaseNotes.space from .gravity.yaml (default
-"changelog"); --space overrides it. The file mode writes releaseNotes.changelog
-(default CHANGELOG.md); --changelog overrides it. An empty commit range is a
-no-op that exits 0.`,
+"changelog"); --space overrides it and GRAVITY_SPACE does not apply. A missing
+target space is created as a release-notes space before the agent runs. The
+file mode writes releaseNotes.changelog (default CHANGELOG.md); --changelog
+overrides it. An empty commit range is a no-op that exits 0.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			switch output {
@@ -64,6 +66,7 @@ no-op that exits 0.`,
 			}
 			sp := releaseNotesSpace(e.proj, space)
 			e.targetSpace = sp
+			e.targetSpaceHint = releaseNotesSpaceHint
 			changelogPath := releaseNotesChangelog(e.proj, changelog)
 			if err := e.requireAuth(); err != nil {
 				return err
@@ -95,6 +98,11 @@ no-op that exits 0.`,
 				return nil
 			}
 			fmt.Fprintf(logw, "release-notes: %d commit(s) in range\n", len(commits))
+			if output == outputProposal && !dryRun {
+				if err := ensureReleaseNotesSpace(cmd.Context(), e, sp, logw); err != nil {
+					return err
+				}
+			}
 
 			notes, err := runReleaseNotesAgent(cmd.Context(), e.client, repo, rng, logw, &api.MessagesContext{Site: e.cfg.Site, Space: sp, Namespace: e.cfg.Namespace})
 			if err != nil {
@@ -132,6 +140,39 @@ func releaseNotesSpace(proj *config.Project, flag string) string {
 		return proj.ReleaseNotes.Space
 	}
 	return config.DefaultReleaseNotesSpace
+}
+
+const releaseNotesSpaceHint = "(create it in Gravity, set releaseNotes.space in .gravity.yaml to an existing space, or pass --space)"
+
+func ensureReleaseNotesSpace(ctx context.Context, e *env, sp string, logw io.Writer) error {
+	site, err := e.requireSite()
+	if err != nil {
+		return err
+	}
+	tree, err := e.client.SiteTree(ctx, site)
+	if err != nil {
+		return Fail(CodeError, fmt.Errorf("look up site %q: %w", site, err))
+	}
+	for _, s := range tree.Spaces {
+		if s.Slug == sp {
+			return nil
+		}
+	}
+	req := api.SpaceUpsertRequest{
+		Slug:        sp,
+		Type:        config.SpaceTypeReleaseNotes,
+		Description: "Release notes maintained by the gravity CLI.",
+	}
+	if _, err := e.client.EnsureSpace(ctx, site, req); err != nil {
+		var ae *api.APIError
+		if errors.As(err, &ae) && ae.StatusCode == http.StatusForbidden && !api.IsLicenseError(err) {
+			return Failf(CodeError, "space '%s' does not exist on site '%s' and this token cannot create it (needs docs.spaces.manage); "+
+				"create it in Gravity, set releaseNotes.space in .gravity.yaml to an existing space, or pass --space", sp, site)
+		}
+		return Fail(CodeError, fmt.Errorf("create release-notes space %q: %w", sp, err))
+	}
+	fmt.Fprintf(logw, "release-notes: created space %q on site %q\n", sp, site)
+	return nil
 }
 
 func releaseNotesChangelog(proj *config.Project, flag string) string {

@@ -231,8 +231,11 @@ Key flags: `--site`, `--space` (default: `releaseNotes.space`, else
 `changelog` — never `spaces.default`), `--from`, `--to`,
 `--output proposal|file|stdout` (default `proposal`), `--changelog` (default:
 `releaseNotes.changelog`, else `CHANGELOG.md`), `--dry-run`, `--title`, `--json`.
-An empty commit range prints `no commits in range …; nothing to do` and exits `0`
-without spending an LLM call.
+`GRAVITY_SPACE` does not retarget release notes. In proposal mode the target
+space is checked before the agent runs: a missing space is created as a
+`release-notes` space when the token holds `docs.spaces.manage`, otherwise the
+command exits `2` before spending an LLM call. An empty commit range prints
+`no commits in range …; nothing to do` and exits `0` without spending an LLM call.
 
 The model finishes by calling the `submit_release_notes` tool; `--output
 proposal` POSTs to the platform and prints the review URL (it creates a **draft

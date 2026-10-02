@@ -26,11 +26,12 @@ type envTracker struct {
 }
 
 type env struct {
-	cfg         config.Config
-	proj        *config.Project
-	client      *api.Client
-	featureSet  map[string]bool
-	targetSpace string
+	cfg             config.Config
+	proj            *config.Project
+	client          *api.Client
+	featureSet      map[string]bool
+	targetSpace     string
+	targetSpaceHint string
 }
 
 func resolveEnv(gf globalFlags, spaceFlag string) (*env, error) {
@@ -136,7 +137,7 @@ func Execute(ctx context.Context) int {
 	root := NewRootCommand()
 	err := root.ExecuteContext(ctx)
 	if err != nil {
-		PrintError(err)
+		PrintError(root.ErrOrStderr(), err)
 		return CodeFor(err)
 	}
 	return CodeOK

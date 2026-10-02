@@ -9,8 +9,11 @@ two removed keys (run `gravity init --migrate` to drop them).
 ### Fixed
 
 - `release-notes` posts into `releaseNotes.space` (default `changelog`) instead
-  of `spaces.default`; `--space` overrides it. `--output file` writes
-  `releaseNotes.changelog` (default `CHANGELOG.md`) unless `--changelog` is given.
+  of `spaces.default`; `--space` overrides it (`GRAVITY_SPACE` does not apply).
+  Before the agent runs, a missing target space is created as a
+  `release-notes` space, or the command fails early with a clear message when
+  the token cannot create it. `--output file` writes `releaseNotes.changelog`
+  (default `CHANGELOG.md`) unless `--changelog` is given.
 - `sync` honours `--space` and `GRAVITY_SPACE` as an override of
   `spaces.default`; mappings with their own `space:` keep it.
 - A mistyped site is no longer "not yet available; skipping" with exit `0`: a

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -43,7 +44,10 @@ func TestReleaseNotesChangelogResolution(t *testing.T) {
 	}
 }
 
-func releaseNotesPlatform() *fakePlatform {
+func releaseNotesPlatform(spaces ...string) *fakePlatform {
+	if len(spaces) == 0 {
+		spaces = []string{"changelog", "news", "releases"}
+	}
 	return &fakePlatform{
 		llm: func([]byte) any {
 			return toolUseResponse("submit_release_notes", map[string]any{
@@ -52,10 +56,105 @@ func releaseNotesPlatform() *fakePlatform {
 			})
 		},
 		routes: map[string]http.HandlerFunc{
+			"GET /api/v1/sites/acme": siteTreeHandler(spaces...),
 			"POST /api/v1/sites/acme/release-notes": func(w http.ResponseWriter, _ *http.Request) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"pageSlug": "v1-1-0", "status": "open", "proposalId": "p1", "reviewUrl": "https://x/review"})
 			},
 		},
+	}
+}
+
+func siteTreeHandler(spaces ...string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		list := make([]any, 0, len(spaces))
+		for i, sp := range spaces {
+			list = append(list, map[string]any{"id": fmt.Sprintf("s%d", i), "slug": sp})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"site": map[string]any{"slug": "acme"}, "spaces": list})
+	}
+}
+
+func TestReleaseNotesCreatesMissingChangelogSpace(t *testing.T) {
+	dir := newGitRepo(t, map[string]string{".gravity.yaml": "site: acme\nspaces:\n  default: docs\n"})
+	chdirTemp(t, dir)
+	fp := releaseNotesPlatform("docs")
+	fp.routes["POST /api/v1/sites/acme/spaces"] = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"space": map[string]any{"id": "s9", "slug": "changelog"}})
+	}
+	srv := fp.serve(t)
+
+	if _, _, err := runRoot(t, "release-notes", "--api-url", srv.URL, "--token", "sk_live_x", "--from", "HEAD~1"); err != nil {
+		t.Fatalf("release-notes with a missing changelog space: %v", err)
+	}
+	created := fp.bodies("POST /api/v1/sites/acme/spaces")
+	if len(created) != 1 {
+		t.Fatalf("expected one space creation, got %d", len(created))
+	}
+	var req struct {
+		Slug string `json:"slug"`
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(created[0], &req)
+	if req.Slug != "changelog" || req.Type != "release-notes" {
+		t.Errorf("space create = %+v, want changelog/release-notes", req)
+	}
+	if len(fp.bodies("POST /api/v1/sites/acme/release-notes")) != 1 {
+		t.Error("the proposal was not posted after creating the space")
+	}
+}
+
+func TestReleaseNotesExistingSpaceIsNotRecreated(t *testing.T) {
+	dir := newGitRepo(t, map[string]string{".gravity.yaml": "site: acme\n"})
+	chdirTemp(t, dir)
+	fp := releaseNotesPlatform("changelog")
+	srv := fp.serve(t)
+
+	if _, _, err := runRoot(t, "release-notes", "--api-url", srv.URL, "--token", "sk_live_x", "--from", "HEAD~1"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(fp.bodies("POST /api/v1/sites/acme/spaces")); n != 0 {
+		t.Errorf("an existing space must not be re-posted, got %d create(s)", n)
+	}
+}
+
+func TestReleaseNotesMissingSpaceWithoutWriteFailsBeforeLLM(t *testing.T) {
+	dir := newGitRepo(t, map[string]string{".gravity.yaml": "site: acme\n"})
+	chdirTemp(t, dir)
+	fp := releaseNotesPlatform("docs")
+	fp.routes["POST /api/v1/sites/acme/spaces"] = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":"forbidden","message":"Missing docs.spaces.manage."}}`))
+	}
+	srv := fp.serve(t)
+
+	_, _, err := runRoot(t, "release-notes", "--api-url", srv.URL, "--token", "sk_live_x", "--from", "HEAD~1")
+	if CodeFor(err) != CodeError {
+		t.Fatalf("exit code = %d (%v), want %d", CodeFor(err), err, CodeError)
+	}
+	want := "space 'changelog' does not exist on site 'acme' and this token cannot create it"
+	if !strings.HasPrefix(err.Error(), want) || strings.Contains(err.Error(), "gravity sync") {
+		t.Errorf("error = %q, want prefix %q and no sync hint", err.Error(), want)
+	}
+	if n := len(fp.bodies("POST /api/llm/v1/messages")); n != 0 {
+		t.Errorf("the agent ran %d turn(s) before the space check failed", n)
+	}
+	if n := len(fp.bodies("POST /api/v1/sites/acme/release-notes")); n != 0 {
+		t.Errorf("release notes were posted %d time(s) to a missing space", n)
+	}
+}
+
+func TestReleaseNotesDryRunSkipsSpaceCheck(t *testing.T) {
+	dir := newGitRepo(t, map[string]string{".gravity.yaml": "site: acme\n"})
+	chdirTemp(t, dir)
+	fp := releaseNotesPlatform("docs")
+	srv := fp.serve(t)
+
+	if _, _, err := runRoot(t, "release-notes", "--api-url", srv.URL, "--token", "sk_live_x", "--from", "HEAD~1", "--dry-run"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(fp.bodies("POST /api/v1/sites/acme/spaces")); n != 0 {
+		t.Errorf("--dry-run must not create spaces, got %d", n)
 	}
 }
 

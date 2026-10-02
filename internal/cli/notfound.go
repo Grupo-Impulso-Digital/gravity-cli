@@ -44,8 +44,12 @@ func explainNotFound(ctx context.Context, e *env, err error) error {
 		slugs = append(slugs, s.Slug)
 	}
 	if target := e.targetSpace; target != "" && !contains(slugs, target) {
-		return Failf(CodeError, "space '%s' not found on site '%s'; %s (`gravity sync` creates the spaces .gravity.yaml declares)",
-			target, site, availableList("spaces", slugs, "the site has no spaces yet"))
+		hint := e.targetSpaceHint
+		if hint == "" {
+			hint = "(`gravity sync` creates the spaces .gravity.yaml declares)"
+		}
+		return Failf(CodeError, "space '%s' not found on site '%s'; %s %s",
+			target, site, availableList("spaces", slugs, "the site has no spaces yet"), hint)
 	}
 	return Failf(CodeError, "space not found on site '%s'; %s", site, availableList("spaces", slugs, "the site has no spaces yet"))
 }
