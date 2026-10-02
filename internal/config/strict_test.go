@@ -97,3 +97,24 @@ func TestParseProjectForMigrationDropsRemovedKeys(t *testing.T) {
 		t.Error("a typo must still fail a migration rather than be silently dropped")
 	}
 }
+
+func TestStrictParsingAcceptsMergeKeys(t *testing.T) {
+	dir := t.TempDir()
+	body := "site: acme\nsources:\n  - &api\n    source: openapi.yaml\n    kind: openapi\n    space: developers\n    page: api-reference\n  - <<: *api\n    source: admin.yaml\n    page: admin-api\n"
+	if err := os.WriteFile(filepath.Join(dir, ProjectFileName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LoadProject(dir)
+	if err != nil {
+		t.Fatalf("merge keys are valid YAML: %v", err)
+	}
+	if len(p.Sources) != 2 || p.Sources[1].Space != "developers" || p.Sources[1].Source != "admin.yaml" {
+		t.Errorf("sources = %+v", p.Sources)
+	}
+	if err := loadErr(t, "site: acme\nsources:\n  - &api\n    source: openapi.yaml\n  - <<: *api\n    pgae: x\n"); err == nil || !strings.Contains(err.Error(), `did you mean "page"`) {
+		t.Errorf("keys beside a merge must still be checked, got %v", err)
+	}
+	if err := loadErr(t, "site: acme\nbase: &b\n  spce: x\nsources:\n  - <<: *b\n    source: a.yaml\n"); err == nil || !strings.Contains(err.Error(), `"base"`) {
+		t.Errorf("unknown keys stay rejected, got %v", err)
+	}
+}

@@ -51,7 +51,8 @@ func TestErrorMessages(t *testing.T) {
 		want string
 	}{
 		{"no commits", &git.Error{Args: []string{"log"}, Stderr: "fatal: your current branch 'main' does not have any commits yet\n"}, "this repository has no commits yet — commit something first"},
-		{"dubious", &git.Error{Args: []string{"rev-parse"}, Stderr: "fatal: detected dubious ownership in repository at '/src'\nTo add an exception..."}, "git refuses this checkout (dubious ownership)"},
+		{"dubious", &git.Error{Args: []string{"rev-parse"}, Stderr: "fatal: detected dubious ownership in repository at '/src'\nTo add an exception..."}, "git refuses this checkout (dubious ownership) — run `git config --global --add safe.directory /src`"},
+		{"dubious spaced path", &git.Error{Args: []string{"rev-parse"}, Stderr: "fatal: detected dubious ownership in repository at '/builds/my repo'\n"}, "git refuses this checkout (dubious ownership) — run `git config --global --add safe.directory '/builds/my repo'`"},
 		{"missing binary", &git.Error{Args: []string{"rev-parse"}, Err: exec.ErrNotFound}, "git is not installed or not on PATH"},
 		{"other first line", &git.Error{Args: []string{"show"}, Stderr: "fatal: path 'x.go' exists on disk, but not in 'HEAD'\nmore"}, "git show: path 'x.go' exists on disk, but not in 'HEAD'"},
 	}

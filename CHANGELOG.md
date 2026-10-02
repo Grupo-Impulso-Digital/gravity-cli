@@ -27,13 +27,15 @@ two removed keys (run `gravity init --migrate` to drop them).
   spends no LLM call.
 - `check api` diffs the OpenAPI specs mapped under `sources[]` when `--openapi`
   is absent, and both `check api` and `check docs` are scoped to this repo's
-  pages (attributed pages, else the spaces `.gravity.yaml` declares, else
-  `--space`). `check docs` never falls back to the whole site.
+  pages: `--space` when given, else the pages the platform attributes to this
+  repo, else the spaces `.gravity.yaml` declares (pages another repo writes are
+  left out). `check docs` never falls back to the whole site.
 - The docs-gap agent and the docs author receive the actual (bounded) text of
   the pages they judge or rewrite, not just titles and block types.
 - The agent loop forces the terminal submit tool on its final turn, after the
   model ends a turn without submitting, and after the tool-call budget runs out,
-  so a run no longer ends empty-handed at its cap.
+  so a run no longer ends empty-handed at its cap. A model that rejects a forced
+  `tool_choice` is retried once with an explicit instruction instead.
 - The docs-plan phase gets a 16k-token output budget (was 4k, which truncated
   large inventories).
 - `read_file` reads files at the end of the range under review (`--to`) instead
@@ -42,8 +44,19 @@ two removed keys (run `gravity init --migrate` to drop them).
   `not set` and how to set them.
 - `init --migrate` is lossless: `spaces.declare`, `discovery`, `i18n`,
   `coverage`, `knowledge`, collections and document versions all survive. It
-  converts the legacy top-level `space:` and reports every key it drops.
-- `init` no longer sets `releaseNotes.space` to the docs space.
+  converts the legacy top-level `space:` and reports every key it drops. The
+  file is re-rendered, so YAML comments are not kept (the command says so).
+- `init` and `init --migrate` no longer set `releaseNotes.space` to the docs
+  space, and a legacy top-level `space:` no longer retargets release notes.
+- The default release-notes range skips the `docs-synced` CI marker tag: it
+  starts at the previous `v*` release tag (any other tag only when there is
+  none).
+- `--ci` plain output applies to human-readable text only; `--json`,
+  `--format json|github` and `--output stdout` payloads are written unchanged.
+- `.gravity.yaml` YAML merge keys (`<<: *anchor`) are accepted by the strict
+  parser.
+- `docs generate --json` still prints its report when every planned page
+  fails.
 
 ### Changed
 
@@ -79,10 +92,12 @@ two removed keys (run `gravity init --migrate` to drop them).
   installing Go and building on every run. `--format` is appended only for
   `check api`, `check docs` and `coverage`; `api-url` and `site` default to empty
   so `.gravity.yaml` wins. `version: source` builds from the action checkout.
+  Windows runners install through `install.ps1`.
 - The GitLab and Bitbucket templates stop hardcoding `GRAVITY_SITE`,
   `GRAVITY_API_URL` and `--space changelog`, install the release binary, and
   move the `docs-synced` marker after a successful generate so later runs stay
-  incremental.
+  incremental. GitLab pushes the marker with `-o ci.skip` and runs
+  `release-notes` only for `v*` tags.
 
 ## v0.2.2
 

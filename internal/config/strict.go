@@ -67,6 +67,7 @@ func checkKeys(doc *yaml.Node, skipRemoved bool) []string {
 }
 
 func walkKeys(node *yaml.Node, t reflect.Type, path, pattern string, skipRemoved bool, problems *[]string) {
+	node = resolveAlias(node)
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -78,6 +79,12 @@ func walkKeys(node *yaml.Node, t reflect.Type, path, pattern string, skipRemoved
 		fields := yamlFields(t)
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key, val := node.Content[i], node.Content[i+1]
+			if isMergeKey(key) {
+				for _, src := range mergeSources(val) {
+					walkKeys(src, t, path, pattern, skipRemoved, problems)
+				}
+				continue
+			}
 			name := key.Value
 			childPath := joinPath(path, name)
 			childPattern := joinPath(pattern, name)
@@ -102,6 +109,29 @@ func walkKeys(node *yaml.Node, t reflect.Type, path, pattern string, skipRemoved
 			walkKeys(item, t.Elem(), fmt.Sprintf("%s[%d]", path, i), pattern+"[]", skipRemoved, problems)
 		}
 	}
+}
+
+func resolveAlias(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode && node.Alias != nil {
+		node = node.Alias
+	}
+	return node
+}
+
+func isMergeKey(key *yaml.Node) bool {
+	return key.Kind == yaml.ScalarNode && key.Value == "<<" && (key.Tag == "!!merge" || key.Tag == "")
+}
+
+func mergeSources(val *yaml.Node) []*yaml.Node {
+	val = resolveAlias(val)
+	if val.Kind != yaml.SequenceNode {
+		return []*yaml.Node{val}
+	}
+	out := make([]*yaml.Node, 0, len(val.Content))
+	for _, item := range val.Content {
+		out = append(out, resolveAlias(item))
+	}
+	return out
 }
 
 func stripRemoved(node *yaml.Node, t reflect.Type, pattern string, dropped *[]string) {

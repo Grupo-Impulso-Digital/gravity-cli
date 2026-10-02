@@ -74,6 +74,17 @@ func (e *Error) kind() int {
 
 var quotedRE = regexp.MustCompile(`'([^']+)'`)
 
+func shellQuote(s string) string {
+	safe := func(r rune) bool {
+		return r == '/' || r == '-' || r == '_' || r == '.' || r == ':' || r == '\\' ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+	}
+	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !safe(r) }) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func humanize(e *Error) string {
 	switch e.kind() {
 	case kindNoGit:
@@ -81,7 +92,11 @@ func humanize(e *Error) string {
 	case kindNotRepo:
 		return ErrNotRepository.Error()
 	case kindDubious:
-		return "git refuses this checkout (dubious ownership) — run `git config --global --add safe.directory '*'` in CI"
+		dir := "<checkout path>"
+		if m := quotedRE.FindStringSubmatch(e.Stderr); m != nil {
+			dir = m[1]
+		}
+		return fmt.Sprintf("git refuses this checkout (dubious ownership) — run `git config --global --add safe.directory %s`", shellQuote(dir))
 	case kindNoCommits:
 		return "this repository has no commits yet — commit something first"
 	case kindUnknownRef:

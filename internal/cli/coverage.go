@@ -189,7 +189,7 @@ func runCoverage(ctx context.Context, client *api.Client, opts coverageOpts, log
 
 	switch opts.format {
 	case output.FormatJSON:
-		enc := json.NewEncoder(out)
+		enc := json.NewEncoder(rawWriter(out))
 		enc.SetIndent("", "  ")
 		view := coverageView{
 			Site: opts.site, Repo: opts.remoteKey, Kind: opts.kind, Min: opts.min,
@@ -205,7 +205,7 @@ func runCoverage(ctx context.Context, client *api.Client, opts coverageOpts, log
 			return Fail(CodeError, err)
 		}
 	case output.FormatGitHub:
-		if err := output.Render(out, res, output.FormatGitHub); err != nil {
+		if err := output.Render(rawWriter(out), res, output.FormatGitHub); err != nil {
 			return Fail(CodeError, err)
 		}
 	default:

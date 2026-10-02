@@ -313,7 +313,7 @@ func validateTextJSON(format string) error {
 }
 
 func writeJSON(out io.Writer, v any) error {
-	enc := json.NewEncoder(out)
+	enc := json.NewEncoder(rawWriter(out))
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
 		return Fail(CodeError, err)

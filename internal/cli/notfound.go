@@ -29,10 +29,10 @@ func explainNotFound(ctx context.Context, e *env, err error) error {
 			slugs = append(slugs, s.Slug)
 		}
 		return Failf(CodeError, "site '%s' not found; %s", site, availableList("sites", slugs, "no sites are visible to this token"))
-	case lerr != nil && strings.Contains(strings.ToLower(ae.Message), "site not found"):
+	case lerr != nil && notFoundOf(ae, "site"):
 		return Failf(CodeError, "site '%s' not found (check `site:` in .gravity.yaml, GRAVITY_SITE or --site)", site)
 	}
-	if !strings.Contains(strings.ToLower(ae.Message), "space") {
+	if !notFoundOf(ae, "space") {
 		return Fail(CodeError, err)
 	}
 	tree, terr := e.client.SiteTree(ctx, site)
@@ -48,6 +48,16 @@ func explainNotFound(ctx context.Context, e *env, err error) error {
 			target, site, availableList("spaces", slugs, "the site has no spaces yet"))
 	}
 	return Failf(CodeError, "space not found on site '%s'; %s", site, availableList("spaces", slugs, "the site has no spaces yet"))
+}
+
+func notFoundOf(ae *api.APIError, noun string) bool {
+	switch strings.ToLower(ae.Code) {
+	case noun + "_not_found":
+		return true
+	case "", "not_found":
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(ae.Message)), noun+" not found")
+	}
+	return false
 }
 
 func siteListed(sites []api.SiteSummary, slug string) bool {

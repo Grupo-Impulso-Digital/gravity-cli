@@ -95,3 +95,29 @@ func TestCIFlagMakesOutputPlain(t *testing.T) {
 		t.Errorf("plainWriter = %q, %v", buf.String(), err)
 	}
 }
+
+func TestCIModeLeavesJSONDataUntouched(t *testing.T) {
+	fp := &fakePlatform{routes: map[string]http.HandlerFunc{
+		"GET /api/v1/sites/acme": func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"site":   map[string]any{"slug": "acme", "name": "Acme"},
+				"spaces": []any{map[string]any{"id": "s1", "slug": "platform", "name": "Platform → APIs ✓ 🚀…"}},
+			})
+		},
+	}}
+	srv := fp.serve(t)
+	chdirTemp(t, t.TempDir())
+
+	stdout, _, err := runRoot(t, "spaces", "--ci", "--json", "--api-url", srv.URL, "--token", "sk_live_x", "--site", "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "Platform → APIs ✓ 🚀…") {
+		t.Errorf("--ci must not rewrite data inside --json output:\n%s", stdout)
+	}
+
+	var buf bytes.Buffer
+	if rawWriter(plainWriter(&buf)) != &buf {
+		t.Error("rawWriter must unwrap the plain writer")
+	}
+}

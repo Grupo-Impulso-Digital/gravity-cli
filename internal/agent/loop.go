@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -86,6 +87,19 @@ func (r *Runner) callWithRetry(ctx context.Context, req api.MessagesRequest) (*a
 		}
 	}
 	return nil, lastErr
+}
+
+func rejectsForcedToolChoice(err error) bool {
+	var ae *api.APIError
+	return errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest
+}
+
+func withTerminalInstruction(system, terminal string) string {
+	instruction := fmt.Sprintf("This is your final turn. Call the %s tool now with your final result and do not call any other tool.", terminal)
+	if system == "" {
+		return instruction
+	}
+	return system + "\n\n" + instruction
 }
 
 func transientGatewayErr(err error) bool {
@@ -182,25 +196,36 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 
 	forceNext := false
 	budgetSpent := false
+	forcingRejected := false
 	for iter := 0; iter < maxIter; iter++ {
 		result.Iterations = iter + 1
 
 		forced := terminal != "" && (forceNext || iter == maxIter-1)
-		choice := &api.ToolChoice{Type: api.ToolChoiceAuto}
-		if forced {
-			choice = &api.ToolChoice{Type: api.ToolChoiceTool, Name: terminal}
-			r.logf("agent: requiring %s on this turn", terminal)
-		}
 		req := api.MessagesRequest{
 			Model:      r.Model,
 			System:     r.System,
 			Messages:   messages,
 			Tools:      defs,
-			ToolChoice: choice,
+			ToolChoice: &api.ToolChoice{Type: api.ToolChoiceAuto},
 			MaxTokens:  maxTokens,
 			Context:    r.Context,
 		}
+		if forced {
+			r.logf("agent: requiring %s on this turn", terminal)
+			if forcingRejected {
+				req.System = withTerminalInstruction(r.System, terminal)
+			} else {
+				req.ToolChoice = &api.ToolChoice{Type: api.ToolChoiceTool, Name: terminal}
+			}
+		}
 		resp, err := r.callWithRetry(ctx, req)
+		if err != nil && forced && !forcingRejected && rejectsForcedToolChoice(err) {
+			r.logf("agent: the model rejected a forced tool_choice; retrying with an explicit instruction instead")
+			forcingRejected = true
+			req.ToolChoice = &api.ToolChoice{Type: api.ToolChoiceAuto}
+			req.System = withTerminalInstruction(r.System, terminal)
+			resp, err = r.callWithRetry(ctx, req)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("llm request (iteration %d): %w", iter+1, err)
 		}

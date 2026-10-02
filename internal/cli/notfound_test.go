@@ -119,6 +119,25 @@ func TestMissingSpaceListsAvailableSpaces(t *testing.T) {
 	}
 }
 
+func TestPageNotFoundMentioningASpaceIsNotASpaceError(t *testing.T) {
+	srv := platformServer(t, nil, map[string]http.HandlerFunc{
+		"GET /api/v1/sites/orbit": func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"site": map[string]any{"slug": "orbit"}, "spaces": []any{}})
+		},
+	})
+	e := &env{cfg: config.Config{Site: "orbit"}, targetSpace: "guides"}
+	e.client = newTestClient(srv.URL)
+	orig := &api.APIError{StatusCode: http.StatusNotFound, Code: "page_not_found", Message: "Page not found in space guides."}
+	err := explainNotFound(context.Background(), e, orig)
+	if strings.Contains(err.Error(), "space 'guides' not found") || !errors.Is(err, orig) {
+		t.Errorf("a page 404 must not be reported as a missing space, got %v", err)
+	}
+	coded := &api.APIError{StatusCode: http.StatusNotFound, Code: "space_not_found", Message: "Unknown."}
+	if err := explainNotFound(context.Background(), e, coded); !strings.HasPrefix(err.Error(), "space 'guides' not found on site 'orbit'") {
+		t.Errorf("space_not_found must be explained as a missing space, got %v", err)
+	}
+}
+
 func TestExplainNotFoundLeavesOtherErrorsAlone(t *testing.T) {
 	e := &env{cfg: config.Config{Site: "orbit"}}
 	e.client = newTestClient("http://127.0.0.1:1")

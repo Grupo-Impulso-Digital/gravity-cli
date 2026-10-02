@@ -785,7 +785,7 @@ func printSyncStdout(out io.Writer, targets []syncTarget) {
 }
 
 func printSyncDryRun(out io.Writer, targets []syncTarget) error {
-	enc := json.NewEncoder(out)
+	enc := json.NewEncoder(rawWriter(out))
 	enc.SetIndent("", "  ")
 	for _, t := range targets {
 		fmt.Fprintf(out, "--- %s ---\n", t.label)

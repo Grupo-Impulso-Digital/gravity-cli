@@ -3,8 +3,10 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"testing"
 
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
@@ -72,5 +74,46 @@ func TestDocsGenerateJSONDryRun(t *testing.T) {
 	}
 	if len(got.Authored) != 1 || got.Authored[0] != "guides/intro" || got.Sync == nil || !got.Sync.DryRun || len(got.Sync.Targets) != 1 {
 		t.Errorf("report = %+v", got)
+	}
+}
+
+func TestDocsGenerateJSONWhenEveryPageFails(t *testing.T) {
+	dir := newGitRepo(t, map[string]string{config.ProjectFileName: "site: acme\nspaces:\n  default: guides\n"})
+	chdirTemp(t, dir)
+	fp := &fakePlatform{
+		features: map[string]bool{featureDocsGenerate: true},
+		llm: func(body []byte) any {
+			var req api.MessagesRequest
+			_ = json.Unmarshal(body, &req)
+			for _, tool := range req.Tools {
+				if tool.Name == agent.ToolSubmitDocPlan {
+					return toolUseResponse(agent.ToolSubmitDocPlan, map[string]any{
+						"pages": []any{map[string]any{"slug": "overview", "title": "Overview", "summary": "x"}},
+						"units": []any{},
+					})
+				}
+			}
+			return map[string]any{
+				"id": "msg_x", "type": "message", "role": "assistant", "stop_reason": "end_turn",
+				"content": []any{map[string]any{"type": "text", "text": "I would rather not."}},
+			}
+		},
+		routes: map[string]http.HandlerFunc{
+			"GET /api/v1/sites/acme/pages": func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"pages": []any{}})
+			},
+		},
+	}
+	srv := fp.serve(t)
+	stdout, stderr, err := runRoot(t, "docs", "generate", "--json", "--no-inventory", "--api-url", srv.URL, "--token", "sk_live_x")
+	if CodeFor(err) != CodeError {
+		t.Fatalf("exit = %d (%v), want error\nstderr:\n%s", CodeFor(err), err, stderr)
+	}
+	var rep docsReport
+	if jerr := json.Unmarshal([]byte(stdout), &rep); jerr != nil {
+		t.Fatalf("--json must still emit the report: %v\n%s", jerr, stdout)
+	}
+	if rep.Planned != 1 || len(rep.Failed) != 1 || rep.Failed[0] != "overview" || rep.Authored == nil || len(rep.Authored) != 0 {
+		t.Errorf("report = %+v", rep)
 	}
 }

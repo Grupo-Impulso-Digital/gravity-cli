@@ -43,7 +43,7 @@ collections inside a shared space show which repo feeds which pages.`,
 			}
 			view := buildSpacesView(tree, e.proj)
 			if jsonOut {
-				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc := json.NewEncoder(rawWriter(cmd.OutOrStdout()))
 				enc.SetIndent("", "  ")
 				return enc.Encode(view)
 			}

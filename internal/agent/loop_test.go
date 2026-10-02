@@ -486,3 +486,47 @@ func TestRunner_IterationCap(t *testing.T) {
 		t.Errorf("expected 3 iterations, got %d", res.Iterations)
 	}
 }
+
+func TestRunner_ForcedToolChoiceRejectedFallsBackToInstruction(t *testing.T) {
+	var reqs []api.MessagesRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req api.MessagesRequest
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		reqs = append(reqs, req)
+		w.Header().Set("Content-Type", "application/json")
+		if req.ToolChoice != nil && req.ToolChoice.Type == api.ToolChoiceTool {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"code": "invalid_request", "message": "tool_choice forcing is not supported by this model"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(findingsUse("tu_f"))
+	}))
+	defer srv.Close()
+
+	runner := &agent.Runner{
+		Client:        api.New(srv.URL, "test-token"),
+		MaxIterations: 1,
+		System:        "base",
+		Tools:         []agent.Tool{agent.ReportFindingsTool()},
+	}
+	res, err := runner.Run(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("a rejected forced tool_choice must fall back, got %v", err)
+	}
+	if res.TerminalTool != agent.ToolReportFindings {
+		t.Fatalf("terminal = %q", res.TerminalTool)
+	}
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want the forced attempt plus one fallback", len(reqs))
+	}
+	retry := reqs[1]
+	if retry.ToolChoice == nil || retry.ToolChoice.Type != api.ToolChoiceAuto {
+		t.Errorf("fallback tool_choice = %+v, want auto", retry.ToolChoice)
+	}
+	if !strings.HasPrefix(retry.System, "base") || !strings.Contains(retry.System, agent.ToolReportFindings) {
+		t.Errorf("fallback system prompt must name the terminal tool, got %q", retry.System)
+	}
+}

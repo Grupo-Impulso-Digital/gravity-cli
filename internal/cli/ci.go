@@ -48,6 +48,13 @@ func plainWriter(w io.Writer) io.Writer {
 	return plainOut{w: w}
 }
 
+func rawWriter(w io.Writer) io.Writer {
+	if p, ok := w.(plainOut); ok {
+		return p.w
+	}
+	return w
+}
+
 func (p plainOut) Write(b []byte) (int, error) {
 	if _, err := io.WriteString(p.w, toPlain(string(b))); err != nil {
 		return 0, err

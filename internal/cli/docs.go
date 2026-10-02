@@ -270,6 +270,12 @@ never HEAD~1, or a failed run becomes a documentation gap.`,
 				}
 			}
 			if len(targets) == 0 && len(failedPages) > 0 {
+				if rep != nil {
+					rep.Authored = []string{}
+					if werr := writeJSON(cmd.OutOrStdout(), rep); werr != nil {
+						return werr
+					}
+				}
 				return Failf(CodeError, "all %d planned page(s) failed to author: %s", len(failedPages), strings.Join(failedPages, ", "))
 			}
 

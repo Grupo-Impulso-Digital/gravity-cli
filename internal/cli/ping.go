@@ -59,7 +59,7 @@ func runPing(ctx context.Context, client *api.Client, req api.SetupPingRequest, 
 		return Fail(CodeError, fmt.Errorf("setup ping failed: %w", classifyAuthErr(err)))
 	}
 	if jsonOut {
-		enc := json.NewEncoder(out)
+		enc := json.NewEncoder(rawWriter(out))
 		enc.SetIndent("", "  ")
 		return enc.Encode(struct {
 			Request  api.SetupPingRequest   `json:"request"`
