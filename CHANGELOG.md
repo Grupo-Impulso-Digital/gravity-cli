@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.0 — Unreleased
+## v1.0.0 — 2026-10-02
 
 Clean break: the v0.x command set and the v1 manifest are removed, and every CI
 provider runs one step, `gravity run`. This entry covers milestones C1 (CLI
