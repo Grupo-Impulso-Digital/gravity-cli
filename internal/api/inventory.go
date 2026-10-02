@@ -3,9 +3,10 @@ package api
 import (
 	"context"
 	"net/url"
+	"strconv"
 )
 
-// Unit kinds an inventory unit is classified as.
+// Unit kinds.
 const (
 	UnitKindFeature    = "feature"
 	UnitKindService    = "service"
@@ -14,132 +15,115 @@ const (
 	UnitKindCapability = "capability"
 )
 
-// Coverage states a unit can be in.
+// Contributor roles.
 const (
-	UnitStateDocumented   = "documented"
-	UnitStateStale        = "stale"
-	UnitStateUndocumented = "undocumented"
+	RoleDeclares   = "declares"
+	RoleImplements = "implements"
+	RoleDocuments  = "documents"
 )
 
-// InventoryUnit is one documentable thing this repo contains.
-type InventoryUnit struct {
-	Key        string   `json:"key"`
-	Kind       string   `json:"kind"`
-	Title      string   `json:"title"`
-	Summary    string   `json:"summary,omitempty"`
-	SourceRefs []string `json:"sourceRefs,omitempty"`
-	SourceHash string   `json:"sourceHash,omitempty"`
-	Audiences  []string `json:"audiences,omitempty"`
-	PageSlugs  []string `json:"pageSlugs,omitempty"`
+// InventoryQuery filters GET /api/v1/products/self/inventory.
+type InventoryQuery struct {
+	Product         string
+	Kind            string
+	Q               string
+	Unit            string
+	IncludeInactive bool
+	Limit           int
+	Cursor          string
 }
 
-// InventoryRequest is the body of POST /api/v1/sites/:siteSlug/inventory.
-type InventoryRequest struct {
-	Repo        RepoRef         `json:"repo"`
-	GeneratedAt string          `json:"generatedAt,omitempty"`
-	Replace     bool            `json:"replace"`
-	Units       []InventoryUnit `json:"units"`
+func (q InventoryQuery) values() url.Values {
+	v := url.Values{}
+	set := func(k, val string) {
+		if val != "" {
+			v.Set(k, val)
+		}
+	}
+	set("product", q.Product)
+	set("kind", q.Kind)
+	set("q", q.Q)
+	set("unit", q.Unit)
+	set("cursor", q.Cursor)
+	if q.IncludeInactive {
+		v.Set("includeInactive", "true")
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	return v
 }
 
-// InventoryCounts reports what the platform did with the submitted units.
-type InventoryCounts struct {
-	Received  int `json:"received"`
-	Created   int `json:"created"`
-	Updated   int `json:"updated"`
-	Unchanged int `json:"unchanged"`
-	Removed   int `json:"removed"`
+// Inventory is one page of GET /api/v1/products/self/inventory.
+type Inventory struct {
+	Product    Product `json:"product"`
+	Units      []Unit  `json:"units"`
+	NextCursor *string `json:"nextCursor"`
 }
 
-// InventoryResponse is the response of POST /api/v1/sites/:siteSlug/inventory.
-type InventoryResponse struct {
-	RepoID      string          `json:"repoId"`
-	Units       InventoryCounts `json:"units"`
-	CoverageURL string          `json:"coverageUrl"`
-}
-
-// PublishInventory calls POST /api/v1/sites/:siteSlug/inventory.
-func (c *Client) PublishInventory(ctx context.Context, siteSlug string, req InventoryRequest) (*InventoryResponse, error) {
-	var out InventoryResponse
-	if err := c.Post(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/inventory", req, &out); err != nil {
+// Inventory calls GET /api/v1/products/self/inventory.
+func (c *Client) Inventory(ctx context.Context, q InventoryQuery) (*Inventory, error) {
+	var out Inventory
+	if err := c.Get(ctx, "/api/v1/products/self/inventory", q.values(), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// CoverageTotals aggregates a repo's unit states.
-type CoverageTotals struct {
-	Units        int     `json:"units"`
-	Documented   int     `json:"documented"`
-	Stale        int     `json:"stale"`
-	Undocumented int     `json:"undocumented"`
-	Ratio        float64 `json:"ratio"`
+// IngestUnit is one unit this repository reports.
+type IngestUnit struct {
+	Key        string   `json:"key"`
+	Kind       string   `json:"kind"`
+	Title      string   `json:"title,omitempty"`
+	Summary    string   `json:"summary,omitempty"`
+	Audiences  []string `json:"audiences,omitempty"`
+	Roles      []string `json:"roles"`
+	SourceRefs []string `json:"sourceRefs"`
+	SourceHash string   `json:"sourceHash,omitempty"`
+	Aliases    []string `json:"aliases,omitempty"`
 }
 
-// CoverageKind is CoverageTotals for one unit kind.
-type CoverageKind struct {
-	Kind         string  `json:"kind"`
-	Units        int     `json:"units"`
-	Documented   int     `json:"documented"`
-	Stale        int     `json:"stale"`
-	Undocumented int     `json:"undocumented"`
-	Ratio        float64 `json:"ratio"`
+// IngestEntry is a (key, roles) pair of the closing ingest call.
+type IngestEntry struct {
+	Key   string   `json:"key"`
+	Roles []string `json:"roles"`
 }
 
-// CoverageUnit is one inventory unit with its resolved state.
-type CoverageUnit struct {
-	Key          string   `json:"key"`
-	Kind         string   `json:"kind"`
-	Title        string   `json:"title"`
-	State        string   `json:"state"`
-	PageSlugs    []string `json:"pageSlugs,omitempty"`
-	SourceRefs   []string `json:"sourceRefs,omitempty"`
-	FirstSeenAt  string   `json:"firstSeenAt,omitempty"`
-	LastSeenAt   string   `json:"lastSeenAt,omitempty"`
-	DocumentedAt string   `json:"documentedAt,omitempty"`
+// IngestRequest is the body of POST /api/v1/products/self/inventory.
+type IngestRequest struct {
+	RunID    string        `json:"runId"`
+	HeadSHA  string        `json:"headSha"`
+	Complete bool          `json:"complete"`
+	Units    []IngestUnit  `json:"units,omitempty"`
+	Entries  []IngestEntry `json:"entries,omitempty"`
 }
 
-// CoverageUncoveredPage is a page this repo wrote that its current inventory no longer claims.
-type CoverageUncoveredPage struct {
-	PageID     string `json:"pageId"`
-	Slug       string `json:"slug"`
-	SpaceSlug  string `json:"spaceSlug"`
-	Title      string `json:"title"`
-	ReleasedAt string `json:"releasedAt,omitempty"`
+// IngestCounts counts contributor rows touched by an ingest.
+type IngestCounts struct {
+	Created     int `json:"created"`
+	Updated     int `json:"updated"`
+	Unchanged   int `json:"unchanged"`
+	Deactivated int `json:"deactivated"`
 }
 
-// RepoCoverage is one repo's coverage report.
-type RepoCoverage struct {
-	RepoID         string                  `json:"repoId"`
-	RemoteKey      string                  `json:"remoteKey"`
-	Name           string                  `json:"name"`
-	ProductSlug    string                  `json:"productSlug,omitempty"`
-	RepoRole       string                  `json:"repoRole,omitempty"`
-	LastPingAt     string                  `json:"lastPingAt,omitempty"`
-	LastWriteAt    string                  `json:"lastWriteAt,omitempty"`
-	Totals         CoverageTotals          `json:"totals"`
-	ByKind         []CoverageKind          `json:"byKind,omitempty"`
-	Units          []CoverageUnit          `json:"units,omitempty"`
-	UncoveredPages []CoverageUncoveredPage `json:"uncoveredPages,omitempty"`
+// IngestConflict is a unit the ingest could not apply.
+type IngestConflict struct {
+	Key          string `json:"key"`
+	Reason       string `json:"reason"`
+	ExistingKind string `json:"existingKind,omitempty"`
 }
 
-// CoverageResponse is the response of GET /api/v1/sites/:siteSlug/coverage.
-type CoverageResponse struct {
-	SiteSlug    string         `json:"siteSlug"`
-	GeneratedAt string         `json:"generatedAt"`
-	Repos       []RepoCoverage `json:"repos"`
+// IngestResult is the response of an inventory ingest.
+type IngestResult struct {
+	Counts    IngestCounts     `json:"counts"`
+	Handoffs  []Handoff        `json:"handoffs"`
+	Conflicts []IngestConflict `json:"conflicts"`
 }
 
-// Coverage calls GET /api/v1/sites/:siteSlug/coverage.
-func (c *Client) Coverage(ctx context.Context, siteSlug, remoteKey, kind string) (*CoverageResponse, error) {
-	q := url.Values{}
-	if remoteKey != "" {
-		q.Set("repo", remoteKey)
-	}
-	if kind != "" {
-		q.Set("kind", kind)
-	}
-	var out CoverageResponse
-	if err := c.Get(ctx, "/api/v1/sites/"+url.PathEscape(siteSlug)+"/coverage", q, &out); err != nil {
+// IngestInventory calls POST /api/v1/products/self/inventory.
+func (c *Client) IngestInventory(ctx context.Context, req IngestRequest) (*IngestResult, error) {
+	var out IngestResult
+	if err := c.Post(ctx, "/api/v1/products/self/inventory", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

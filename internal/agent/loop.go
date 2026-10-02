@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
@@ -59,36 +58,6 @@ type Result struct {
 	ToolCalls     int
 }
 
-// RetryBackoff is the base delay between retries of a transient gateway error.
-var RetryBackoff = time.Second
-
-const maxLLMAttempts = 3
-
-func (r *Runner) callWithRetry(ctx context.Context, req api.MessagesRequest) (*api.MessagesResponse, error) {
-	base := RetryBackoff
-	if base <= 0 {
-		base = time.Second
-	}
-	var lastErr error
-	for attempt := 1; attempt <= maxLLMAttempts; attempt++ {
-		resp, err := r.Client.Messages(ctx, req)
-		if err == nil {
-			return resp, nil
-		}
-		lastErr = err
-		if attempt == maxLLMAttempts || !transientGatewayErr(err) {
-			return nil, err
-		}
-		r.logf("agent: transient gateway error (attempt %d/%d), retrying: %v", attempt, maxLLMAttempts, err)
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(time.Duration(attempt) * base):
-		}
-	}
-	return nil, lastErr
-}
-
 func rejectsForcedToolChoice(err error) bool {
 	var ae *api.APIError
 	return errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest
@@ -100,17 +69,6 @@ func withTerminalInstruction(system, terminal string) string {
 		return instruction
 	}
 	return system + "\n\n" + instruction
-}
-
-func transientGatewayErr(err error) bool {
-	var ae *api.APIError
-	if errors.As(err, &ae) {
-		switch ae.StatusCode {
-		case 502, 503, 429:
-			return true
-		}
-	}
-	return false
 }
 
 func sanitizeContent(parts []api.ContentPart) []api.ContentPart {
@@ -218,13 +176,13 @@ func (r *Runner) Run(ctx context.Context, initialUser string) (*Result, error) {
 				req.ToolChoice = &api.ToolChoice{Type: api.ToolChoiceTool, Name: terminal}
 			}
 		}
-		resp, err := r.callWithRetry(ctx, req)
+		resp, err := r.Client.Messages(ctx, req)
 		if err != nil && forced && !forcingRejected && rejectsForcedToolChoice(err) {
 			r.logf("agent: the model rejected a forced tool_choice; retrying with an explicit instruction instead")
 			forcingRejected = true
 			req.ToolChoice = &api.ToolChoice{Type: api.ToolChoiceAuto}
 			req.System = withTerminalInstruction(r.System, terminal)
-			resp, err = r.callWithRetry(ctx, req)
+			resp, err = r.Client.Messages(ctx, req)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("llm request (iteration %d): %w", iter+1, err)

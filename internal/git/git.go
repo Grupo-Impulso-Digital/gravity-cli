@@ -53,8 +53,7 @@ func (r *Repo) LatestTag(ctx context.Context) (string, error) {
 	return r.describeRelease(ctx, "HEAD")
 }
 
-// TagBefore returns the most recent release tag reachable from ref's first parent, so a
-// release checkout sitting on its own tag ranges from the previous one.
+// TagBefore returns the most recent release tag reachable from ref's first parent.
 func (r *Repo) TagBefore(ctx context.Context, ref string) (string, error) {
 	return r.describeRelease(ctx, ref+"^")
 }

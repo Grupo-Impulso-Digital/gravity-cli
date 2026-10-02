@@ -1,29 +1,39 @@
-// Package docs builds the blocks that `gravity sync` authors onto the Gravity docs platform.
+// Package docs converts repository sources (OpenAPI documents, Markdown files) into Gravity blocks.
 package docs
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/pathsafe"
 )
 
-// BuildBinding builds a drift-verifiable SourceBinding for a machine block.
-func BuildBinding(repoRoot, ref, kind, generator string) (*api.SourceBinding, error) {
-	hash, err := checks.HashRepoFile(repoRoot, ref)
+// FileHash returns "sha256:<hex>" of a repository file.
+func FileHash(repoRoot, ref string) (string, error) {
+	data, err := readRepoFile(repoRoot, ref)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// FileBinding builds a file source binding for a block generated from ref.
+func FileBinding(repoRoot, ref, anchor, generator string) (*api.SourceBinding, error) {
+	hash, err := FileHash(repoRoot, ref)
 	if err != nil {
 		return nil, fmt.Errorf("hash %q: %w", ref, err)
 	}
-	return &api.SourceBinding{
-		Kind:      kind,
-		Ref:       ref,
-		Hash:      "sha256:" + hash,
-		Generator: generator,
-	}, nil
+	full := ref
+	if anchor != "" {
+		full += "#" + anchor
+	}
+	return &api.SourceBinding{Kind: "file", Ref: full, Hash: hash, Generator: generator}, nil
 }
 
 func readRepoFile(repoRoot, ref string) ([]byte, error) {
@@ -36,5 +46,9 @@ func readRepoFile(repoRoot, ref string) ([]byte, error) {
 	case err != nil:
 		return nil, err
 	}
-	return os.ReadFile(filepath.Join(repoRoot, clean))
+	data, err := os.ReadFile(filepath.Join(repoRoot, clean))
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", ref, err)
+	}
+	return data, nil
 }

@@ -416,10 +416,6 @@ func TestRunner_StripsEmptyTextBlocks(t *testing.T) {
 }
 
 func TestRunner_RetriesTransientGatewayError(t *testing.T) {
-	old := agent.RetryBackoff
-	agent.RetryBackoff = time.Millisecond
-	defer func() { agent.RetryBackoff = old }()
-
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -437,7 +433,9 @@ func TestRunner_RetriesTransientGatewayError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	runner := &agent.Runner{Client: api.New(srv.URL, "test-token")}
+	client := api.New(srv.URL, "test-token")
+	client.Sleep = func(context.Context, time.Duration) error { return nil }
+	runner := &agent.Runner{Client: client}
 	res, err := runner.Run(context.Background(), "go")
 	if err != nil {
 		t.Fatalf("run should succeed after retries: %v", err)

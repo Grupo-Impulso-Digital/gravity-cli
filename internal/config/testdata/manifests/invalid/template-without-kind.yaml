@@ -1,0 +1,5 @@
+version: 2
+passes:
+  - name: developer-api
+    template: api-reference
+    target: dev-portal/api

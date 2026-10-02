@@ -3,15 +3,13 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io"
+	"net/url"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
-// CodeOK, CodeFindings, CodeError and CodeLicense are the exit codes used
-// across the CLI. CodeLicense is distinct from CodeError so a pipeline can tell
-// "the workspace's license doesn't include this" (ask an administrator) apart
-// from a broken token, network or input.
+// Exit codes: success, findings, operational error, license refusal.
 const (
 	CodeOK       = 0
 	CodeFindings = 1
@@ -21,8 +19,9 @@ const (
 
 // ExitError carries an explicit process exit code alongside an error.
 type ExitError struct {
-	Code int
-	Err  error
+	Code    int
+	Err     error
+	ErrCode string
 }
 
 func (e *ExitError) Error() string {
@@ -44,10 +43,7 @@ func Failf(code int, format string, args ...any) *ExitError {
 	return &ExitError{Code: code, Err: fmt.Errorf(format, args...)}
 }
 
-// CodeFor extracts the intended exit code from an error chain. A license
-// refusal anywhere in the chain wins over the generic CodeError a command
-// wrapped it in, so every command reports it the same way without per-command
-// plumbing.
+// CodeFor extracts the exit code from an error chain; a license refusal anywhere wins.
 func CodeFor(err error) int {
 	if err == nil {
 		return CodeOK
@@ -62,14 +58,31 @@ func CodeFor(err error) int {
 	return CodeError
 }
 
-// PrintError writes an error to w unless it is a silent findings exit.
-func PrintError(w io.Writer, err error) {
-	if err == nil {
-		return
-	}
+func errorCode(err error) string {
 	var ee *ExitError
-	if errors.As(err, &ee) && ee.Err == nil {
-		return
+	if errors.As(err, &ee) && ee.ErrCode != "" {
+		return ee.ErrCode
 	}
-	fmt.Fprintln(w, "gravity: "+err.Error())
+	var ae *api.APIError
+	if errors.As(err, &ae) && ae.Code != "" {
+		return ae.Code
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return "network_error"
+	}
+	var me *config.ManifestError
+	if errors.As(err, &me) {
+		return api.CodeManifestInvalid
+	}
+	if errors.Is(err, config.ErrV1Manifest) {
+		return "manifest_v1"
+	}
+	switch CodeFor(err) {
+	case CodeFindings:
+		return "findings"
+	case CodeLicense:
+		return api.CodeModuleDisabled
+	}
+	return "error"
 }

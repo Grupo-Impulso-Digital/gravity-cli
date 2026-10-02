@@ -1,0 +1,3 @@
+version: 2
+code:
+  openapi: [../shared/openapi.yaml]

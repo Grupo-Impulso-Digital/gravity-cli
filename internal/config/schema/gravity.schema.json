@@ -1,0 +1,479 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://gravitydocs.io/schemas/gravity.v2.json",
+    "title": "Gravity repository manifest (.gravity.yaml) v2",
+    "description": "Code facts live in the repository; editorial intent lives in the Gravity app. Everything except `version` is optional. Passes declared here are shown in the app as managed in the repository (locked).",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["version"],
+    "properties": {
+        "version": {
+            "const": 2,
+            "description": "Manifest schema version. A file without `version: 2` is a v1 manifest and is refused by CLI 1.x (run `gravity init` to convert it)."
+        },
+        "product": {
+            "$ref": "#/$defs/slug",
+            "description": "Slug of the Gravity product this repository contributes to. Omitted: the product the repository is already registered under, or a new product named after the repository on first connect."
+        },
+        "apiUrl": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://",
+            "description": "Gravity API base URL. Defaults to https://api.gravitydocs.io. The GRAVITY_API_URL environment variable and --api-url flag override it."
+        },
+        "appPasses": {
+            "enum": ["allow", "ignore"],
+            "default": "allow",
+            "description": "allow: passes created in the app run alongside the passes declared here. ignore: only the passes declared here run (app passes are listed as inactive)."
+        },
+        "code": { "$ref": "#/$defs/code" },
+        "docs": { "$ref": "#/$defs/docs" },
+        "passes": {
+            "type": "array",
+            "maxItems": 32,
+            "items": { "$ref": "#/$defs/pass" },
+            "description": "Passes-as-code. Each name must be unique. Declared passes win over app passes of the same name."
+        }
+    },
+    "$defs": {
+        "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+        },
+        "glob": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "not": { "pattern": "^/|(^|/)\\.\\.(/|$)" },
+            "description": "Repository-relative path or doublestar glob. Absolute paths and `..` segments are rejected."
+        },
+        "globList": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/glob" }
+        },
+        "unitRole": { "enum": ["implements", "declares", "documents"] },
+        "unitKind": {
+            "enum": ["feature", "service", "system", "api", "capability"]
+        },
+        "audience": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{1,39}$",
+            "description": "A builtin tier (public, users, developers) or an organization audience key."
+        },
+        "languageCode": {
+            "type": "string",
+            "pattern": "^[a-zA-Z-]{2,12}$"
+        },
+        "target": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*){0,6}$",
+            "description": "<siteSlug>/<spaceSlug>[/<collectionSlug>...]. check and nucleus passes also accept a bare <siteSlug>."
+        },
+        "code": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "openapi": {
+                    "$ref": "#/$defs/globList",
+                    "description": "OpenAPI 3.x / Swagger 2 documents (YAML or JSON)."
+                },
+                "entrypoints": {
+                    "$ref": "#/$defs/globList",
+                    "description": "Directories or files where user-visible surface starts (routes, pages, CLI commands). Used to discover units."
+                },
+                "include": { "$ref": "#/$defs/globList" },
+                "exclude": { "$ref": "#/$defs/globList" },
+                "units": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": {
+                            "enum": ["auto", "feature", "service", "system", "api", "capability"],
+                            "default": "auto"
+                        },
+                        "role": {
+                            "oneOf": [
+                                { "$ref": "#/$defs/unitRole" },
+                                {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "uniqueItems": true,
+                                    "items": { "$ref": "#/$defs/unitRole" }
+                                }
+                            ],
+                            "default": "implements",
+                            "description": "The default role (or roles) this repository plays for the units it reports. A gateway that only routes to a feature implemented elsewhere uses `declares`; a repository that both routes and implements uses [declares, implements]."
+                        }
+                    }
+                }
+            }
+        },
+        "docs": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "include": {
+                    "$ref": "#/$defs/globList",
+                    "description": "Human-written documents passes may read as context. Reading is not importing: only verbatim passes publish files."
+                },
+                "exclude": { "$ref": "#/$defs/globList" }
+            }
+        },
+        "scope": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "paths": { "$ref": "#/$defs/globList" },
+                "exclude": { "$ref": "#/$defs/globList" },
+                "units": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": { "$ref": "#/$defs/unitKind" }
+                }
+            }
+        },
+        "pass": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind"],
+            "properties": {
+                "name": { "$ref": "#/$defs/slug" },
+                "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+                "kind": {
+                    "enum": [
+                        "guides",
+                        "reference",
+                        "verbatim",
+                        "changelog",
+                        "nucleus",
+                        "check",
+                        "capture"
+                    ]
+                },
+                "template": {
+                    "enum": [
+                        "api-reference",
+                        "developer-guide",
+                        "user-guide",
+                        "customer-changelog",
+                        "internal-changelog",
+                        "runbook",
+                        "nucleus-facts",
+                        "verbatim-docs"
+                    ],
+                    "description": "Starting point from the app's template catalog. Fills triggers, audiences, scope, options and starter instructions; explicit keys here override it. kind is always required and must equal the template's kind."
+                },
+                "target": { "$ref": "#/$defs/target" },
+                "triggers": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": { "enum": ["pr", "push", "release", "schedule", "manual"] }
+                },
+                "branches": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 16,
+                    "items": { "type": "string", "minLength": 1, "maxLength": 255 },
+                    "description": "push/schedule branch filter (doublestar globs). Empty: the repository's default branch."
+                },
+                "scope": { "$ref": "#/$defs/scope" },
+                "audiences": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 8,
+                    "items": { "$ref": "#/$defs/audience" }
+                },
+                "instructions": {
+                    "type": "string",
+                    "maxLength": 8000,
+                    "description": "Markdown prompt layered after the organization voice and the site/space/collection briefs."
+                },
+                "publish": {
+                    "enum": ["propose", "auto-if-trusted"],
+                    "default": "propose"
+                },
+                "enabled": { "type": "boolean", "default": true },
+                "options": { "type": "object" }
+            },
+            "allOf": [
+                {
+                    "if": { "required": ["kind"], "properties": { "kind": { "const": "guides" } } },
+                    "then": { "properties": { "options": { "$ref": "#/$defs/guidesOptions" } } }
+                },
+                {
+                    "if": {
+                        "required": ["kind"],
+                        "properties": { "kind": { "const": "reference" } }
+                    },
+                    "then": { "properties": { "options": { "$ref": "#/$defs/referenceOptions" } } }
+                },
+                {
+                    "if": {
+                        "required": ["kind"],
+                        "properties": { "kind": { "const": "verbatim" } }
+                    },
+                    "then": {
+                        "required": ["options"],
+                        "properties": { "options": { "$ref": "#/$defs/verbatimOptions" } }
+                    }
+                },
+                {
+                    "if": {
+                        "required": ["kind"],
+                        "properties": { "kind": { "const": "changelog" } }
+                    },
+                    "then": { "properties": { "options": { "$ref": "#/$defs/changelogOptions" } } }
+                },
+                {
+                    "if": {
+                        "required": ["kind"],
+                        "properties": { "kind": { "const": "nucleus" } }
+                    },
+                    "then": { "properties": { "options": { "$ref": "#/$defs/nucleusOptions" } } }
+                },
+                {
+                    "if": { "required": ["kind"], "properties": { "kind": { "const": "check" } } },
+                    "then": { "properties": { "options": { "$ref": "#/$defs/checkOptions" } } }
+                },
+                {
+                    "if": {
+                        "required": ["kind"],
+                        "properties": { "kind": { "const": "capture" } }
+                    },
+                    "then": { "properties": { "options": { "$ref": "#/$defs/captureOptions" } } }
+                },
+                {
+                    "if": {
+                        "required": ["kind"],
+                        "properties": {
+                            "kind": {
+                                "enum": ["guides", "reference", "verbatim", "changelog", "capture"]
+                            }
+                        }
+                    },
+                    "then": {
+                        "required": ["target"],
+                        "properties": {
+                            "target": {
+                                "pattern": "^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*){1,6}$"
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        "languages": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 24,
+            "items": { "$ref": "#/$defs/languageCode" },
+            "description": "Translation languages requested for every page the pass writes."
+        },
+        "guidesOptions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "maxPages": { "type": "integer", "minimum": 1, "maximum": 200, "default": 25 },
+                "surveyCommits": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "default": 50
+                },
+                "createPages": { "type": "boolean", "default": true },
+                "deprecate": { "type": "boolean", "default": true },
+                "prPreview": { "enum": ["off", "impact", "full"], "default": "impact" },
+                "languages": { "$ref": "#/$defs/languages" }
+            }
+        },
+        "referenceOptions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "sources": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["path"],
+                        "properties": {
+                            "path": { "$ref": "#/$defs/glob" },
+                            "page": { "$ref": "#/$defs/slug" },
+                            "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                            "collection": {
+                                "type": "string",
+                                "pattern": "^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*){0,4}$"
+                            }
+                        }
+                    },
+                    "description": "Spec files and their pages. Omitted: every code.openapi document, one page set per document."
+                },
+                "pageStrategy": {
+                    "enum": ["single", "per-tag", "per-operation"],
+                    "default": "per-tag"
+                },
+                "prose": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Let the AI write intro and usage prose around the deterministic API blocks."
+                },
+                "languages": { "$ref": "#/$defs/languages" }
+            }
+        },
+        "verbatimOptions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["files"],
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["include"],
+                        "properties": {
+                            "include": { "$ref": "#/$defs/glob" },
+                            "exclude": { "$ref": "#/$defs/globList" },
+                            "collection": {
+                                "type": "string",
+                                "pattern": "^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*){0,4}$",
+                                "description": "Collection path under the target for these files. Folder structure below the include root nests further collections."
+                            },
+                            "stripPrefix": { "$ref": "#/$defs/glob" },
+                            "slug": {
+                                "type": "string",
+                                "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                                "description": "Page slug override. Only with a literal include (one file)."
+                            },
+                            "title": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200,
+                                "description": "Page title override. Only with a literal include (one file)."
+                            }
+                        },
+                        "dependentSchemas": {
+                            "slug": {
+                                "properties": { "include": { "pattern": "^[^*?\\[\\]{}]+$" } }
+                            },
+                            "title": {
+                                "properties": { "include": { "pattern": "^[^*?\\[\\]{}]+$" } }
+                            }
+                        }
+                    }
+                },
+                "adopt": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Take over (and lock) an existing unlocked page whose slug matches a mapped file instead of refusing."
+                },
+                "indexFiles": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+                    "default": ["index.md", "README.md", "_index.md"],
+                    "description": "File names that become their folder's collection overview page."
+                },
+                "languages": { "$ref": "#/$defs/languages" }
+            }
+        },
+        "changelogOptions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "audience": { "enum": ["customer", "internal"], "default": "customer" },
+                "unreleased": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "On push, keep an Unreleased page listing merged but unreleased changes."
+                },
+                "unreleasedSlug": { "$ref": "#/$defs/slug" },
+                "slugPattern": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9{}._-]+$",
+                    "default": "{tag}",
+                    "description": "Page slug per release. Placeholders: {tag}, {major}, {minor}, {patch}, {date}."
+                },
+                "source": { "enum": ["commits", "changelog-file"], "default": "commits" },
+                "changelogFile": { "$ref": "#/$defs/glob" },
+                "tagPattern": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "default": "v*",
+                    "description": "Glob that release tags match; used to find the previous release."
+                },
+                "releaseQueued": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When a release run of this pass succeeds, cut a Gravity release of the accepted-but-queued versions in the spaces this repository's passes target."
+                }
+            }
+        },
+        "nucleusOptions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "namespace": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9:._/-]{0,127}$",
+                    "description": "Defaults to the product namespace (product:<slug>). Must equal it or start with it followed by `/`."
+                },
+                "kinds": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                        "enum": [
+                            "fact",
+                            "entity",
+                            "concept",
+                            "procedure",
+                            "decision",
+                            "glossary",
+                            "relationship",
+                            "preference",
+                            "other"
+                        ]
+                    }
+                },
+                "maxAtoms": { "type": "integer", "minimum": 1, "maximum": 200, "default": 40 }
+            }
+        },
+        "checkOptions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "failOn": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": { "enum": ["drift", "coverage", "claims", "verbatim"] },
+                    "default": ["drift", "claims", "verbatim"]
+                },
+                "coverageMin": { "type": "number", "minimum": 0, "maximum": 1 },
+                "require": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 256,
+                    "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:/-]{0,127}$" },
+                    "description": "Unit keys or unit kinds that must be documented."
+                },
+                "claims": { "type": "boolean", "default": true },
+                "annotate": { "type": "boolean", "default": true }
+            }
+        },
+        "captureOptions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "connectionId": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "audience": { "type": "string", "maxLength": 200 },
+                "maxPages": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+            }
+        }
+    }
+}

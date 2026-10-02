@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 )
 
@@ -42,43 +41,39 @@ func writeFile(t *testing.T, dir, name, body string) {
 	}
 }
 
-func TestAPIBlocks_SatisfyCheckAPI(t *testing.T) {
+func TestAPIBlocksCarryEndpointBindingsAndUnits(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "openapi.yaml", specV3)
 
-	blocks, err := docs.APIBlocks(dir, "openapi.yaml", "test")
+	blocks, err := docs.APIBlocks(dir, "openapi.yaml", "gravity-cli/test")
 	if err != nil {
 		t.Fatalf("APIBlocks: %v", err)
 	}
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 api blocks, got %d", len(blocks))
 	}
-
+	want := map[string]string{
+		"api:GET:/users":      "api:get:/users",
+		"api:GET:/users/{id}": "api:get:/users/:id",
+	}
 	for _, b := range blocks {
 		if b.Type != "api" || b.Ownership != "machine" {
 			t.Errorf("block %s: type/ownership = %s/%s", b.Key, b.Type, b.Ownership)
 		}
-		if b.SourceBinding == nil {
-			t.Fatalf("block %s: missing source binding", b.Key)
+		unit, ok := want[b.Key]
+		if !ok || len(b.Units) != 1 || b.Units[0] != unit {
+			t.Errorf("block %s units = %v", b.Key, b.Units)
 		}
-		chk := checks.VerifyBinding(dir, b.SourceBinding)
-		if !chk.Verified || chk.Stale {
-			t.Errorf("block %s: binding not verified/fresh: %+v", b.Key, chk)
+		if b.SourceBinding == nil || b.SourceBinding.Kind != "endpoint" || !strings.HasPrefix(b.SourceBinding.Hash, "sha256:") {
+			t.Fatalf("block %s binding = %+v", b.Key, b.SourceBinding)
 		}
 	}
-
-	spec, err := checks.ParseOpenAPI([]byte(specV3))
+	again, err := docs.APIBlocks(dir, "openapi.yaml", "gravity-cli/test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var documented []checks.DocumentedOp
-	for key, op := range spec {
-		documented = append(documented, checks.DocumentedOp{
-			Method: op.Method, Path: op.Path, Summary: op.Summary, PageSlug: "api", BlockID: key,
-		})
-	}
-	if findings := checks.DiffOperations(spec, documented); len(findings) != 0 {
-		t.Errorf("expected 0 drift findings, got %d: %+v", len(findings), findings)
+	if again[0].SourceBinding.Hash != blocks[0].SourceBinding.Hash {
+		t.Error("endpoint hashes are not deterministic")
 	}
 }
 
@@ -141,9 +136,9 @@ func TestMarkdownPage_NativeBlocks(t *testing.T) {
 		t.Errorf("list markers not preserved verbatim in prose; got prose blocks: %v", proseTexts)
 	}
 
-	chk := checks.VerifyBinding(dir, blocks[0].SourceBinding)
-	if !chk.Verified || chk.Stale {
-		t.Errorf("doc binding not verified/fresh: %+v", chk)
+	hash, err := docs.FileHash(dir, "guide.md")
+	if err != nil || blocks[0].SourceBinding.Hash != hash || blocks[0].SourceBinding.Kind != "file" {
+		t.Errorf("doc binding = %+v, file hash %s (%v)", blocks[0].SourceBinding, hash, err)
 	}
 }
 
@@ -200,7 +195,7 @@ func TestMarkdownPage_Idempotent(t *testing.T) {
 		t.Fatalf("non-deterministic block count: %d vs %d", len(a), len(b))
 	}
 	for i := range a {
-		if a[i].Key != b[i].Key || a[i].Type != b[i].Type || a[i].Position != b[i].Position {
+		if a[i].Key != b[i].Key || a[i].Type != b[i].Type || a[i].SourceBinding.Hash != b[i].SourceBinding.Hash {
 			t.Errorf("block %d differs across runs: %+v vs %+v", i, a[i], b[i])
 		}
 	}

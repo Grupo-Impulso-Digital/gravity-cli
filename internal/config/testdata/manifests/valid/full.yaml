@@ -1,0 +1,61 @@
+version: 2
+product: acme-platform
+code:
+  openapi: [api/openapi.yaml]
+  entrypoints: [src/server/routes, src/ui/pages]
+  exclude: ["**/*.test.ts", "scripts/**"]
+  units:
+    kind: auto
+    role: implements
+docs:
+  include: ["docs/**/*.md", "README.md"]
+passes:
+  - name: developer-api
+    template: api-reference
+    kind: reference
+    target: dev-portal/api
+    triggers: [push, pr]
+    scope:
+      paths: ["api/**", "src/server/**"]
+      units: [api, service]
+    audiences: [developers]
+    instructions: |
+      Keep endpoint reference and integration guides current: new endpoints,
+      auth changes, error codes, pagination. Never describe UI.
+    options:
+      pageStrategy: per-tag
+      prose: true
+  - name: product-guides
+    template: user-guide
+    kind: guides
+    target: product/guides
+    triggers: [push, pr]
+    scope:
+      paths: ["src/ui/**"]
+    instructions: |
+      User-visible behaviour only, customer language, task-oriented.
+  - name: handbook
+    kind: verbatim
+    target: internal/handbook
+    triggers: [push]
+    options:
+      files:
+        - include: "docs/handbook/**/*.md"
+          stripPrefix: "docs/handbook"
+  - name: changelog
+    template: customer-changelog
+    kind: changelog
+    target: product/changelog
+    triggers: [push, release]
+    options:
+      audience: customer
+      unreleased: true
+  - name: memory
+    template: nucleus-facts
+    kind: nucleus
+    triggers: [push]
+  - name: pr-check
+    kind: check
+    triggers: [pr]
+    options:
+      failOn: [drift, claims, verbatim]

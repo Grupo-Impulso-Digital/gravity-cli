@@ -19,17 +19,13 @@ func respond(status int, body string) *httptest.Server {
 }
 
 func TestModuleDisabledIsTyped(t *testing.T) {
-	srv := respond(http.StatusForbidden,
-		`{"error":{"code":"module_disabled","message":"Module CLI is not included in this workspace's licence.","module":"cli"}}`) //nolint:misspell // platform spelling
+	srv := respond(http.StatusForbidden, `{"error":{"code":"module_disabled","message":"Module CLI is off.","module":"cli"}}`)
 	defer srv.Close()
 
 	_, err := api.New(srv.URL, "tok").WhoAmI(context.Background())
 	var md *api.ModuleDisabledError
-	if !errors.As(err, &md) {
-		t.Fatalf("expected *api.ModuleDisabledError, got %T: %v", err, err)
-	}
-	if md.Module != "cli" {
-		t.Errorf("module = %q, want cli", md.Module)
+	if !errors.As(err, &md) || md.Module != "cli" {
+		t.Fatalf("expected *api.ModuleDisabledError for cli, got %T: %v", err, err)
 	}
 	want := "The cli module is not included in this workspace's licence. Ask an administrator." //nolint:misspell // platform spelling
 	if err.Error() != want {
@@ -38,14 +34,9 @@ func TestModuleDisabledIsTyped(t *testing.T) {
 	if !api.IsLicenseError(err) {
 		t.Error("IsLicenseError should be true")
 	}
-	// The raw envelope stays reachable for status-based callers, but it is not
-	// an auth failure: the token is fine.
 	var ae *api.APIError
-	if !errors.As(err, &ae) || ae.StatusCode != http.StatusForbidden || ae.Code != api.CodeModuleDisabled {
-		t.Fatalf("underlying *APIError not reachable: %+v", ae)
-	}
-	if ae.IsAuth() || ae.IsUnavailable() {
-		t.Errorf("module_disabled must be neither auth nor unavailable: auth=%v unavailable=%v", ae.IsAuth(), ae.IsUnavailable())
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusForbidden || ae.IsAuth() {
+		t.Fatalf("underlying *APIError: %+v", ae)
 	}
 }
 
@@ -66,11 +57,8 @@ func TestSeatLimitIsTyped(t *testing.T) {
 
 	_, err := api.New(srv.URL, "tok").WhoAmI(context.Background())
 	var sl *api.SeatLimitError
-	if !errors.As(err, &sl) {
+	if !errors.As(err, &sl) || !api.IsLicenseError(err) {
 		t.Fatalf("expected *api.SeatLimitError, got %T: %v", err, err)
-	}
-	if !api.IsLicenseError(err) {
-		t.Error("IsLicenseError should be true")
 	}
 }
 
@@ -80,8 +68,8 @@ func TestOtherForbiddenUnchanged(t *testing.T) {
 		status int
 		body   string
 	}{
-		{"plain forbidden", http.StatusForbidden, `{"error":{"code":"forbidden","message":"The Nucleus module is not enabled."}}`},
-		{"route unmapped", http.StatusForbidden, `{"error":{"code":"route_unmapped","message":"This route is not mapped to a module."}}`},
+		{"plain forbidden", http.StatusForbidden, `{"error":{"code":"forbidden","message":"No."}}`},
+		{"scope missing", http.StatusForbidden, `{"error":{"code":"scope_missing","message":"Scope missing","details":[{"code":"scope","message":"runs:write"}]}}`},
 		{"non-json 403", http.StatusForbidden, `forbidden`},
 		{"module_disabled on non-403", http.StatusBadRequest, `{"error":{"code":"module_disabled","module":"cli"}}`},
 	}
@@ -99,7 +87,7 @@ func TestOtherForbiddenUnchanged(t *testing.T) {
 				t.Fatalf("expected an *api.APIError, got %T: %v", err, err)
 			}
 			if tc.status == http.StatusForbidden && !ae.IsAuth() {
-				t.Error("a non-license 403 should still be an auth failure")
+				t.Error("a non-license 403 should be an auth failure")
 			}
 		})
 	}

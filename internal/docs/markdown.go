@@ -15,7 +15,7 @@ import (
 )
 
 // MarkdownPage decomposes a Markdown file into Gravity's native blocks.
-func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.BlockInput, title string, err error) {
+func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.ChangeBlock, title string, err error) {
 	data, err := readRepoFile(repoRoot, fileRef)
 	if err != nil {
 		return nil, "", fmt.Errorf("read %q: %w", fileRef, err)
@@ -25,7 +25,7 @@ func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.
 	}
 	var binding *api.SourceBinding
 	if ownership != "human" {
-		binding, err = BuildBinding(repoRoot, fileRef, "cli", generator)
+		binding, err = FileBinding(repoRoot, fileRef, "", generator)
 		if err != nil {
 			return nil, "", err
 		}
@@ -34,20 +34,19 @@ func MarkdownPage(repoRoot, fileRef, ownership, generator string) (blocks []api.
 	md := goldmark.New(goldmark.WithExtensions(extension.GFM))
 	doc := md.Parser().Parse(text.NewReader(data))
 
-	var out []api.BlockInput
+	var out []api.ChangeBlock
 	usedSections := map[string]bool{}
 	section := "intro"
 	intra := 0
 	pos := 0
 
 	emit := func(typ string, content any, key string) {
-		out = append(out, api.BlockInput{
+		out = append(out, api.ChangeBlock{
 			Key:           key,
 			Type:          typ,
 			Ownership:     ownership,
 			Content:       content,
 			SourceBinding: binding,
-			Position:      pos,
 		})
 		pos++
 	}

@@ -1,0 +1,241 @@
+{
+  "ok": true,
+  "command": "status",
+  "version": "dev",
+  "data": {
+    "whoami": {
+      "principal": {
+        "kind": "user",
+        "user": {
+          "id": "usr_1",
+          "email": "dave@acme.io",
+          "name": "Dave"
+        },
+        "role": "editor",
+        "permissions": [
+          "docs.read",
+          "docs.write",
+          "docs.repos.manage",
+          "docs.repos.tokens"
+        ]
+      },
+      "organization": {
+        "id": "org_1",
+        "slug": "acme",
+        "name": "Acme"
+      },
+      "organizations": [
+        {
+          "id": "org_1",
+          "slug": "acme",
+          "name": "Acme",
+          "role": "editor"
+        },
+        {
+          "id": "org_2",
+          "slug": "acme-labs",
+          "name": "Acme Labs",
+          "role": "admin"
+        }
+      ],
+      "token": {
+        "kind": "user",
+        "source": "env",
+        "keyHint": "x9Qa",
+        "scopes": [],
+        "expiresAt": "2026-12-30T12:00:00Z"
+      },
+      "apiUrl": "http://platform.test",
+      "features": {
+        "device-auth": true,
+        "pipelines": true
+      },
+      "modules": {
+        "agent": false,
+        "cli": true,
+        "memory": true
+      }
+    },
+    "repo": {
+      "id": "cr_1",
+      "remoteKey": "github.com/acme/billing-api",
+      "name": "billing-api",
+      "created": false,
+      "createdVia": "cli",
+      "product": {
+        "id": "prod_1",
+        "slug": "acme-platform",
+        "name": "Acme Platform"
+      },
+      "appUrl": "https://app.gravitydocs.io/app/repos/cr_1"
+    },
+    "manifest": {
+      "path": "/repo/.gravity.yaml",
+      "hash": "sha256:8cbfc3de17ba05418d7114de8a3913171dbca35d5e34ecf9caebfef288e436b0"
+    },
+    "effective": {
+      "appPasses": "allow",
+      "overlay": false,
+      "passes": [
+        {
+          "id": "",
+          "name": "developer-api",
+          "kind": "reference",
+          "source": "manifest",
+          "locked": true,
+          "enabled": true,
+          "applies": false,
+          "triggers": [
+            "push",
+            "pr"
+          ],
+          "target": {
+            "status": "ok",
+            "ref": "dev-portal/api",
+            "siteSlug": "dev-portal",
+            "spaceSlug": "api"
+          },
+          "scope": {},
+          "instructions": {
+            "hash": "",
+            "layers": null
+          }
+        },
+        {
+          "id": "",
+          "name": "product-guides",
+          "kind": "guides",
+          "source": "app",
+          "locked": false,
+          "enabled": true,
+          "applies": false,
+          "triggers": [
+            "push"
+          ],
+          "target": {
+            "status": "unapproved",
+            "ref": "product/guides",
+            "approveUrl": "https://app.gravitydocs.io/app/repos/cr_1/passes/rp_2#approve",
+            "siteSlug": "product",
+            "spaceSlug": "guides"
+          },
+          "scope": {},
+          "instructions": {
+            "hash": "",
+            "layers": null
+          }
+        }
+      ]
+    },
+    "status": {
+      "repo": {
+        "id": "cr_1",
+        "remoteKey": "github.com/acme/billing-api",
+        "name": "billing-api",
+        "health": "blocked",
+        "lastConnectAt": "2026-10-01T09:00:00Z",
+        "lastRunAt": "2026-09-30T10:00:00Z",
+        "cliVersion": "1.0.0",
+        "appUrl": "https://app.gravitydocs.io/app/repos/cr_1"
+      },
+      "product": {
+        "slug": "acme-platform",
+        "name": "Acme Platform"
+      },
+      "passes": [
+        {
+          "name": "developer-api",
+          "kind": "reference",
+          "source": "manifest",
+          "enabled": true,
+          "target": {
+            "status": "ok",
+            "ref": "dev-portal/api"
+          },
+          "lastRun": {
+            "runId": "prun_1",
+            "status": "succeeded",
+            "at": "2026-09-30T10:00:00Z"
+          },
+          "watermarks": [
+            {
+              "branch": "main",
+              "commitSha": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+              "updatedAt": "2026-09-30T10:00:00Z"
+            }
+          ]
+        },
+        {
+          "name": "product-guides",
+          "kind": "guides",
+          "source": "app",
+          "enabled": true,
+          "target": {
+            "status": "unapproved",
+            "ref": "product/guides"
+          }
+        }
+      ],
+      "runs": [
+        {
+          "id": "prun_1",
+          "trigger": "push",
+          "mode": "write",
+          "status": "succeeded",
+          "branch": "main",
+          "headSha": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+          "startedAt": "2026-09-30T09:58:00Z",
+          "finishedAt": "2026-09-30T10:00:00Z",
+          "changes": 4,
+          "findings": 0,
+          "costUsd": 0.42,
+          "appUrl": "https://app.gravitydocs.io/app/repos/runs/prun_1"
+        }
+      ],
+      "openBundles": [
+        {
+          "runId": "prun_1",
+          "pending": 4,
+          "appUrl": "https://app.gravitydocs.io/app/repos/runs/prun_1"
+        }
+      ],
+      "tokens": [
+        {
+          "keyHint": "r2D2",
+          "kind": "repo",
+          "lastUsedAt": "2026-09-30T10:00:00Z",
+          "expiresAt": null
+        }
+      ],
+      "health": {
+        "status": "blocked",
+        "reasons": [
+          "Pass product-guides: target product/guides awaits approval"
+        ]
+      }
+    },
+    "siblings": [
+      {
+        "name": "gateway",
+        "remoteKey": "github.com/acme/gateway",
+        "lastRunAt": "2026-09-30T10:00:00Z",
+        "passes": 3,
+        "health": "live"
+      }
+    ],
+    "connect": {
+      "version": 2,
+      "hash": "sha256:abc",
+      "accepted": true,
+      "persisted": false,
+      "reason": "dry_run",
+      "authoritativeBranch": "main",
+      "passesUpserted": [],
+      "passesConverted": [],
+      "passesArchived": [],
+      "warnings": []
+    }
+  },
+  "warnings": [],
+  "error": null
+}
