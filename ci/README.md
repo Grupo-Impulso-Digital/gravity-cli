@@ -181,7 +181,8 @@ jobs:
 ```
 
 The action downloads the prebuilt release binary (checksum-verified by
-`install.sh`) and caches it per release, so no Go toolchain is needed. For
+`install.sh` on Linux and macOS runners, `install.ps1` on Windows runners) and
+caches it per release, so no Go toolchain is needed. For
 `check api`, `check docs` and `coverage` it appends `--format github`, which emits
 `::error::`/`::warning::` annotations so findings show up inline in the checks
 UI; other commands never receive `--format`. It always runs with `--ci`.
@@ -213,6 +214,9 @@ they install the prebuilt release binary with `install.sh` (cached per pinned
 masked/protected variable and `LIVE_BRANCH` to your deployment branch. Add a
 `GRAVITY_CI_PUSH_TOKEN` (project access token with `write_repository`) so the
 generate job moves the `docs-synced` marker and later runs stay incremental.
+The marker push uses `-o ci.skip` and `release-notes` runs only for `v*` tags,
+so moving the marker never starts a release pipeline. Release-notes ranges
+ignore the marker and start at the previous `v*` tag.
 
 ## Bitbucket Pipelines
 

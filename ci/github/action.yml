@@ -82,12 +82,20 @@ runs:
         key: gravity-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.tag }}
 
     - name: Install gravity (release binary)
-      if: steps.resolve.outputs.tag != 'source' && steps.cache.outputs.cache-hit != 'true'
+      if: steps.resolve.outputs.tag != 'source' && steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
       shell: bash
       env:
         GRAVITY_VERSION: ${{ steps.resolve.outputs.tag }}
         GRAVITY_INSTALL_DIR: ${{ steps.resolve.outputs.dir }}
       run: sh "${GITHUB_ACTION_PATH}/../../install.sh"
+
+    - name: Install gravity (release binary, Windows)
+      if: steps.resolve.outputs.tag != 'source' && steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        GRAVITY_VERSION: ${{ steps.resolve.outputs.tag }}
+        GRAVITY_INSTALL_DIR: ${{ steps.resolve.outputs.dir }}
+      run: '& (Join-Path $env:GITHUB_ACTION_PATH "../../install.ps1")'
 
     - name: Set up Go (source build)
       if: steps.resolve.outputs.tag == 'source'
@@ -142,7 +150,6 @@ runs:
           set -- "$@" --since "$GRAVITY_SINCE"
         fi
 
-        # Exit codes: 0 pass, 1 findings, 2 error, 3 licence refusal.
         gravity --ci "$@" && code=0 || code=$?
 
         if [ "$code" -eq 1 ] && [ "$GRAVITY_CONTINUE_ON_FINDINGS" = "true" ]; then

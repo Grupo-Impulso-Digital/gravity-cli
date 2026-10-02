@@ -45,30 +45,36 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	return run(ctx, r.Root, args...)
 }
 
-// LatestTag returns the most recent tag reachable from HEAD, or "" if none.
+// MarkerTag is the CI bookkeeping tag that records the last docs-synced commit.
+const MarkerTag = "docs-synced"
+
+// LatestTag returns the most recent release tag reachable from HEAD, or "" if none.
 func (r *Repo) LatestTag(ctx context.Context) (string, error) {
-	out, err := r.git(ctx, "describe", "--tags", "--abbrev=0")
-	if err != nil {
-		if stderrHas(err, "No names found", "cannot describe", "No tags can describe") {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
+	return r.describeRelease(ctx, "HEAD")
 }
 
-// TagBefore returns the most recent tag reachable from ref's first parent, so a
+// TagBefore returns the most recent release tag reachable from ref's first parent, so a
 // release checkout sitting on its own tag ranges from the previous one.
 func (r *Repo) TagBefore(ctx context.Context, ref string) (string, error) {
-	out, err := r.git(ctx, "describe", "--tags", "--abbrev=0", ref+"^")
-	if err != nil {
-		if stderrHas(err, "No names found", "cannot describe", "No tags can describe",
-			"Not a valid object name", "unknown revision") {
-			return "", nil
+	return r.describeRelease(ctx, ref+"^")
+}
+
+func (r *Repo) describeRelease(ctx context.Context, rev string) (string, error) {
+	for _, filter := range [][]string{
+		{"--match", "v[0-9]*"},
+		{"--exclude", MarkerTag, "--exclude", MarkerTag + "-*"},
+	} {
+		args := append([]string{"describe", "--tags", "--abbrev=0"}, filter...)
+		out, err := r.git(ctx, append(args, rev)...)
+		if err == nil {
+			return strings.TrimSpace(out), nil
 		}
-		return "", err
+		if !stderrHas(err, "No names found", "cannot describe", "No tags can describe",
+			"Not a valid object name", "unknown revision") {
+			return "", err
+		}
 	}
-	return strings.TrimSpace(out), nil
+	return "", nil
 }
 
 // FirstCommit returns the oldest commit hash reachable from HEAD.

@@ -7,7 +7,7 @@
 # Cadence (see ci/README.md):
 #   merge request         check docs + check api        read-only
 #   push to LIVE_BRANCH   ping -> sync -> docs generate --since <last green sha>
-#   tag                   release-notes
+#   tag v*                release-notes
 #
 # Exit-code convention: 0 pass, 1 findings, 2 error, 3 licence refusal. The
 # merge-request jobs let findings fail the pipeline so drift is visible; the
@@ -104,11 +104,12 @@ docs:generate:
     - if [ -n "$SINCE" ]; then gravity docs generate --ci --since "$SINCE"; else gravity docs generate --ci; fi
     # Move the marker on success. Needs GRAVITY_CI_PUSH_TOKEN: a project access
     # token with write_repository (masked, protected). Without it every run is
-    # a full survey.
+    # a full survey. `-o ci.skip` keeps the marker push from starting a tag
+    # pipeline.
     - |
       if [ -n "$GRAVITY_CI_PUSH_TOKEN" ]; then
         git tag -f docs-synced "$CI_COMMIT_SHA"
-        git push -f "https://oauth2:${GRAVITY_CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" refs/tags/docs-synced
+        git push -f -o ci.skip "https://oauth2:${GRAVITY_CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" refs/tags/docs-synced
       else
         echo "note: GRAVITY_CI_PUSH_TOKEN is not set; the docs-synced marker was not moved, so the next run is a full survey"
       fi
@@ -134,7 +135,7 @@ release-notes:
   extends: .gravity_base
   stage: deploy
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG =~ /^v/
   script:
     # Lands in releaseNotes.space from .gravity.yaml (default: changelog).
     - gravity release-notes --ci --output proposal
