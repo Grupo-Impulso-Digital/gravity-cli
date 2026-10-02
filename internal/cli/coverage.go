@@ -25,6 +25,7 @@ func newCoverageCmd(gf *globalFlags) *cobra.Command {
 		minRatio float64
 		all      bool
 		require  bool
+		jsonOut  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "coverage",
@@ -44,6 +45,7 @@ Exit codes: 0 at or above the bar, 1 below it (or a required page missing),
 2 on an auth/network/config error.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format = jsonFormat(format, jsonOut)
 			if err := validateFormat(format); err != nil {
 				return err
 			}
@@ -97,6 +99,7 @@ Exit codes: 0 at or above the bar, 1 below it (or a required page missing),
 	cmd.Flags().Float64Var(&minRatio, "min", 0, "minimum documented ratio 0..1 (default: coverage.min from .gravity.yaml)")
 	cmd.Flags().BoolVar(&all, "all", false, "report every repo publishing to the site, not just this one")
 	cmd.Flags().StringVar(&format, "format", output.FormatText, "text|json|github")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "shorthand for --format json")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable coverage reporting as a hard error (exit 2)")
 	return cmd
 }

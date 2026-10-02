@@ -37,6 +37,7 @@ func newCaptureCmd(gf *globalFlags) *cobra.Command {
 		pollInterval time.Duration
 		require      bool
 		format       string
+		jsonOut      bool
 		dryRun       bool
 		retired      struct {
 			url             string
@@ -62,6 +63,7 @@ Where the platform has no Doc Agent configured, the command reports it and exits
 0 (pass --require to make absence a hard error).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			format = jsonFormat(format, jsonOut)
 			if err := validateTextJSON(format); err != nil {
 				return err
 			}
@@ -148,6 +150,7 @@ Where the platform has no Doc Agent configured, the command reports it and exits
 	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 5*time.Second, "status poll interval when waiting")
 	cmd.Flags().BoolVar(&require, "require", false, "treat an unavailable Doc Agent as a hard error (exit 2)")
 	cmd.Flags().StringVar(&format, "format", "text", "text|json")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "shorthand for --format json")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the request without launching")
 
 	cmd.Flags().StringVar(&retired.url, "url", "", "removed")
@@ -192,12 +195,16 @@ func resolveBrief(brief, briefFile string) (string, error) {
 }
 
 func newCaptureStatusCmd(gf *globalFlags) *cobra.Command {
-	var format string
+	var (
+		format  string
+		jsonOut bool
+	)
 	cmd := &cobra.Command{
 		Use:   "status <runId>",
 		Short: "Show the status and artifacts of a Doc Agent run",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			format = jsonFormat(format, jsonOut)
 			if err := validateTextJSON(format); err != nil {
 				return err
 			}
@@ -227,6 +234,7 @@ func newCaptureStatusCmd(gf *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "text", "text|json")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "shorthand for --format json")
 	return cmd
 }
 

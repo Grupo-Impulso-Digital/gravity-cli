@@ -68,12 +68,14 @@ func newNucleusQueryCmd(gf *globalFlags) *cobra.Command {
 		format    string
 		limit     int
 		require   bool
+		jsonOut   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "query <text>",
 		Short: "Recall the memories most relevant to a query",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			format = jsonFormat(format, jsonOut)
 			if err := validateTextJSON(format); err != nil {
 				return err
 			}
@@ -121,6 +123,7 @@ func newNucleusQueryCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&namespace, "namespace", "", "knowledge namespace (default: config knowledge.namespace, else site)")
 	cmd.Flags().IntVar(&limit, "limit", 8, "max memories to return")
 	cmd.Flags().StringVar(&format, "format", "text", "text|json")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "shorthand for --format json")
 	cmd.Flags().BoolVar(&require, "require", false, "treat unavailable nucleus as a hard error (exit 2)")
 	return cmd
 }
