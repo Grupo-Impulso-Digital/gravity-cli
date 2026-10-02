@@ -156,7 +156,10 @@ func TestDecideScopeMatrix(t *testing.T) {
 	watermark := changeset.Range{Kind: api.RangeWatermark}
 	guides := api.PlanPass{Name: "g", Kind: "guides", Applies: true, Scope: api.PassScope{Paths: []string{"src/ui/**"}}}
 	ref := api.PlanPass{Name: "r", Kind: "reference", Applies: true}
-	verb := api.PlanPass{Name: "v", Kind: "verbatim", Applies: true, Options: map[string]any{"files": []any{map[string]any{"include": "docs/handbook/**/*.md", "exclude": []any{"docs/handbook/drafts/**"}}}}}
+	verb := api.PlanPass{Name: "v", Kind: "verbatim", Applies: true, Options: map[string]any{"files": []any{
+		map[string]any{"include": "docs/handbook/**/*.md", "exclude": []any{"docs/handbook/drafts/**"}},
+		map[string]any{"include": "docs/handbook/drafts/public.md"},
+	}}}
 	check := api.PlanPass{Name: "c", Kind: "check", Applies: true}
 	changelog := api.PlanPass{Name: "cl", Kind: "changelog", Applies: true}
 	unitsPass := api.PlanPass{Name: "u", Kind: "guides", Applies: true, Scope: api.PassScope{Paths: []string{"nothing/**"}, Units: []string{"api"}}}
@@ -182,6 +185,7 @@ func TestDecideScopeMatrix(t *testing.T) {
 		{"reference spec changed", ref, watermark, cs("push", 1, "api/openapi.yaml"), true, ""},
 		{"verbatim mapped file", verb, watermark, cs("push", 1, "docs/handbook/oncall.md"), true, ""},
 		{"verbatim excluded file", verb, watermark, cs("push", 1, "docs/handbook/drafts/x.md"), false, api.SkipScopeUnchanged},
+		{"verbatim exclude stays per entry", verb, watermark, cs("push", 1, "docs/handbook/drafts/public.md"), true, ""},
 		{"check on pr always runs", check, changeset.Range{Kind: api.RangePR}, cs("pr", 0), true, ""},
 		{"check on push follows scope", check, watermark, cs("push", 0), false, api.SkipNoChanges},
 		{"changelog on release with commits", changelog, changeset.Range{Kind: api.RangeRelease}, cs("release", 2), true, ""},

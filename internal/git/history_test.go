@@ -118,6 +118,23 @@ func TestHistoryHelpers(t *testing.T) {
 	if err != nil || len(wt) != 1 || wt[0].Path != "a.txt" || wt[0].Additions != 1 {
 		t.Fatalf("working tree = %+v %v", wt, err)
 	}
+	write("docs/new-guide.md", "# Guide\n\nbody")
+	write(".gitignore", "*.log\n")
+	write("debug.log", "noise\n")
+	wt, err = repo.ChangedFilesDetailed(ctx, head, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	untracked := map[string]git.FileChange{}
+	for _, f := range wt {
+		untracked[f.Path] = f
+	}
+	if f, ok := untracked["docs/new-guide.md"]; !ok || f.Status != "A" || f.Additions != 3 {
+		t.Fatalf("untracked doc = %+v in %+v", f, wt)
+	}
+	if _, ok := untracked["debug.log"]; ok {
+		t.Fatalf("ignored files stay out: %+v", wt)
+	}
 	diff, err := repo.DiffZeroContext(ctx, head, "", "a.txt")
 	if err != nil || !strings.Contains(diff, "+three") {
 		t.Fatalf("diff = %q %v", diff, err)

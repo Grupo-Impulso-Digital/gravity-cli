@@ -60,7 +60,7 @@ func Decide(pp api.PlanPass, rng changeset.Range, cs *changeset.ChangeSet, m *co
 	case config.KindReference:
 		hit = filesHit(cs, referenceFiles(pp, m), pp.Scope.Exclude, m.CodeExclude())
 	case config.KindVerbatim:
-		hit = filesHit(cs, verbatimFiles(pp), verbatimExcludes(pp), nil)
+		hit = verbatimHit(cs, pp)
 	case config.KindChangelog:
 		hit = len(cs.Commits) > 0
 	default:
@@ -130,28 +130,25 @@ func referenceFiles(pp api.PlanPass, m *config.Manifest) []string {
 	return out
 }
 
-func verbatimFiles(pp api.PlanPass) []string {
-	var out []string
+func verbatimHit(cs *changeset.ChangeSet, pp api.PlanPass) bool {
 	for _, f := range verbatimEntries(pp) {
-		if inc, ok := f["include"].(string); ok && inc != "" {
-			out = append(out, strings.TrimPrefix(inc, "./"))
+		inc, _ := f["include"].(string)
+		if inc == "" {
+			continue
 		}
-	}
-	return out
-}
-
-func verbatimExcludes(pp api.PlanPass) []string {
-	var out []string
-	for _, f := range verbatimEntries(pp) {
+		var exclude []string
 		if list, ok := f["exclude"].([]any); ok {
 			for _, e := range list {
 				if s, ok := e.(string); ok {
-					out = append(out, s)
+					exclude = append(exclude, s)
 				}
 			}
 		}
+		if filesHit(cs, []string{strings.TrimPrefix(inc, "./")}, exclude, nil) {
+			return true
+		}
 	}
-	return out
+	return false
 }
 
 func verbatimEntries(pp api.PlanPass) []map[string]any {

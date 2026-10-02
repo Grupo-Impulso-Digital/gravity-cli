@@ -23,7 +23,7 @@ builds:
     ldflags:
       # matches the Makefile's version wiring (internal/version.Version). -s -w strips the
       # symbol table + DWARF to shrink the download.
-      - -s -w -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{ .Version }}
+      - -s -w -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{ .Version }} -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Commit={{ .FullCommit }} -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Date={{ .Date }}
     goos:
       - linux
       - darwin

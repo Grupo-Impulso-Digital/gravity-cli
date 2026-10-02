@@ -7,33 +7,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
-func TestChangedFiles(t *testing.T) {
-	repo, err := git.Open(context.Background(), testRepo(t))
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	ctx := context.Background()
-
-	got, err := repo.ChangedFiles(ctx, "v1.0.0", "HEAD")
-	if err != nil {
-		t.Fatalf("changed files: %v", err)
-	}
-	want := map[string]bool{"a.txt": true, "b.txt": true}
-	if len(got) != len(want) {
-		t.Fatalf("changed = %v, want %v", got, want)
-	}
-	for _, p := range got {
-		if !want[p] {
-			t.Errorf("unexpected changed path %q", p)
-		}
-	}
-
-	empty, err := repo.ChangedFiles(ctx, "HEAD", "HEAD")
-	if err != nil || len(empty) != 0 {
-		t.Errorf("empty range = %v, %v", empty, err)
-	}
-}
-
 func TestResolveRef(t *testing.T) {
 	repo, err := git.Open(context.Background(), testRepo(t))
 	if err != nil {

@@ -4,7 +4,6 @@ package git
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -45,50 +44,6 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	return run(ctx, r.Root, args...)
 }
 
-// MarkerTag is the CI bookkeeping tag that records the last docs-synced commit.
-const MarkerTag = "docs-synced"
-
-// LatestTag returns the most recent release tag reachable from HEAD, or "" if none.
-func (r *Repo) LatestTag(ctx context.Context) (string, error) {
-	return r.describeRelease(ctx, "HEAD")
-}
-
-// TagBefore returns the most recent release tag reachable from ref's first parent.
-func (r *Repo) TagBefore(ctx context.Context, ref string) (string, error) {
-	return r.describeRelease(ctx, ref+"^")
-}
-
-func (r *Repo) describeRelease(ctx context.Context, rev string) (string, error) {
-	for _, filter := range [][]string{
-		{"--match", "v[0-9]*"},
-		{"--exclude", MarkerTag, "--exclude", MarkerTag + "-*"},
-	} {
-		args := append([]string{"describe", "--tags", "--abbrev=0"}, filter...)
-		out, err := r.git(ctx, append(args, rev)...)
-		if err == nil {
-			return strings.TrimSpace(out), nil
-		}
-		if !stderrHas(err, "No names found", "cannot describe", "No tags can describe",
-			"Not a valid object name", "unknown revision") {
-			return "", err
-		}
-	}
-	return "", nil
-}
-
-// FirstCommit returns the oldest commit hash reachable from HEAD.
-func (r *Repo) FirstCommit(ctx context.Context) (string, error) {
-	out, err := r.git(ctx, "rev-list", "--max-parents=0", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	lines := strings.Fields(strings.TrimSpace(out))
-	if len(lines) == 0 {
-		return "", errors.New("repository has no commits")
-	}
-	return lines[len(lines)-1], nil
-}
-
 // CurrentBranch returns the checked-out branch name.
 func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "rev-parse", "--abbrev-ref", "HEAD")
@@ -122,77 +77,6 @@ func (r *Repo) RemoteURL(ctx context.Context) (string, error) {
 		return "", nil
 	}
 	return strings.TrimSpace(out), nil
-}
-
-// Range describes the commit range release notes / diffs are computed over.
-type Range struct {
-	From string
-	To   string
-}
-
-// String renders the range as git range notation.
-func (rg Range) String() string {
-	return rg.From + ".." + rg.To
-}
-
-// ResolveRange determines the effective range given optional from/to overrides.
-func (r *Repo) ResolveRange(ctx context.Context, from, to string) (Range, error) {
-	rng := Range{From: from, To: to}
-	if rng.To == "" {
-		rng.To = "HEAD"
-	}
-	if rng.From == "" {
-		tag, err := r.TagBefore(ctx, rng.To)
-		if err != nil {
-			return Range{}, err
-		}
-		if tag != "" {
-			rng.From = tag
-		} else {
-			first, err := r.FirstCommit(ctx)
-			if err != nil {
-				return Range{}, err
-			}
-			rng.From = first
-		}
-	}
-	return rng, nil
-}
-
-// Commit is a single log entry.
-type Commit struct {
-	Hash    string
-	Subject string
-}
-
-// Log returns the commits in (from, to].
-func (r *Repo) Log(ctx context.Context, from, to string, maxCount int) ([]Commit, error) {
-	if to == "" {
-		to = "HEAD"
-	}
-	args := []string{"log", "--no-color", "--pretty=format:%H%x09%s"}
-	if maxCount > 0 {
-		args = append(args, fmt.Sprintf("--max-count=%d", maxCount))
-	}
-	args = append(args, rangeArg(from, to))
-	out, err := r.git(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	var commits []Commit
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 2)
-		c := Commit{Hash: parts[0]}
-		if len(parts) == 2 {
-			c.Subject = parts[1]
-		}
-		commits = append(commits, c)
-	}
-	return commits, nil
 }
 
 // LogOneline returns `git log --oneline` text for the range.

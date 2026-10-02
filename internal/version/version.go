@@ -12,6 +12,12 @@ import (
 // Version is stamped at build time with -ldflags "-X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version=<v>".
 var Version = ""
 
+// Commit is stamped at build time with the source revision.
+var Commit = ""
+
+// Date is stamped at build time with the RFC 3339 build date.
+var Date = ""
+
 const fallback = "dev"
 
 var (
@@ -62,6 +68,12 @@ func load() {
 		}
 		if ok {
 			build.Commit, build.BuildDate = vcsInfo(bi.Settings)
+		}
+		if c := strings.TrimSpace(Commit); c != "" {
+			build.Commit = c
+		}
+		if d := strings.TrimSpace(Date); d != "" {
+			build.BuildDate = d
 		}
 	})
 }

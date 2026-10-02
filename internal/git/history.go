@@ -1,10 +1,13 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -269,6 +272,45 @@ func (r *Repo) ChangedFilesDetailed(ctx context.Context, base, head string) ([]F
 		}
 		files[pos].Additions, _ = strconv.Atoi(f[0])
 		files[pos].Deletions, _ = strconv.Atoi(f[1])
+	}
+	if head == "" {
+		untracked, err := r.untracked(ctx, index)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, untracked...)
+	}
+	return files, nil
+}
+
+func (r *Repo) untracked(ctx context.Context, known map[string]int) ([]FileChange, error) {
+	out, err := r.git(ctx, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var files []FileChange
+	for _, path := range strings.Split(out, "\x00") {
+		if path == "" {
+			continue
+		}
+		if _, ok := known[path]; ok {
+			continue
+		}
+		fc := FileChange{Status: "A", Path: path}
+		data, err := os.ReadFile(filepath.Join(r.Root, filepath.FromSlash(path)))
+		if err != nil {
+			return nil, fmt.Errorf("read untracked %s: %w", path, err)
+		}
+		switch {
+		case bytes.IndexByte(data, 0) >= 0:
+			fc.Binary = true
+		case len(data) > 0:
+			fc.Additions = bytes.Count(data, []byte("\n"))
+			if data[len(data)-1] != '\n' {
+				fc.Additions++
+			}
+		}
+		files = append(files, fc)
 	}
 	return files, nil
 }
