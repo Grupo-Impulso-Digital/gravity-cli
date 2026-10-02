@@ -1,0 +1,640 @@
+{
+  "hidden": [
+    "docs/handbook/drafts/wip.md"
+  ],
+  "warnings": [
+    "docs/handbook/a/b/c/d/e/f/deep.md: nested deeper than 5 collections; flattened into a/b/c/d/e",
+    "docs/handbook/oncall/rotation.fr.md: skipped (lang fr); language versions of verbatim files are not imported by this CLI yet"
+  ],
+  "pages": [
+    {
+      "page": {
+        "path": "docs/handbook/a/b/c/d/e/f/deep.md",
+        "slug": "deep",
+        "title": "Deep",
+        "position": 0,
+        "collectionPath": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ],
+        "hash": "sha256:9fb2d7f661bff67ff024138a50246d2a16fe4dfa4e69b6cabfdf592db271e4f9"
+      },
+      "collectionTitles": {
+        "a": "A",
+        "b": "B",
+        "c": "C",
+        "d": "D",
+        "e": "E"
+      },
+      "doc": {
+        "blocks": []
+      }
+    },
+    {
+      "page": {
+        "path": "docs/handbook/index.md",
+        "slug": "overview",
+        "title": "Handbook",
+        "position": 0,
+        "collectionPath": [],
+        "hash": "sha256:7f58e3a24b4617b0bf9f2e6498c40f42c723da229d5ae3aea4a8bad826a9dea0",
+        "index": true
+      },
+      "collectionTitles": {},
+      "doc": {
+        "blocks": [
+          {
+            "key": "doc:docs/handbook/index.md:handbook:1",
+            "type": "prose",
+            "ownership": "machine",
+            "content": {
+              "text": "Welcome. Start with [on-call](../handbook/rotation-2#who-is-on-call) or read the [API spec](https://github.com/acme/billing-api/blob/main/api/openapi.yaml)."
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/index.md#handbook",
+              "hash": "sha256:7f58e3a24b4617b0bf9f2e6498c40f42c723da229d5ae3aea4a8bad826a9dea0",
+              "generator": "gravity-cli/test"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "page": {
+        "path": "docs/handbook/oncall/rotation.mdx",
+        "slug": "rotation-2",
+        "title": "On-call rotation",
+        "description": "Who is on call and how to swap.",
+        "position": 0,
+        "collectionPath": [
+          "oncall"
+        ],
+        "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac"
+      },
+      "collectionTitles": {
+        "oncall": "On-call"
+      },
+      "doc": {
+        "blocks": [
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:intro:1",
+            "type": "prose",
+            "ownership": "machine",
+            "content": {
+              "text": "Intro paragraph with **bold**, *em*, `code`, ~~gone~~ and a footnote[1]."
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#intro",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call",
+            "type": "heading",
+            "ownership": "machine",
+            "content": {
+              "level": 2,
+              "text": "Who is on call"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:1",
+            "type": "table",
+            "ownership": "machine",
+            "content": {
+              "header": true,
+              "rows": [
+                [
+                  "Week",
+                  "Person"
+                ],
+                [
+                  "1",
+                  "[Ana](../handbook/overview)"
+                ],
+                [
+                  "2",
+                  "Bo"
+                ]
+              ]
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:2",
+            "type": "list",
+            "ownership": "machine",
+            "content": {
+              "checked": true,
+              "text": "Page acknowledged",
+              "variant": "task"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:3",
+            "type": "list",
+            "ownership": "machine",
+            "content": {
+              "checked": false,
+              "text": "Incident closed\n  - nested detail",
+              "variant": "task"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:4",
+            "type": "list",
+            "ownership": "machine",
+            "content": {
+              "text": "First",
+              "variant": "numbered"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:5",
+            "type": "list",
+            "ownership": "machine",
+            "content": {
+              "text": "Second",
+              "variant": "numbered"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:6",
+            "type": "callout",
+            "ownership": "machine",
+            "content": {
+              "text": "**Escalation** Call the **lead** after 15 minutes.",
+              "variant": "warning"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:7",
+            "type": "callout",
+            "ownership": "machine",
+            "content": {
+              "text": "Swap shifts in the calendar.",
+              "variant": "success"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:8",
+            "type": "quote",
+            "ownership": "machine",
+            "content": {
+              "text": "A plain quote."
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:9",
+            "type": "callout",
+            "ownership": "machine",
+            "content": {
+              "text": "**Paging** Pages go to the primary first.",
+              "variant": "info"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:10",
+            "type": "expandable",
+            "ownership": "machine",
+            "content": {
+              "text": "Follow the [runbook](../handbook/outage).",
+              "title": "Outage"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:11",
+            "type": "expandable",
+            "ownership": "machine",
+            "content": {
+              "text": "We used a spreadsheet.",
+              "title": "Old process"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:12",
+            "type": "tabs",
+            "ownership": "machine",
+            "content": {
+              "tabs": [
+                {
+                  "label": "macOS",
+                  "text": "brew install pager"
+                },
+                {
+                  "label": "Linux",
+                  "text": "apt install pager"
+                }
+              ]
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:13",
+            "type": "prose",
+            "ownership": "machine",
+            "content": {
+              "text": "Text inside a custom component."
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:14",
+            "type": "code",
+            "ownership": "machine",
+            "content": {
+              "language": "mermaid",
+              "text": "graph TD; A--\u003eB"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:15",
+            "type": "code",
+            "ownership": "machine",
+            "content": {
+              "language": "go",
+              "text": "fmt.Println(\"hi\")"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:16",
+            "type": "image",
+            "ownership": "machine",
+            "content": {
+              "alt": "Rotation chart",
+              "caption": "Weekly",
+              "url": "https://media.test/docs/img/rotation.png"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:17",
+            "type": "prose",
+            "ownership": "machine",
+            "content": {
+              "text": "**HTML** block with [a link](../handbook/rotation-2#who-is-on-call)"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:18",
+            "type": "divider",
+            "ownership": "machine",
+            "content": {},
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:who-is-on-call:19",
+            "type": "prose",
+            "ownership": "machine",
+            "content": {
+              "text": "**Term**: Definition of the term."
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#who-is-on-call",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:deep-heading",
+            "type": "heading",
+            "ownership": "machine",
+            "content": {
+              "level": 3,
+              "text": "Deep heading"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#deep-heading",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:deeper-heading",
+            "type": "heading",
+            "ownership": "machine",
+            "content": {
+              "level": 3,
+              "text": "Deeper heading"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#deeper-heading",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:footnotes:1",
+            "type": "divider",
+            "ownership": "machine",
+            "content": {},
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#footnotes",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          },
+          {
+            "key": "doc:docs/handbook/oncall/rotation.mdx:footnotes:2",
+            "type": "list",
+            "ownership": "machine",
+            "content": {
+              "text": "Swaps need the lead's approval.",
+              "variant": "numbered"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/oncall/rotation.mdx#footnotes",
+              "hash": "sha256:6972738a655b3d65de919700599c6019e6237981eaee9a5c12b04eb00c7505ac",
+              "generator": "gravity-cli/test"
+            },
+            "audiences": [
+              "developers"
+            ]
+          }
+        ],
+        "warnings": [
+          "image ./nope.png not found; dropped",
+          "dropped MDX components: Callout, Spacer"
+        ]
+      }
+    },
+    {
+      "page": {
+        "path": "docs/handbook/runbooks/README.md",
+        "slug": "overview-2",
+        "title": "Runbooks",
+        "position": 0,
+        "collectionPath": [
+          "runbooks"
+        ],
+        "hash": "sha256:48ceeb2bd8d5c7073c2313b5e926a392a6849e3c98b87853f00523d88e2766b7",
+        "index": true
+      },
+      "collectionTitles": {
+        "runbooks": "Runbooks"
+      },
+      "doc": {
+        "blocks": []
+      }
+    },
+    {
+      "page": {
+        "path": "docs/handbook/runbooks/outage.md",
+        "slug": "outage",
+        "title": "Outage runbook",
+        "position": 1,
+        "collectionPath": [
+          "runbooks"
+        ],
+        "hash": "sha256:d74d6406d0d63e5597421162947c91abd70e0130207ab0811758cc584751e0ba"
+      },
+      "collectionTitles": {
+        "runbooks": "Runbooks"
+      },
+      "doc": {
+        "blocks": [
+          {
+            "key": "doc:docs/handbook/runbooks/outage.md:outage-runbook:1",
+            "type": "prose",
+            "ownership": "machine",
+            "content": {
+              "text": "Restart the service."
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/handbook/runbooks/outage.md#outage-runbook",
+              "hash": "sha256:d74d6406d0d63e5597421162947c91abd70e0130207ab0811758cc584751e0ba",
+              "generator": "gravity-cli/test"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "page": {
+        "path": "docs/other/rotation.md",
+        "slug": "rotation",
+        "title": "Other rotation",
+        "position": 0,
+        "collectionPath": [
+          "misc"
+        ],
+        "hash": "sha256:026233a0ed99bd8101ab266fe5d2d0c553966d8a97ef76584afaeb0956a04e55"
+      },
+      "collectionTitles": {
+        "misc": "Misc"
+      },
+      "doc": {
+        "blocks": [
+          {
+            "key": "doc:docs/other/rotation.md:another-rotation",
+            "type": "heading",
+            "ownership": "machine",
+            "content": {
+              "level": 1,
+              "text": "Another rotation"
+            },
+            "sourceBinding": {
+              "kind": "file",
+              "ref": "docs/other/rotation.md#another-rotation",
+              "hash": "sha256:026233a0ed99bd8101ab266fe5d2d0c553966d8a97ef76584afaeb0956a04e55",
+              "generator": "gravity-cli/test"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

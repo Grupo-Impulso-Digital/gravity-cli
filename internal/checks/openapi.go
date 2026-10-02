@@ -88,11 +88,15 @@ type ResponseDetail struct {
 
 // OperationDetail is the full operation payload authored into a machine api block.
 type OperationDetail struct {
-	Method    string           `json:"method"`
-	Path      string           `json:"path"`
-	Summary   string           `json:"summary"`
-	Params    []ParamDetail    `json:"params"`
-	Responses []ResponseDetail `json:"responses"`
+	Method      string           `json:"method"`
+	Path        string           `json:"path"`
+	Summary     string           `json:"summary"`
+	Params      []ParamDetail    `json:"params"`
+	Responses   []ResponseDetail `json:"responses"`
+	Description string           `json:"-"`
+	OperationID string           `json:"-"`
+	Tags        []string         `json:"-"`
+	Deprecated  bool             `json:"-"`
 }
 
 // ParseOpenAPIDetailed parses an OpenAPI document (2.0 or 3.x) and returns the full operation detail for each (method, path).
@@ -113,6 +117,10 @@ func ParseOpenAPIDetailed(spec []byte) ([]OperationDetail, error) {
 					d := OperationDetail{Method: strings.ToUpper(method), Path: path}
 					if op != nil {
 						d.Summary = op.Summary
+						d.Description = op.Description
+						d.OperationID = op.OperationId
+						d.Tags = append([]string(nil), op.Tags...)
+						d.Deprecated = op.Deprecated != nil && *op.Deprecated
 						for _, p := range op.Parameters {
 							if p == nil {
 								continue
@@ -150,6 +158,10 @@ func ParseOpenAPIDetailed(spec []byte) ([]OperationDetail, error) {
 					d := OperationDetail{Method: strings.ToUpper(method), Path: path}
 					if op != nil {
 						d.Summary = op.Summary
+						d.Description = op.Description
+						d.OperationID = op.OperationId
+						d.Tags = append([]string(nil), op.Tags...)
+						d.Deprecated = op.Deprecated
 						for _, p := range op.Parameters {
 							if p == nil {
 								continue
