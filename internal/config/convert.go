@@ -24,6 +24,7 @@ const (
 // ConvertOptions carries what the conversion needs from outside the file.
 type ConvertOptions struct {
 	RepoName string
+	Site     string
 }
 
 // ConvertNote is one line of the mapping report.
@@ -108,8 +109,12 @@ func (c *converter) convert() (*Conversion, error) {
 	p := c.p
 	c.note("version", ActionMapped, "version: 2")
 	c.site = strings.TrimSpace(p.Site)
-	if c.site != "" {
+	switch fallback := strings.TrimSpace(c.opts.Site); {
+	case c.site != "":
 		c.note("site", ActionMapped, "prefix of every pass target (%s/...)", c.site)
+	case fallback != "":
+		c.site = fallback
+		c.note("site", ActionMapped, "not in the file; every pass target uses %s/... (GRAVITY_SITE or the organization's default site)", c.site)
 	}
 	m := &Manifest{Version: ManifestVersion}
 	if p.APIURL != "" {

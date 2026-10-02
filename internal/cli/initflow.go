@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
@@ -32,6 +33,10 @@ func (a *app) prompter() ui.Prompter {
 	}
 	accessible := a.env("ACCESSIBLE") != "" || a.env("TERM") == "dumb"
 	return &ui.HuhPrompter{In: a.stdin, Out: a.stderr, Accessible: accessible}
+}
+
+func (r *initRun) auto() bool {
+	return r.o.yes || !r.a.ui.Interactive()
 }
 
 func (r *initRun) ask() error {
@@ -70,7 +75,7 @@ func (r *initRun) askProduct() error {
 	} else {
 		options := setup.RankProducts(r.products, r.info.remoteKey, r.info.name)
 		r.product = options[0]
-		if len(r.products) > 0 && !r.o.yes {
+		if len(r.products) > 0 && !r.auto() {
 			choices := make([]ui.Choice, 0, len(options))
 			for _, o := range options {
 				choices = append(choices, ui.Choice{Key: o.Slug, Label: o.Label()})
@@ -120,7 +125,7 @@ func (r *initRun) askPasses() error {
 	asked := false
 	for {
 		sugg := setup.Suggest(setup.Inputs{Detect: r.det, Site: site, Tree: r.siteTree(site), MemoryModule: memory})
-		if r.o.yes {
+		if r.auto() {
 			r.chosen = selectedSuggestions(sugg, nil)
 			break
 		}
@@ -264,7 +269,7 @@ func (r *initRun) askConversion() error {
 	if conv.Adopts {
 		p.Println("  %s verbatim pages become repo-locked once their import is accepted (v1 ownership: human pages were editable in Gravity)", p.Mark(ui.MarkWarn))
 	}
-	if r.o.yes {
+	if r.auto() {
 		return nil
 	}
 	r.data.Questions++
@@ -346,6 +351,9 @@ func (r *initRun) plan() error {
 	if ip.canMint && !r.o.noSecret && provider == r.info.provider && (provider == cisetup.GitHub || provider == cisetup.GitLab) {
 		ip.installer = cisetup.FindInstaller(r.ctx, provider, r.info.remoteKey, r.a.secretRunner)
 	}
+	if ip.canMint && ip.installer == nil && !r.o.noSecret && !r.a.terminal {
+		ip.canMint, ip.mintReason = false, "there is no terminal to show the token on and it must not land in logs; pass --no-secret to print it anyway, or mint one in the app"
+	}
 	r.ip = ip
 	if ip.parsed != nil && ip.content != string(r.existingYAML()) {
 		req := r.connectRequest(ip.parsed, true)
@@ -410,8 +418,8 @@ func (r *initRun) planFresh(ip *initPlan) error {
 		if err != nil {
 			return Fail(CodeError, err)
 		}
-		existing := string(r.manifest.YAML)
-		if !strings.HasSuffix(existing, "\n") {
+		existing := emptyPasses.ReplaceAllString(string(r.manifest.YAML), "")
+		if existing != "" && !strings.HasSuffix(existing, "\n") {
 			existing += "\n"
 		}
 		ip.content = existing + string(block)
@@ -438,12 +446,20 @@ func (r *initRun) planFresh(ip *initPlan) error {
 	return nil
 }
 
+var emptyPasses = regexp.MustCompile(`(?m)^passes:[ \t]*(\[[ \t]*\]|~|null)?[ \t]*(#.*)?(\n|$)`)
+
 func (r *initRun) planConnected(ip *initPlan) error {
+	if !r.isRepoPrincipal() {
+		r.data.CreateTargets = setup.MissingTargets(r.conn.Effective.Passes)
+	}
 	if r.manifest != nil {
 		ip.content = string(r.manifest.YAML)
 		r.data.Manifest.Action = "keep"
 		r.passes = r.manifest.Passes
 		return nil
+	}
+	if names := r.storedManifestPasses(); len(names) > 0 {
+		return &ExitError{Code: CodeError, ErrCode: "manifest_not_found", Err: fmt.Errorf("%s has passes managed in a .gravity.yaml that is not in this checkout (%s); a new manifest without them would archive them. Pull %s, or point --manifest at that file, and run gravity init again", r.info.name, strings.Join(names, ", "), r.authoritativeBranch())}
 	}
 	var code *config.Code
 	if paths := r.det.OpenAPIPaths(); len(paths) > 0 {
@@ -456,6 +472,48 @@ func (r *initRun) planConnected(ip *initPlan) error {
 	ip.content = content
 	r.data.Manifest.Action = "create"
 	return nil
+}
+
+func (r *initRun) storedManifestPasses() []string {
+	var names []string
+	for _, ep := range r.conn.Effective.Passes {
+		if ep.Source == "manifest" {
+			names = append(names, ep.Name)
+		}
+	}
+	return names
+}
+
+func (r *initRun) authoritativeBranch() string {
+	return firstNonEmpty(r.conn.Manifest.AuthoritativeBranch, r.info.defaultBranch)
+}
+
+func (r *initRun) offAuthoritative() bool {
+	b := r.authoritativeBranch()
+	return b != "" && r.info.branch != b
+}
+
+func (r *initRun) branchLabel() string {
+	if r.info.branch == "" {
+		return "a detached HEAD"
+	}
+	return r.info.branch
+}
+
+func (r *initRun) targetRefs(targets []api.CreateTarget) string {
+	refs := make([]string, 0, len(targets))
+	for _, t := range targets {
+		refs = append(refs, t.Site+"/"+t.Space)
+	}
+	return strings.Join(refs, ", ")
+}
+
+func (r *initRun) checkBranch() error {
+	if r.o.dryRun || len(r.data.CreateTargets) == 0 || !r.offAuthoritative() {
+		return nil
+	}
+	b := r.authoritativeBranch()
+	return &ExitError{Code: CodeError, ErrCode: "branch_not_authoritative", Err: fmt.Errorf("init would create %s, and Gravity creates spaces only from %s (this is %s). Run `git switch %s` and gravity init again (init never commits, so you can branch afterwards), or create the spaces in the app first", r.targetRefs(r.data.CreateTargets), b, r.branchLabel(), b)}
 }
 
 func (r *initRun) collectPasses(ip *initPlan) {
@@ -579,8 +637,17 @@ func (r *initRun) printPreview() {
 	if len(existing) > 0 {
 		p.Println("  = passes already in Gravity: %s", strings.Join(existing, ", "))
 	}
+	off := r.offAuthoritative()
 	for _, t := range r.data.CreateTargets {
+		if off {
+			p.Println("  ! new space %s/%s (%s), created only from %s", t.Site, t.Space, firstNonEmpty(t.Name, t.Space), r.authoritativeBranch())
+			continue
+		}
 		p.Println("  + new space %s/%s (%s)", t.Site, t.Space, firstNonEmpty(t.Name, t.Space))
+	}
+	if off && len(r.data.CreateTargets) > 0 {
+		b := r.authoritativeBranch()
+		p.Println("  %s this is %s, not %s: Gravity creates spaces only from %s. Run `git switch %s` and gravity init again (init never commits), or create the spaces in the app first", p.Mark(ui.MarkWarn), r.branchLabel(), b, b, b)
 	}
 	if ip.canMint {
 		p.Println("  + repository token with %s", strings.Join(ip.scopes, ", "))
@@ -618,7 +685,7 @@ func (r *initRun) confirm() (string, error) {
 		choices = append(choices, ui.Choice{Key: answerFiles, Label: "Write files"})
 	}
 	choices = append(choices, ui.Choice{Key: answerCancel, Label: "Cancel"})
-	if r.o.yes {
+	if r.auto() {
 		return choices[0].Key, nil
 	}
 	r.data.Questions++
@@ -643,19 +710,25 @@ func (r *initRun) apply(answer string) error {
 	r.data.Connect = conn
 	prog.Done(step, conn.Repo.AppURL)
 	r.updateFromConnect(conn)
+	if !conn.Manifest.Persisted && len(r.data.CreateTargets) > 0 {
+		r.data.PendingTargets = r.data.CreateTargets
+	}
 	failed := r.registerPasses(prog, conn)
 	token := r.mint(prog, conn)
-	if err := r.writeFiles(prog); err != nil {
-		prog.Stop()
-		return Fail(CodeError, fmt.Errorf("connected, but %w", err))
-	}
+	werr := r.writeFiles(prog)
 	r.installSecret(prog, answer, token)
 	prog.Stop()
 	for _, w := range conn.Manifest.Warnings {
 		a.ui.Warn(w.Code, w.Message)
 	}
+	if len(r.data.PendingTargets) > 0 {
+		a.ui.Warn("spaces_not_created", r.pendingMessage(conn))
+	}
 	if token != "" && r.data.Token.Secret == secretPrinted {
 		r.printToken(token)
+	}
+	if werr != nil {
+		return Fail(CodeError, fmt.Errorf("connected, but %w", werr))
 	}
 	if ip.ci.Snippet != "" {
 		a.ui.Println("%s Add this to %s:", a.ui.Mark(ui.MarkInfo), ip.ci.SnippetTarget)
@@ -671,6 +744,22 @@ func (r *initRun) apply(answer string) error {
 		return ee
 	}
 	return a.ui.Result(r.data)
+}
+
+func (r *initRun) pendingMessage(conn *api.ConnectResponse) string {
+	refs := r.targetRefs(r.data.PendingTargets)
+	reason := ""
+	if conn.Manifest.Reason != nil {
+		reason = *conn.Manifest.Reason
+	}
+	b := firstNonEmpty(conn.Manifest.AuthoritativeBranch, r.authoritativeBranch())
+	switch reason {
+	case "branch_not_authoritative", "pr":
+		return fmt.Sprintf("Gravity did not create %s: spaces are created only from %s. Passes targeting them report target missing until they exist; run gravity init on %s, or create them in the app", refs, b, b)
+	case "permission":
+		return fmt.Sprintf("Gravity did not create %s: you cannot reconcile this repository. Passes targeting them report target missing until an admin creates them in the app", refs)
+	}
+	return fmt.Sprintf("Gravity did not create %s (%s). Passes targeting them report target missing until they exist; create them in the app", refs, firstNonEmpty(reason, "not persisted"))
 }
 
 func (r *initRun) updateFromConnect(conn *api.ConnectResponse) {
@@ -844,6 +933,9 @@ func (r *initRun) printSummary(conn *api.ConnectResponse) {
 	}
 	if !conn.Manifest.Persisted && r.inCode && conn.Manifest.Reason != nil && *conn.Manifest.Reason == "branch_not_authoritative" {
 		lines = append(lines, "The passes in "+r.data.Manifest.Path+" land when it reaches "+firstNonEmpty(conn.Manifest.AuthoritativeBranch, r.info.defaultBranch))
+	}
+	if len(r.data.PendingTargets) > 0 {
+		lines = append(lines, "Spaces not created: "+r.targetRefs(r.data.PendingTargets)+" (see the warning above)")
 	}
 	if t := r.data.Token; t != nil {
 		switch t.Secret {

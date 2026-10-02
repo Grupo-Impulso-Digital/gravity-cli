@@ -12,6 +12,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/cisetup"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
 )
 
 const productsBody = `{"products":[
@@ -217,9 +218,11 @@ func TestInitNeedsTerminalOrYes(t *testing.T) {
 	}
 }
 
+var connectAppPasses = strings.Replace(connectBody, `"source":"manifest","locked":true`, `"source":"app","locked":false`, 1)
+
 func TestInitAlreadyConnectedAsksOnlyToWrite(t *testing.T) {
 	h := newHarness(t)
-	initPlatform(h, connectBody)
+	initPlatform(h, connectAppPasses)
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
 	h.terminal = true
 	h.stdin = "\n"
@@ -244,7 +247,7 @@ func TestInitAlreadyConnectedAsksOnlyToWrite(t *testing.T) {
 
 func TestInitAdoptsPreRegisteredRepo(t *testing.T) {
 	h := newHarness(t)
-	initPlatform(h, connectBody)
+	initPlatform(h, connectAppPasses)
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
 	expectCode(t, h, h.run("init", "--yes", "--repo", "cr_other"), 2)
 	if !strings.Contains(h.stderr.String(), "registered as cr_1, not cr_other") {
@@ -410,7 +413,10 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 	seedRepo(t, h)
 	initPlatform(h, connectFresh)
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	expectCode(t, h, h.run("init", "--dry-run", "--product", "acme-platform"), 0)
+	expectCode(t, h, h.run("init", "--dry-run", "--no-secret", "--product", "acme-platform"), 0)
+	if len(h.prompts.titles) != 0 {
+		t.Fatalf("no prompt without a terminal: %v", h.prompts.titles)
+	}
 	out := h.stdout.String()
 	for _, want := range []string{"+ .gravity.yaml (4 lines)", "product: acme-platform", "+ .github/workflows/gravity.yml", "uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1", "+ app passes: developer-api -> dev-portal/api", "+ new space dev-portal/changelog", "+ repository token with repo:connect"} {
 		if !strings.Contains(out, want) {
@@ -666,5 +672,195 @@ func TestInitMarksTargetsThatNeedApproval(t *testing.T) {
 	}
 	if strings.Count(h.stderr.String(), "(needs approval)") != 1 {
 		t.Fatal("only the target the server flags needs approval")
+	}
+}
+
+type refusingPrompter struct{ t *testing.T }
+
+func (p refusingPrompter) Select(title, _ string, _ []ui.Choice, _ string) (string, error) {
+	p.t.Fatalf("prompted %q without a terminal", title)
+	return "", nil
+}
+
+func (p refusingPrompter) MultiSelect(title, _ string, _ []ui.Choice, _ []string) ([]string, error) {
+	p.t.Fatalf("prompted %q without a terminal", title)
+	return nil, nil
+}
+
+func TestInitDryRunWithoutTerminalAsksNothing(t *testing.T) {
+	h := newHarness(t)
+	seedRepo(t, h)
+	initPlatform(h, connectFresh)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	h.prompter = refusingPrompter{t}
+	expectCode(t, h, h.run("init", "--dry-run", "--json"), 0)
+	data := h.envelope()["data"].(map[string]any)
+	if data["questions"].(float64) != 0 || data["product"] == "" || len(data["passes"].([]any)) == 0 {
+		t.Fatalf("data = %v", data)
+	}
+
+	h.write(".gravity.yaml", v1Manifest)
+	expectCode(t, h, h.run("init", "--dry-run", "--json"), 0)
+	if data := h.envelope()["data"].(map[string]any); data["mode"] != "convert" || data["questions"].(float64) != 0 {
+		t.Fatalf("conversion data = %v", data)
+	}
+}
+
+func TestInitRefusesWhenManifestPassesAreNotInTheCheckout(t *testing.T) {
+	h := newHarness(t)
+	initPlatform(h, connectBody)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, h, h.run("init", "--yes"), 2)
+	if !strings.Contains(h.stderr.String(), "not in this checkout (developer-api)") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, ".gravity.yaml")); !os.IsNotExist(err) {
+		t.Fatal("no manifest that would archive the stored passes")
+	}
+	for _, r := range h.platform.requests {
+		if r.Body["dryRun"] == false {
+			t.Fatal("nothing is connected")
+		}
+	}
+}
+
+func TestInitOffTheDefaultBranchNeverPromisesSpaces(t *testing.T) {
+	h := newHarness(t)
+	seedRepo(t, h)
+	initPlatform(h, connectFresh)
+	gitCmd(t, h.dir, "switch", "-q", "-c", "docs/gravity")
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, h, h.run("init", "--dry-run", "--no-secret", "--product", "acme-platform"), 0)
+	out := h.stdout.String()
+	if strings.Contains(out, "+ new space") || !strings.Contains(out, "! new space dev-portal/changelog (Changelog), created only from main") || !strings.Contains(out, "this is docs/gravity, not main") {
+		t.Fatalf("preview = %s", out)
+	}
+	expectCode(t, h, h.run("init", "--yes", "--no-secret", "--product", "acme-platform", "--json"), 2)
+	if e := h.envelope()["error"].(map[string]any); e["code"] != "branch_not_authoritative" || !strings.Contains(e["message"].(string), "git switch main") {
+		t.Fatalf("error = %v", e)
+	}
+	if len(putPasses(h)) != 0 || len(h.platform.find("POST", "/api/v1/repos/cr_1/tokens")) != 0 {
+		t.Fatal("nothing is registered or minted")
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, ".gravity.yaml")); !os.IsNotExist(err) {
+		t.Fatal("nothing is written")
+	}
+}
+
+func TestInitReportsSpacesTheConnectDidNotCreate(t *testing.T) {
+	h := newHarness(t)
+	seedRepo(t, h)
+	initPlatform(h, connectFresh)
+	h.platform.handle("POST /api/v1/repos/connect", func(w http.ResponseWriter, _ *http.Request, body map[string]any) {
+		if body["dryRun"] == true {
+			_, _ = io.WriteString(w, connectFresh)
+			return
+		}
+		_, _ = io.WriteString(w, strings.Replace(connectFresh, `"persisted":true,"reason":null`, `"persisted":false,"reason":"branch_not_authoritative"`, 1))
+	})
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, h, h.run("init", "--yes", "--no-secret", "--product", "acme-platform"), 0)
+	if !strings.Contains(h.stderr.String(), "did not create dev-portal/changelog: spaces are created only from main") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+	if !strings.Contains(h.stdout.String(), "Spaces not created: dev-portal/changelog") {
+		t.Fatalf("summary = %s", h.stdout.String())
+	}
+}
+
+func TestInitConnectedCreatesMissingManifestTargets(t *testing.T) {
+	h := newHarness(t)
+	h.write(".gravity.yaml", "version: 2\nproduct: acme-platform\npasses:\n  - name: developer-api\n    kind: reference\n    template: api-reference\n    target: dev-portal/reference\n")
+	conn := strings.Replace(connectBody, `"target":{"ref":"dev-portal/api","status":"ok","siteSlug":"dev-portal","spaceSlug":"api","collectionPath":[]}`, `"target":{"ref":"dev-portal/reference","status":"missing","siteSlug":"dev-portal","spaceSlug":"reference","collectionPath":[]}`, 1)
+	conn = strings.Replace(conn, `"kind":"reference","source":"manifest"`, `"kind":"reference","template":"api-reference","source":"manifest"`, 1)
+	initPlatform(h, conn)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, h, h.run("init", "--yes", "--no-secret"), 0)
+	if !strings.Contains(h.stdout.String(), "+ new space dev-portal/reference (Reference)") {
+		t.Fatalf("preview = %s", h.stdout.String())
+	}
+	reqs := h.platform.find("POST", "/api/v1/repos/connect")
+	last := reqs[len(reqs)-1]
+	ct, _ := last.Body["createTargets"].([]any)
+	if last.Body["dryRun"] != false || len(ct) != 1 || ct[0].(map[string]any)["space"] != "reference" || ct[0].(map[string]any)["type"] != "api-reference" {
+		t.Fatalf("real connect = %v", last.Body)
+	}
+}
+
+func TestInitMergesPassesIntoAnEmptyPassesKey(t *testing.T) {
+	h := newHarness(t)
+	seedRepo(t, h)
+	initPlatform(h, connectFresh)
+	h.write(".gravity.yaml", "version: 2\nproduct: acme-platform\npasses: []\n")
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, h, h.run("init", "--yes", "--no-secret", "--passes-as-code"), 0)
+	data := readFile(t, h, ".gravity.yaml")
+	if strings.Contains(data, "passes: []") || strings.Count(data, "passes:") != 1 {
+		t.Fatalf("manifest = %s", data)
+	}
+	m, err := config.Load(filepath.Join(h.dir, ".gravity.yaml"))
+	if err != nil || len(m.Passes) == 0 {
+		t.Fatalf("manifest = %v, %v", m, err)
+	}
+}
+
+func TestInitWithoutTerminalNeverPrintsTheToken(t *testing.T) {
+	h := newHarness(t)
+	initPlatform(h, connectFresh)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, h, h.run("init", "--yes"), 0)
+	if len(h.platform.find("POST", "/api/v1/repos/cr_1/tokens")) != 0 || strings.Contains(h.stderr.String(), "gr_repo_minted_secret") {
+		t.Fatal("no token is minted to be printed into a log")
+	}
+	if !strings.Contains(h.stdout.String(), "pass --no-secret to print it anyway") {
+		t.Fatalf("summary = %s", h.stdout.String())
+	}
+}
+
+func TestInitShowsTheTokenWhenAFileCannotBeWritten(t *testing.T) {
+	h := newHarness(t)
+	initPlatform(h, connectFresh)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	locked := filepath.Join(h.dir, ".github")
+	if err := os.Mkdir(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	expectCode(t, h, h.run("init", "--yes", "--no-secret"), 2)
+	if !strings.Contains(h.stderr.String(), "gr_repo_minted_secret") || !strings.Contains(h.stderr.String(), "connected, but writing .github/workflows/gravity.yml failed") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+}
+
+func TestInitWarnsUpFrontWithoutTokenPermission(t *testing.T) {
+	h := newHarness(t)
+	initPlatform(h, connectFresh)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	h.platform.json("GET /api/v1/whoami", 200, strings.Replace(whoamiUser, `,"docs.repos.tokens"`, "", 1))
+	expectCode(t, h, h.run("init", "--yes", "--no-secret"), 0)
+	if !strings.Contains(h.stderr.String(), "can't mint repository tokens in Acme") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+	if len(h.platform.find("POST", "/api/v1/repos/cr_1/tokens")) != 0 {
+		t.Fatal("no mint without the permission")
+	}
+}
+
+func TestInitConvertsASiteLessV1WithTheDefaultSite(t *testing.T) {
+	h := newHarness(t)
+	h.write(".gravity.yaml", strings.Replace(v1Manifest, "site: docs\n", "", 1))
+	initPlatform(h, connectFresh)
+	h.platform.json("GET /api/v1/whoami", 200, strings.Replace(whoamiUser, `"defaultSiteSlug":null`, `"defaultSiteSlug":"docs"`, 1))
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, h, h.run("init", "--dry-run", "--json"), 0)
+	data := h.envelope()["data"].(map[string]any)
+	if data["conversion"].(map[string]any)["site"] != "docs" || !strings.Contains(data["manifest"].(map[string]any)["content"].(string), "target: docs/") {
+		t.Fatalf("data = %v", data["manifest"])
+	}
+
+	h.env["GRAVITY_SITE"] = "handbook-site"
+	expectCode(t, h, h.run("init", "--dry-run", "--json"), 0)
+	if data := h.envelope()["data"].(map[string]any); data["conversion"].(map[string]any)["site"] != "handbook-site" {
+		t.Fatalf("GRAVITY_SITE wins: %v", data["conversion"])
 	}
 }

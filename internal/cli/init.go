@@ -32,21 +32,22 @@ type initOptions struct {
 }
 
 type initData struct {
-	DryRun        bool                 `json:"dryRun"`
-	Canceled      bool                 `json:"canceled"`
-	Questions     int                  `json:"questions"`
-	Mode          string               `json:"mode"`
-	Detected      *detect.Result       `json:"detected"`
-	Product       string               `json:"product"`
-	Site          *setup.Site          `json:"site,omitempty"`
-	Passes        []initPass           `json:"passes"`
-	CreateTargets []api.CreateTarget   `json:"createTargets"`
-	Manifest      initManifest         `json:"manifest"`
-	Conversion    *config.Conversion   `json:"conversion,omitempty"`
-	CI            *cisetup.Plan        `json:"ci,omitempty"`
-	Token         *initToken           `json:"token,omitempty"`
-	Written       []string             `json:"written"`
-	Connect       *api.ConnectResponse `json:"connect"`
+	DryRun         bool                 `json:"dryRun"`
+	Canceled       bool                 `json:"canceled"`
+	Questions      int                  `json:"questions"`
+	Mode           string               `json:"mode"`
+	Detected       *detect.Result       `json:"detected"`
+	Product        string               `json:"product"`
+	Site           *setup.Site          `json:"site,omitempty"`
+	Passes         []initPass           `json:"passes"`
+	CreateTargets  []api.CreateTarget   `json:"createTargets"`
+	PendingTargets []api.CreateTarget   `json:"pendingTargets,omitempty"`
+	Manifest       initManifest         `json:"manifest"`
+	Conversion     *config.Conversion   `json:"conversion,omitempty"`
+	CI             *cisetup.Plan        `json:"ci,omitempty"`
+	Token          *initToken           `json:"token,omitempty"`
+	Written        []string             `json:"written"`
+	Connect        *api.ConnectResponse `json:"connect"`
 }
 
 type initManifest struct {
@@ -98,6 +99,8 @@ const (
 	answerCancel = "cancel"
 	answerSite   = "__site__"
 	answerNew    = "__new__"
+
+	envSite = "GRAVITY_SITE"
 )
 
 func newInitCmd(a *app) *cobra.Command {
@@ -177,6 +180,9 @@ func (a *app) runInit(ctx context.Context, o initOptions) error {
 	if o.dryRun {
 		return a.ui.Result(r.data)
 	}
+	if err := r.checkBranch(); err != nil {
+		return err
+	}
 	answer, err := r.confirm()
 	if err != nil {
 		return r.canceled(err)
@@ -228,7 +234,7 @@ func (r *initRun) load() error {
 		if rerr != nil {
 			return Fail(CodeError, rerr)
 		}
-		conv, cerr := config.ConvertV1(data, config.ConvertOptions{RepoName: info.name})
+		conv, cerr := config.ConvertV1(data, config.ConvertOptions{RepoName: info.name, Site: r.a.env(envSite)})
 		if cerr != nil {
 			return &ExitError{Code: CodeError, ErrCode: "manifest_v1", Err: fmt.Errorf("%s is a v1 manifest and cannot be converted: %w", r.data.Manifest.Path, cerr)}
 		}
@@ -244,6 +250,19 @@ func (r *initRun) load() error {
 	if r.o.product != "" && r.manifestProduct() != "" && r.manifestProduct() != r.o.product {
 		return Failf(CodeError, "%s declares product %s; edit it or drop --product", r.data.Manifest.Path, r.manifestProduct())
 	}
+	return nil
+}
+
+func (r *initRun) convertWithDefaultSite() error {
+	if r.conv == nil || r.conv.Site != "" || r.who.DefaultSiteSlug == nil || *r.who.DefaultSiteSlug == "" {
+		return nil
+	}
+	conv, err := config.ConvertV1(r.v1Data, config.ConvertOptions{RepoName: r.info.name, Site: *r.who.DefaultSiteSlug})
+	if err != nil {
+		return &ExitError{Code: CodeError, ErrCode: "manifest_v1", Err: fmt.Errorf("%s is a v1 manifest and cannot be converted: %w", r.data.Manifest.Path, err)}
+	}
+	r.conv = conv
+	r.data.Conversion = conv
 	return nil
 }
 
@@ -334,6 +353,9 @@ func (r *initRun) canMint() bool {
 }
 
 func (r *initRun) checkPermissions() error {
+	if r.isUser() && !r.o.dryRun && !r.who.HasPermission(permReposTokens) && (r.canManage() || r.o.repoID != "") {
+		r.a.ui.Warn("token_permission_missing", "you can't mint repository tokens in "+r.orgName()+"; init connects the repository, and an admin mints its token in the app")
+	}
 	if r.canManage() || r.o.dryRun || r.o.repoID != "" {
 		return nil
 	}
@@ -359,6 +381,9 @@ func appBaseURL(apiURL string) string {
 
 func (r *initRun) discover() error {
 	a := r.a
+	if err := r.convertWithDefaultSite(); err != nil {
+		return err
+	}
 	files, err := r.info.repo.ListFiles(r.ctx, "")
 	if err != nil {
 		return Fail(CodeError, err)

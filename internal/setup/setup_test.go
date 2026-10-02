@@ -132,3 +132,17 @@ func TestDeclaredTargetsCreateParentsFirst(t *testing.T) {
 		t.Fatalf("targets = %+v", got)
 	}
 }
+
+func TestMissingTargetsOnlyForManifestSpaces(t *testing.T) {
+	passes := []api.PlanPass{
+		{Name: "runbooks", Template: config.TemplateRunbook, Source: "manifest", Target: api.PassTarget{Ref: "ops/runbooks", Status: api.TargetMissing}},
+		{Name: "runbooks-2", Template: config.TemplateRunbook, Source: "manifest", Target: api.PassTarget{Ref: "ops/runbooks", Status: api.TargetMissing}},
+		{Name: "guides", Source: "app", Target: api.PassTarget{Ref: "product/guides", Status: api.TargetMissing}},
+		{Name: "api", Source: "manifest", Target: api.PassTarget{Ref: "dev/api", Status: api.TargetOK}},
+		{Name: "deep", Source: "manifest", Target: api.PassTarget{Ref: "dev/api/v2", Status: api.TargetMissing}},
+	}
+	want := []api.CreateTarget{{Site: "ops", Space: "runbooks", Name: "Runbooks", Type: config.TemplateSpaceTypes[config.TemplateRunbook][0], Visibility: "private"}}
+	if got := MissingTargets(passes); !reflect.DeepEqual(got, want) {
+		t.Fatalf("MissingTargets = %+v, want %+v", got, want)
+	}
+}

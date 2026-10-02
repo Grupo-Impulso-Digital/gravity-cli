@@ -268,17 +268,38 @@ func place(in Inputs, c candidate, used map[string]bool) Suggestion {
 	used[slug] = true
 	s.Pass.Target = in.Site.Slug + "/" + slug
 	s.Target = in.Site.Name + " › " + c.title
+	s.Create = newTarget(in.Site.Slug, slug, c.title, c.template)
+	return s
+}
+
+func newTarget(site, space, name, template string) *api.CreateTarget {
 	vis := "inherit"
-	if c.template == config.TemplateRunbook || c.template == config.TemplateInternalChangelog {
+	if template == config.TemplateRunbook || template == config.TemplateInternalChangelog {
 		vis = "private"
 	}
-	types := config.TemplateSpaceTypes[c.template]
 	typ := ""
-	if len(types) > 0 {
+	if types := config.TemplateSpaceTypes[template]; len(types) > 0 {
 		typ = types[0]
 	}
-	s.Create = &api.CreateTarget{Site: in.Site.Slug, Space: slug, Name: c.title, Type: typ, Visibility: vis}
-	return s
+	return &api.CreateTarget{Site: site, Space: space, Name: name, Type: typ, Visibility: vis}
+}
+
+// MissingTargets lists createTargets for the spaces that manifest passes target and Gravity reports missing, once each.
+func MissingTargets(passes []api.PlanPass) []api.CreateTarget {
+	seen := map[string]bool{}
+	out := []api.CreateTarget{}
+	for _, p := range passes {
+		if p.Source != "manifest" || p.Target.Status != api.TargetMissing {
+			continue
+		}
+		parts := strings.Split(p.Target.Ref, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || seen[p.Target.Ref] {
+			continue
+		}
+		seen[p.Target.Ref] = true
+		out = append(out, *newTarget(parts[0], parts[1], titleCase(parts[1]), p.Template))
+	}
+	return out
 }
 
 func matchSpace(tree *api.SiteTree, c candidate, used map[string]bool) (api.SiteSpace, bool) {
