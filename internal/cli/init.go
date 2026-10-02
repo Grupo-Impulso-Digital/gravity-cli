@@ -91,7 +91,12 @@ A token is never written here; provide it via GRAVITY_TOKEN (CI) or
 			var notes []string
 			switch {
 			case migrate:
-				proj, notes, err = migrateManifest(path, explicit)
+				proj, notes, err = migrateManifest(path, initInputs{
+					site:   firstNonEmpty(siteAlias, gf.site),
+					apiURL: explicit.apiURL,
+					space:  space,
+					role:   role,
+				})
 				if err != nil {
 					return Fail(CodeError, err)
 				}
@@ -275,25 +280,31 @@ func migrateManifest(path string, in initInputs) (*config.Project, []string, err
 		return nil, nil, err
 	}
 	if p.LegacySpace != "" {
-		if p.Spaces.Default == "" {
+		if p.Spaces.Default == "" && in.space == "" {
 			p.Spaces.Default = p.LegacySpace
+			notes = append(notes, fmt.Sprintf("moved the legacy top-level `space: %s` to spaces.default", p.LegacySpace))
+		} else {
+			notes = append(notes, fmt.Sprintf("dropped the legacy top-level `space: %s`", p.LegacySpace))
 		}
-		notes = append(notes, fmt.Sprintf("moved the legacy top-level `space: %s` to spaces.default", p.LegacySpace))
 		p.LegacySpace = ""
 	}
 	if p.Version < config.SchemaVersion {
 		p.Version = config.SchemaVersion
 	}
-	if in.site != "" {
+	if in.site != "" && in.site != p.Site {
+		notes = append(notes, fmt.Sprintf("site set to %s from --site", in.site))
 		p.Site = in.site
 	}
-	if in.apiURL != "" {
+	if in.apiURL != "" && in.apiURL != p.APIURL {
+		notes = append(notes, fmt.Sprintf("apiUrl set to %s from --api-url", in.apiURL))
 		p.APIURL = in.apiURL
 	}
-	if in.space != "" {
+	if in.space != "" && in.space != p.Spaces.Default {
+		notes = append(notes, fmt.Sprintf("spaces.default set to %s from --space", in.space))
 		p.Spaces.Default = in.space
 	}
-	if in.role != "" {
+	if in.role != "" && in.role != p.Product.Role {
+		notes = append(notes, fmt.Sprintf("product.role set to %s from --role", in.role))
 		p.Product.Role = in.role
 	}
 	if hasYAMLComments(data) {

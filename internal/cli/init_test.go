@@ -250,6 +250,54 @@ func TestInitMigrateIsLossless(t *testing.T) {
 	}
 }
 
+func TestInitMigrateIgnoresEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, config.ProjectFileName, "site: x\nspace: docs\n")
+	t.Setenv(config.EnvSite, "other")
+	t.Setenv(config.EnvSpace, "zzz")
+
+	stdout, _, err := runRoot(t, "init", "--migrate", "--dir", dir)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !strings.Contains(stdout, "moved the legacy top-level `space: docs` to spaces.default") {
+		t.Errorf("migrate output = %q", stdout)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, config.ProjectFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written struct {
+		Site   string `yaml:"site"`
+		Spaces struct {
+			Default string `yaml:"default"`
+		} `yaml:"spaces"`
+	}
+	if err := yaml.Unmarshal(raw, &written); err != nil {
+		t.Fatal(err)
+	}
+	if written.Site != "x" || written.Spaces.Default != "docs" {
+		t.Errorf("GRAVITY_SITE/GRAVITY_SPACE leaked into the migrated file: site=%q spaces.default=%q\n%s", written.Site, written.Spaces.Default, raw)
+	}
+
+	stdout, _, err = runRoot(t, "init", "--migrate", "--dir", dir, "--site", "flagged", "--space", "guides")
+	if err != nil {
+		t.Fatalf("migrate with flags: %v", err)
+	}
+	proj, err := config.LoadProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proj.Site != "flagged" || proj.Spaces.Default != "guides" {
+		t.Errorf("explicit flags must apply: site=%q spaces.default=%q", proj.Site, proj.Spaces.Default)
+	}
+	for _, want := range []string{"site set to flagged from --site", "spaces.default set to guides from --space"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("migrate output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestInitMigrateUpgradesLegacyAndRemovedKeys(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, config.ProjectFileName, `# Acme docs manifest
