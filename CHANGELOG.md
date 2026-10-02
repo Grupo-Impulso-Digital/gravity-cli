@@ -29,6 +29,13 @@ the pass engine.
   mapping through source refs, deterministic OpenAPI diff, removed/renamed
   symbols).
 
+### Security
+
+- A profile token is only sent to the host that issued it. When `--api-url`,
+  `GRAVITY_API_URL` or a manifest `apiUrl` points elsewhere, the command exits
+  `2` (`token_host_mismatch`) before any request; a cloned repository can no
+  longer redirect a stored token. `--token`/`GRAVITY_TOKEN` may target any host.
+
 ### Removed
 
 - `auth *`, `doctor`, `ping`, `repos`, `spaces`, `sync`, `docs *`,

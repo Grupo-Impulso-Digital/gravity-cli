@@ -35,7 +35,7 @@ func newWhoamiCmd(a *app) *cobra.Command {
 		Short: "Show who the current token acts as, its organization, kind, scopes and expiry",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			creds, err := a.credentials("")
+			creds, err := a.credentials(a.repoAPIURL(cmd.Context()))
 			if err != nil {
 				return err
 			}
@@ -44,7 +44,7 @@ func newWhoamiCmd(a *app) *cobra.Command {
 			}
 			who, err := a.client(creds).WhoAmI(cmd.Context())
 			if err != nil {
-				return explainAPI(err, creds)
+				return explainAPI(err)
 			}
 			data := whoamiSummary(who, creds)
 			a.printWhoami(data)

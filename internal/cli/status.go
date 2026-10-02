@@ -68,7 +68,7 @@ func (a *app) openSession(ctx context.Context, allowV1 bool) (*session, error) {
 	s.client = a.client(creds)
 	who, err := s.client.WhoAmI(ctx)
 	if err != nil {
-		return nil, explainAPI(err, creds)
+		return nil, explainAPI(err)
 	}
 	if err := requirePipelines(who.Features); err != nil {
 		return nil, err
@@ -116,17 +116,18 @@ func newStatusCmd(a *app) *cobra.Command {
 				data.Manifest = &statusManifest{Path: config.ManifestFileName, V1: true}
 			}
 			a.printStatus(s, conn, st)
-			if err := a.ui.Result(data); err != nil {
-				return err
-			}
 			if check && st.Health.Status != api.HealthLive {
 				reason := ""
 				if len(st.Health.Reasons) > 0 {
 					reason = ": " + strings.Join(st.Health.Reasons, "; ")
 				}
-				return &ExitError{Code: CodeFindings, Err: fmt.Errorf("health is %s%s", st.Health.Status, reason), ErrCode: "unhealthy"}
+				ee := &ExitError{Code: CodeFindings, Err: fmt.Errorf("health is %s%s", st.Health.Status, reason), ErrCode: "unhealthy"}
+				if err := a.ui.Failure(ui.ErrorInfo{Code: ee.ErrCode, Message: ee.Error(), ExitCode: ee.Code}, data); err != nil {
+					return err
+				}
+				return ee
 			}
-			return nil
+			return a.ui.Result(data)
 		},
 	}
 	cmd.Flags().IntVar(&runs, "runs", 5, "number of recent runs to show")
@@ -162,9 +163,16 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status)
 	case s.manifest != nil:
 		state := "stored in Gravity"
 		if !conn.Manifest.Persisted {
-			state = "local changes not yet stored (lands from " + orDash(conn.Manifest.AuthoritativeBranch) + ")"
+			authoritative := firstNonEmpty(conn.Manifest.AuthoritativeBranch, s.info.defaultBranch)
+			state = "local changes not yet stored"
+			if authoritative != "" {
+				state += " (lands from " + authoritative + ")"
+			}
 			if conn.Manifest.Hash != "" && st.Repo.ID != "" && conn.Effective.Overlay {
-				state = "differs from " + orDash(conn.Manifest.AuthoritativeBranch) + "; shown as an overlay"
+				state = "differs from the stored manifest; shown as an overlay"
+				if authoritative != "" {
+					state = "differs from " + authoritative + "; shown as an overlay"
+				}
 			}
 		}
 		rows = append(rows, []string{"Manifest", relPath(s.info.root, s.manifest.Path) + " · " + shortHash(s.manifest.Hash) + " · " + state})

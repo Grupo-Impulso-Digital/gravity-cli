@@ -69,6 +69,8 @@ func (c Context) IsCI() bool { return c.Origin == OriginCI }
 type Git interface {
 	CurrentBranch(ctx context.Context) (string, error)
 	ResolveRef(ctx context.Context, ref string) (string, error)
+	DefaultBranch(ctx context.Context) string
+	RemoteBranchesContaining(ctx context.Context, sha string) ([]string, error)
 }
 
 // Env abstracts the process environment and filesystem reads.
@@ -152,11 +154,32 @@ func Detect(ctx context.Context, env Env, git Git) (Context, error) {
 				}
 			}
 		}
+		if c.Detached && c.Branch == "" && c.HeadSHA != "" {
+			c.Branch = detachedBranch(ctx, git, c.HeadSHA)
+			c.Detached = c.Branch == ""
+		}
 	}
 	if c.PR != nil && c.PR.HeadSHA == "" {
 		c.PR.HeadSHA = c.HeadSHA
 	}
 	return c, nil
+}
+
+func detachedBranch(ctx context.Context, git Git, sha string) string {
+	def := git.DefaultBranch(ctx)
+	if def == "" {
+		return ""
+	}
+	branches, err := git.RemoteBranchesContaining(ctx, sha)
+	if err != nil {
+		return ""
+	}
+	for _, b := range branches {
+		if b == def {
+			return def
+		}
+	}
+	return ""
 }
 
 func applyOverrides(c *Context, env Env) error {

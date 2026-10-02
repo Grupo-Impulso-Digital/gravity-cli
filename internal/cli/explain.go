@@ -24,7 +24,7 @@ func newExplainCmd(a *app) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			creds, err := a.credentials("")
+			creds, err := a.credentials(a.repoAPIURL(ctx))
 			if err != nil {
 				return err
 			}
@@ -34,7 +34,7 @@ func newExplainCmd(a *app) *cobra.Command {
 			client := a.client(creds)
 			who, err := client.WhoAmI(ctx)
 			if err != nil {
-				return explainAPI(err, creds)
+				return explainAPI(err)
 			}
 			if err := requirePipelines(who.Features); err != nil {
 				return err

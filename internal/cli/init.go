@@ -49,7 +49,6 @@ func newInitCmd(a *app) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&o.product, "product", "", "product slug to register this repository under")
 	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "show what would be written and registered, change nothing")
-	cmd.Flags().Bool("yes", false, "accept the suggestions without asking")
 	return cmd
 }
 
@@ -93,7 +92,7 @@ func (a *app) runInit(ctx context.Context, o initOptions) error {
 		if !a.ui.Interactive() {
 			return requireToken(creds)
 		}
-		if _, err := a.login(ctx, loginOptions{}); err != nil {
+		if _, err := a.login(ctx, loginOptions{apiURL: apiURL}); err != nil {
 			return err
 		}
 		if creds, err = a.credentials(apiURL); err != nil {
@@ -103,7 +102,7 @@ func (a *app) runInit(ctx context.Context, o initOptions) error {
 	client := a.client(creds)
 	who, err := client.WhoAmI(ctx)
 	if err != nil {
-		return explainAPI(err, creds)
+		return explainAPI(err)
 	}
 	if err := requirePipelines(who.Features); err != nil {
 		return err
@@ -124,25 +123,25 @@ func (a *app) runInit(ctx context.Context, o initOptions) error {
 	req.Product = product
 	preview, err := client.Connect(ctx, req)
 	if err != nil {
-		return explainAPI(fmt.Errorf("connect: %w", err), creds)
+		return explainAPI(fmt.Errorf("connect: %w", err))
 	}
 	a.printInitPreview(info, data, preview, product)
 	if o.dryRun {
 		data.Connect = preview
 		return a.ui.Result(data)
 	}
-	if !data.Manifest.Exists {
-		if err := os.WriteFile(path, []byte(data.Manifest.Content), 0o644); err != nil {
-			return Fail(CodeError, fmt.Errorf("write %s: %w", data.Manifest.Path, err))
-		}
-		data.Manifest.Written = true
-	}
 	req.DryRun = false
 	conn, err := client.Connect(ctx, req)
 	if err != nil {
-		return explainAPI(fmt.Errorf("connect: %w", err), creds)
+		return explainAPI(fmt.Errorf("connect: %w", err))
 	}
 	data.Connect = conn
+	if !data.Manifest.Exists {
+		if err := os.WriteFile(path, []byte(data.Manifest.Content), 0o644); err != nil {
+			return Fail(CodeError, fmt.Errorf("connected, but writing %s failed: %w", data.Manifest.Path, err))
+		}
+		data.Manifest.Written = true
+	}
 	for _, w := range conn.Manifest.Warnings {
 		a.ui.Warn(w.Code, w.Message)
 	}

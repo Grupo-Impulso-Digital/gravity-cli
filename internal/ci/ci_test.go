@@ -10,11 +10,19 @@ import (
 )
 
 type fakeGit struct {
-	branch string
-	refs   map[string]string
+	branch     string
+	refs       map[string]string
+	defBranch  string
+	containing []string
 }
 
 func (f fakeGit) CurrentBranch(context.Context) (string, error) { return f.branch, nil }
+
+func (f fakeGit) DefaultBranch(context.Context) string { return f.defBranch }
+
+func (f fakeGit) RemoteBranchesContaining(context.Context, string) ([]string, error) {
+	return f.containing, nil
+}
 
 func (f fakeGit) ResolveRef(_ context.Context, ref string) (string, error) {
 	if sha, ok := f.refs[ref]; ok {
@@ -232,6 +240,14 @@ func TestOverridesWinOverProvider(t *testing.T) {
 
 func TestDetachedHead(t *testing.T) {
 	c := detect(t, map[string]string{"CI": "true"}, nil, fakeGit{branch: "HEAD", refs: map[string]string{"HEAD": head}})
+	if !c.Detached || c.Branch != "" {
+		t.Fatalf("c = %+v", c)
+	}
+	c = detect(t, map[string]string{"CI": "true"}, nil, fakeGit{branch: "HEAD", refs: map[string]string{"HEAD": head}, defBranch: "main", containing: []string{"feature", "main"}})
+	if c.Detached || c.Branch != "main" {
+		t.Fatalf("c = %+v", c)
+	}
+	c = detect(t, map[string]string{"CI": "true"}, nil, fakeGit{branch: "HEAD", refs: map[string]string{"HEAD": head}, defBranch: "main", containing: []string{"feature"}})
 	if !c.Detached || c.Branch != "" {
 		t.Fatalf("c = %+v", c)
 	}

@@ -2,7 +2,9 @@ package auth
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
@@ -37,13 +39,44 @@ type Credentials struct {
 	Profile      *Profile
 }
 
-// Resolve applies the token (flag, env, profile) and API URL (flag, env, manifest, profile, default) precedence.
+// HostMismatchError refuses to send a profile token to a host other than the one that issued it.
+type HostMismatchError struct {
+	Profile string
+	Issuer  string
+	APIURL  string
+	Source  string
+}
+
+func (e *HostMismatchError) Error() string {
+	return fmt.Sprintf("refusing to send the token of profile %q to %s (API URL from %s): token was issued by %s; use --token or %s for that host, or sign in to it with `gravity login --api-url %s --profile <name>`",
+		e.Profile, e.APIURL, sourceLabel(e.Source), e.Issuer, config.EnvToken, e.APIURL)
+}
+
+func sourceLabel(source string) string {
+	switch source {
+	case SourceFlag:
+		return "--api-url"
+	case SourceEnv:
+		return config.EnvAPIURL
+	case SourceManifest:
+		return config.ManifestFileName + " apiUrl"
+	}
+	return source
+}
+
+// Resolve applies the token (flag, env, profile) and API URL (flag, env, manifest, profile, default) precedence; a profile token only ever goes to the host that issued it.
 func Resolve(in Inputs, profiles *Profiles) (Credentials, error) {
 	getenv := in.Getenv
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	var c Credentials
+	switch {
+	case in.FlagToken != "":
+		c.Token, c.TokenSource = in.FlagToken, SourceFlag
+	case getenv(config.EnvToken) != "":
+		c.Token, c.TokenSource = getenv(config.EnvToken), SourceEnv
+	}
 	name := in.FlagProfile
 	if name == "" {
 		name = getenv(config.EnvProfile)
@@ -57,18 +90,15 @@ func Resolve(in Inputs, profiles *Profiles) (Credentials, error) {
 			c.ProfileName, c.Profile = name, &prof
 		}
 	}
-	if explicit && c.Profile == nil {
+	if explicit && c.Profile == nil && c.Token == "" {
 		return Credentials{}, fmt.Errorf("profile %q does not exist (run `gravity login --profile %s`)", name, name)
 	}
-	switch {
-	case in.FlagToken != "":
-		c.Token, c.TokenSource = in.FlagToken, SourceFlag
-	case getenv(config.EnvToken) != "":
-		c.Token, c.TokenSource = getenv(config.EnvToken), SourceEnv
-	case c.Profile != nil && c.Profile.Token != "":
-		c.Token, c.TokenSource = c.Profile.Token, SourceProfile
-	default:
-		c.TokenSource = SourceNone
+	if c.Token == "" {
+		if c.Profile != nil && c.Profile.Token != "" {
+			c.Token, c.TokenSource = c.Profile.Token, SourceProfile
+		} else {
+			c.TokenSource = SourceNone
+		}
 	}
 	c.TokenKind = TokenKindOf(c.Token)
 	switch {
@@ -86,13 +116,26 @@ func Resolve(in Inputs, profiles *Profiles) (Credentials, error) {
 	if err := config.CheckAPIURL(c.APIURL); err != nil {
 		return Credentials{}, err
 	}
+	if c.TokenSource == SourceProfile {
+		issuer := c.Profile.APIURL
+		if issuer == "" {
+			issuer = config.DefaultAPIURL
+		}
+		if !SameAPIURL(issuer, c.APIURL) {
+			return Credentials{}, &HostMismatchError{Profile: c.ProfileName, Issuer: issuer, APIURL: c.APIURL, Source: c.APIURLSource}
+		}
+	}
 	return c, nil
 }
 
-// HostMismatch returns the profile's API URL when the token came from a profile issued for another host.
-func (c Credentials) HostMismatch() string {
-	if c.TokenSource != SourceProfile || c.Profile == nil || c.Profile.APIURL == "" || c.Profile.APIURL == c.APIURL {
-		return ""
+// SameAPIURL reports whether two API base URLs address the same origin and path.
+func SameAPIURL(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return a == b
 	}
-	return c.Profile.APIURL
+	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.EqualFold(ua.Host, ub.Host) &&
+		strings.TrimRight(ua.Path, "/") == strings.TrimRight(ub.Path, "/")
 }

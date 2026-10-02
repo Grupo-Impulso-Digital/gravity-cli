@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -100,6 +101,9 @@ func (a *app) loadPasses(ctx context.Context, f passesFlags) (*session, *passesD
 			branch = c.Branch
 		default:
 			branch = s.info.branch
+		}
+		if branch == "" && c.Detached && trigger != ci.TriggerRelease {
+			return nil, nil, &ExitError{Code: CodeError, ErrCode: "branch_unknown", Err: errors.New("HEAD is detached and is not on the default branch; pass --branch (or set GRAVITY_BRANCH)")}
 		}
 	}
 	q := api.PlanQuery{Repo: repoParam(s.who, s.info), Trigger: trigger, Branch: branch, Mode: api.ModeDry}

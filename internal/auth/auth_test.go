@@ -116,9 +116,10 @@ func TestResolvePrecedence(t *testing.T) {
 		{"flag token wins", Inputs{FlagToken: "sk_live_flag", Getenv: env(map[string]string{"GRAVITY_TOKEN": "x"})}, "sk_live_flag", SourceFlag, "https://api.acme.example", SourceProfile, "acme"},
 		{"env profile", Inputs{Getenv: env(map[string]string{"GRAVITY_PROFILE": "labs"})}, "gr_user_labs", SourceProfile, "https://api.labs.example", SourceProfile, "labs"},
 		{"flag profile over env", Inputs{FlagProfile: "acme", Getenv: env(map[string]string{"GRAVITY_PROFILE": "labs"})}, "gr_user_profile", SourceProfile, "https://api.acme.example", SourceProfile, "acme"},
-		{"manifest url over profile", Inputs{ManifestAPIURL: "https://api.manifest.example"}, "gr_user_profile", SourceProfile, "https://api.manifest.example", SourceManifest, "acme"},
-		{"env url over manifest", Inputs{ManifestAPIURL: "https://m.example", Getenv: env(map[string]string{"GRAVITY_API_URL": "https://e.example"})}, "gr_user_profile", SourceProfile, "https://e.example", SourceEnv, "acme"},
-		{"flag url wins", Inputs{FlagAPIURL: "https://f.example", ManifestAPIURL: "https://m.example", Getenv: env(map[string]string{"GRAVITY_API_URL": "https://e.example"})}, "gr_user_profile", SourceProfile, "https://f.example", SourceFlag, "acme"},
+		{"manifest url over profile", Inputs{ManifestAPIURL: "https://api.manifest.example", Getenv: env(map[string]string{"GRAVITY_TOKEN": "gr_repo_env"})}, "gr_repo_env", SourceEnv, "https://api.manifest.example", SourceManifest, "acme"},
+		{"env url over manifest", Inputs{FlagToken: "gr_repo_flag", ManifestAPIURL: "https://m.example", Getenv: env(map[string]string{"GRAVITY_API_URL": "https://e.example"})}, "gr_repo_flag", SourceFlag, "https://e.example", SourceEnv, "acme"},
+		{"flag url wins", Inputs{FlagAPIURL: "https://f.example", ManifestAPIURL: "https://m.example", Getenv: env(map[string]string{"GRAVITY_TOKEN": "gr_repo_env", "GRAVITY_API_URL": "https://e.example"})}, "gr_repo_env", SourceEnv, "https://f.example", SourceFlag, "acme"},
+		{"manifest url equal to the profile host", Inputs{ManifestAPIURL: "https://api.acme.example/"}, "gr_user_profile", SourceProfile, "https://api.acme.example/", SourceManifest, "acme"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,20 +145,38 @@ func TestResolveDefaultsAndErrors(t *testing.T) {
 	if _, err := Resolve(Inputs{FlagProfile: "ghost", Getenv: env(nil)}, &Profiles{}); err == nil || !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("missing profile err = %v", err)
 	}
+	if c, err := Resolve(Inputs{FlagProfile: "ghost", Getenv: env(map[string]string{"GRAVITY_TOKEN": "gr_repo_ci"})}, &Profiles{}); err != nil || c.Token != "gr_repo_ci" {
+		t.Fatalf("an explicit token makes a missing profile irrelevant: %+v %v", c, err)
+	}
 	if _, err := Resolve(Inputs{FlagAPIURL: "https://gravitydocs.io", Getenv: env(nil)}, nil); err == nil {
 		t.Fatal("marketing host accepted")
 	}
 }
 
-func TestHostMismatch(t *testing.T) {
-	profiles := &Profiles{Current: "a", Profiles: map[string]Profile{"a": {APIURL: "https://api.a.example", Token: "gr_user_x"}}}
-	c, err := Resolve(Inputs{FlagAPIURL: "https://api.b.example", Getenv: env(nil)}, profiles)
-	if err != nil || c.HostMismatch() != "https://api.a.example" {
-		t.Fatalf("mismatch = %q %v", c.HostMismatch(), err)
+func TestProfileTokenStaysOnItsHost(t *testing.T) {
+	profiles := &Profiles{Current: "a", Profiles: map[string]Profile{
+		"a":      {APIURL: "https://api.a.example", Token: "gr_user_x"},
+		"legacy": {Token: "sk_live_y"},
+	}}
+	for name, in := range map[string]Inputs{
+		"manifest": {ManifestAPIURL: "https://evil.example", Getenv: env(nil)},
+		"flag":     {FlagAPIURL: "https://api.b.example", Getenv: env(nil)},
+		"env":      {Getenv: env(map[string]string{"GRAVITY_API_URL": "https://api.b.example"})},
+		"legacy":   {FlagProfile: "legacy", ManifestAPIURL: "https://evil.example", Getenv: env(nil)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Resolve(in, profiles)
+			var hm *HostMismatchError
+			if !errors.As(err, &hm) || !strings.Contains(err.Error(), "token was issued by https://api.") {
+				t.Fatalf("err = %v", err)
+			}
+		})
 	}
-	c, _ = Resolve(Inputs{Getenv: env(nil)}, profiles)
-	if c.HostMismatch() != "" {
-		t.Fatal("no mismatch expected")
+	if c, err := Resolve(Inputs{Getenv: env(nil)}, profiles); err != nil || c.APIURL != "https://api.a.example" {
+		t.Fatalf("own host = %+v %v", c, err)
+	}
+	if c, err := Resolve(Inputs{FlagProfile: "legacy", Getenv: env(nil)}, profiles); err != nil || c.APIURL != "https://api.gravitydocs.io" {
+		t.Fatalf("a profile without apiUrl belongs to the default host: %+v %v", c, err)
 	}
 }
 

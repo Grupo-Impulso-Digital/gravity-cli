@@ -19,6 +19,7 @@ type loginOptions struct {
 	org       string
 	noBrowser bool
 	withToken bool
+	apiURL    string
 }
 
 type loginData struct {
@@ -57,7 +58,7 @@ func (a *app) login(ctx context.Context, o loginOptions) (*loginData, error) {
 	if err != nil {
 		return nil, Fail(CodeError, err)
 	}
-	creds, err := auth.Resolve(auth.Inputs{FlagAPIURL: a.gf.apiURL, Getenv: func(k string) string {
+	creds, err := auth.Resolve(auth.Inputs{FlagAPIURL: a.gf.apiURL, ManifestAPIURL: o.apiURL, Getenv: func(k string) string {
 		if k == "GRAVITY_TOKEN" || k == "GRAVITY_PROFILE" {
 			return ""
 		}
@@ -110,7 +111,7 @@ func (a *app) loginWithToken(ctx context.Context, creds auth.Credentials) (auth.
 	creds.Token = token
 	who, err := a.client(creds).WhoAmI(ctx)
 	if err != nil {
-		return auth.Profile{}, nil, explainAPI(fmt.Errorf("verify token: %w", err), creds)
+		return auth.Profile{}, nil, explainAPI(fmt.Errorf("verify token: %w", err))
 	}
 	prof := auth.Profile{APIURL: creds.APIURL, Token: token, TokenKind: auth.TokenKindOf(token)}
 	if who.Token != nil {
@@ -176,7 +177,7 @@ func (a *app) deviceLogin(ctx context.Context, creds auth.Credentials, o loginOp
 		if errors.Is(err, api.ErrDeviceDenied) || errors.Is(err, api.ErrDeviceExpired) {
 			return auth.Profile{}, nil, Fail(CodeError, err)
 		}
-		return auth.Profile{}, nil, explainAPI(err, creds)
+		return auth.Profile{}, nil, explainAPI(err)
 	}
 	prof := auth.Profile{
 		APIURL:    firstNonEmpty(poll.APIURL, creds.APIURL),

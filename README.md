@@ -120,7 +120,11 @@ their local passes as an overlay (`gravity passes` marks them `repo (local)`).
   `GRAVITY_PROFILE` > the current profile). Tokens are never read from
   `.gravity.yaml`.
 - API URL: `--api-url` > `GRAVITY_API_URL` > manifest `apiUrl` > profile
-  `apiUrl` > `https://api.gravitydocs.io`.
+  `apiUrl` > `https://api.gravitydocs.io`. A profile token is only ever sent to
+  the host that issued it: when the resolved API URL is another host, the
+  command exits `2` (`token_host_mismatch`) before any request. Pair another
+  host with `--token` or `GRAVITY_TOKEN`, or sign in to it with
+  `gravity login --api-url <url> --profile <name>`.
 - `--json` prints exactly one JSON document on stdout
   (`{ ok, command, version, data, warnings, error }`); progress and messages go
   to stderr.

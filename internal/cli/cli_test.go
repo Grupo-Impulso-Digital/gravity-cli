@@ -92,13 +92,49 @@ func TestLicenceRefusalExitsThree(t *testing.T) {
 	}
 }
 
-func TestUnauthorizedHostMismatchHint(t *testing.T) {
+func TestProfileTokenRefusedForAnotherHost(t *testing.T) {
 	h := newHarness(t)
-	h.platform.json("GET /api/v1/whoami", 401, `{"error":{"code":"unauthorized","message":"Invalid token"}}`)
 	writeProfiles(t, h.config, "version: 2\ncurrent: acme\nprofiles:\n  acme:\n    apiUrl: https://api.other.example\n    token: gr_user_zzz\n    tokenKind: user\n")
-	expectCode(t, h, h.run("whoami"), 2)
-	if !strings.Contains(h.stderr.String(), "token was issued by https://api.other.example") {
-		t.Fatalf("stderr = %s", h.stderr.String())
+	expectCode(t, h, h.run("whoami", "--json"), 2)
+	if e := h.envelope()["error"].(map[string]any); e["code"] != "token_host_mismatch" || !strings.Contains(e["message"].(string), "token was issued by https://api.other.example") {
+		t.Fatalf("error = %v", e)
+	}
+	if len(h.platform.requests) != 0 {
+		t.Fatalf("no request may leave: %+v", h.platform.requests)
+	}
+}
+
+func TestManifestAPIURLNeverReceivesProfileToken(t *testing.T) {
+	h := newHarness(t)
+	delete(h.env, "GRAVITY_API_URL")
+	writeProfiles(t, h.config, "version: 2\ncurrent: acme\nprofiles:\n  acme:\n    apiUrl: https://api.gravitydocs.io\n    token: gr_user_secret\n    tokenKind: user\n")
+	h.write(".gravity.yaml", "version: 2\napiUrl: "+h.platform.srv.URL+"\n")
+	for _, args := range [][]string{{"status"}, {"passes"}, {"init"}, {"whoami"}, {"explain", "p_1"}} {
+		expectCode(t, h, h.run(args...), 2)
+		if !strings.Contains(h.stderr.String(), "token was issued by https://api.gravitydocs.io") || !strings.Contains(h.stderr.String(), ".gravity.yaml apiUrl") {
+			t.Fatalf("%v stderr = %s", args, h.stderr.String())
+		}
+	}
+	h.platform.mu.Lock()
+	defer h.platform.mu.Unlock()
+	for _, r := range h.platform.requests {
+		if r.Token != "" {
+			t.Fatalf("%s %s carried a token", r.Method, r.Path)
+		}
+	}
+	if len(h.platform.requests) != 0 {
+		t.Fatalf("requests = %+v", h.platform.requests)
+	}
+}
+
+func TestManifestAPIURLWithEnvToken(t *testing.T) {
+	h := newHarness(t)
+	delete(h.env, "GRAVITY_API_URL")
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.write(".gravity.yaml", "version: 2\napiUrl: "+h.platform.srv.URL+"\n")
+	expectCode(t, h, h.run("whoami"), 0)
+	if reqs := h.platform.find("GET", "/api/v1/whoami"); len(reqs) != 1 || reqs[0].Token != "gr_repo_ci" {
+		t.Fatalf("whoami follows the manifest apiUrl: %+v", reqs)
 	}
 }
 
@@ -117,7 +153,7 @@ func TestProfileImportedFromV0Config(t *testing.T) {
 	if err := os.MkdirAll(h.config, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	legacy := []byte("token: sk_live_legacy\n")
+	legacy := []byte("token: sk_live_legacy\napiUrl: " + h.platform.srv.URL + "\n")
 	if err := os.WriteFile(filepath.Join(h.config, "config.yaml"), legacy, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +288,15 @@ func TestStatus(t *testing.T) {
 	if !strings.Contains(h.stderr.String(), "health is blocked") {
 		t.Fatalf("stderr = %s", h.stderr.String())
 	}
+	expectCode(t, h, h.run("status", "--check", "--json"), 1)
+	checked := h.envelope()
+	e, _ := checked["error"].(map[string]any)
+	if checked["ok"] != false || e == nil || e["code"] != "unhealthy" || e["exitCode"].(float64) != 1 || !strings.Contains(e["message"].(string), "health is blocked") {
+		t.Fatalf("envelope = %v", checked)
+	}
+	if data, _ := checked["data"].(map[string]any); data == nil || data["status"] == nil {
+		t.Fatalf("status data stays in the failure envelope: %v", checked)
+	}
 	expectCode(t, h, h.run("status", "--json"), 0)
 	h.golden("status.json")
 }
@@ -368,6 +413,18 @@ func TestPassesList(t *testing.T) {
 	}
 }
 
+func TestPassesDetachedHeadNeedsBranch(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_abc"
+	h.env["CI"] = "true"
+	gitCmd(t, h.dir, "checkout", "-q", "--detach")
+	expectCode(t, h, h.run("passes", "--json"), 2)
+	if e := h.envelope()["error"].(map[string]any); e["code"] != "branch_unknown" {
+		t.Fatalf("error = %v", e)
+	}
+	expectCode(t, h, h.run("passes", "--branch", "main"), 0)
+}
+
 func TestPassesOverlayLocalManifest(t *testing.T) {
 	h := newHarness(t)
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
@@ -475,6 +532,23 @@ func TestInitDryRunAndWrite(t *testing.T) {
 	}
 	if _, err := config.Load(filepath.Join(h.dir, ".gravity.yaml")); err != nil {
 		t.Fatalf("written manifest must be valid: %v", err)
+	}
+}
+
+func TestInitWritesNothingWhenConnectFails(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	h.platform.handle("POST /api/v1/repos/connect", func(w http.ResponseWriter, _ *http.Request, body map[string]any) {
+		if body["dryRun"] == true {
+			_, _ = io.WriteString(w, connectBody)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":{"code":"forbidden","message":"Not allowed"}}`)
+	})
+	expectCode(t, h, h.run("init"), 2)
+	if _, err := os.Stat(filepath.Join(h.dir, ".gravity.yaml")); !os.IsNotExist(err) {
+		t.Fatal("a failed connect leaves no manifest behind")
 	}
 }
 

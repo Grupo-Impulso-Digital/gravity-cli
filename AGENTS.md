@@ -124,7 +124,10 @@ payload, generator stamps and the HTTP `User-Agent`.
   profile `default` once and leaves the file untouched.
 - **Precedence**: token `--token` > `GRAVITY_TOKEN` > profile (`--profile` >
   `GRAVITY_PROFILE` > current). API URL `--api-url` > `GRAVITY_API_URL` >
-  manifest `apiUrl` > profile `apiUrl` > default.
+  manifest `apiUrl` > profile `apiUrl` > default. `auth.Resolve` refuses a
+  profile token whose issuing host differs from the resolved API URL
+  (`HostMismatchError`), so a cloned repository's `apiUrl` never receives a
+  stored token.
 - **Path safety**: any caller-supplied path that hits the filesystem or git goes
   through `internal/pathsafe` (rejects absolute paths and `..` escapes). Don't
   re-implement the check inline.
@@ -176,7 +179,8 @@ payload, generator stamps and the HTTP `User-Agent`.
   repository and writes `version: 2`; detection, questions, CI files and the v1
   conversion arrive with C3.
 - **`ci/` templates and `.github/workflows/docs.yml` still target v0.x**; they
-  are rewritten with the 1.0 action (milestone C4).
+  are rewritten with the 1.0 action (milestone C4) Until then the dogfood
+  `docs.yml` runs on `workflow_dispatch` only, so pushes and PRs stay green.
 - **`read_file` reads at the end of the range under review** (`--to`, else
   `HEAD`), not the working tree, so the agent stays deterministic in CI.
 - **No live integration tests**: server interactions use `httptest` mocks.

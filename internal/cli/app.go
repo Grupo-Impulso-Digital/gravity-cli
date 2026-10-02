@@ -120,6 +120,22 @@ func (a *app) loadManifest(root string) (*config.Manifest, error) {
 	return m, nil
 }
 
+func (a *app) repoAPIURL(ctx context.Context) string {
+	dir, err := a.workdir()
+	if err != nil {
+		return ""
+	}
+	repo, err := git.Open(ctx, dir)
+	if err != nil {
+		return ""
+	}
+	m, err := config.Load(config.ManifestPath(repo.Root, a.manifestOverride()))
+	if err != nil || m == nil {
+		return ""
+	}
+	return m.APIURL
+}
+
 func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
 	profiles, imported, err := auth.LoadProfiles()
 	if err != nil {
@@ -135,6 +151,10 @@ func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
 		ManifestAPIURL: manifestAPIURL,
 		Getenv:         a.env,
 	}, profiles)
+	var hm *auth.HostMismatchError
+	if errors.As(err, &hm) {
+		return auth.Credentials{}, &ExitError{Code: CodeError, ErrCode: "token_host_mismatch", Err: err}
+	}
 	if err != nil {
 		return auth.Credentials{}, Fail(CodeError, err)
 	}
@@ -157,14 +177,9 @@ func requireToken(creds auth.Credentials) error {
 	return nil
 }
 
-func explainAPI(err error, creds auth.Credentials) error {
+func explainAPI(err error) error {
 	if err == nil {
 		return nil
-	}
-	if errors.Is(err, api.ErrUnauthorized) {
-		if host := creds.HostMismatch(); host != "" {
-			return Fail(CodeError, fmt.Errorf("%w (token was issued by %s, but the API URL is %s)", err, host, creds.APIURL))
-		}
 	}
 	var ee *ExitError
 	if errors.As(err, &ee) {
