@@ -2,10 +2,63 @@
 
 ## v1.0.0 — Unreleased
 
-Clean break (R12): the v0.x command set and the v1 manifest are removed. This
-entry tracks milestones C1 (CLI core), C2 (passes) and C3 (setup UX).
+Clean break: the v0.x command set and the v1 manifest are removed, and every CI
+provider runs one step, `gravity run`. This entry covers milestones C1 (CLI
+core), C2 (passes), C3 (setup UX) and C4 (multi-repository intelligence and
+CI). It is published only after the major-pinned v0.3.x release, so v0.3
+pipelines never pick it up by accident.
+
+### Upgrading from 0.x
+
+- Pipelines on `ci/github@v0`, `GRAVITY_VERSION=0` or the 0.x templates keep
+  installing the newest 0.x release.
+- Run `gravity init` in the repository: it converts `.gravity.yaml` to version
+  2 once (the original is kept as `.gravity.v1.yaml.bak`), registers the
+  passes, mints a repository token with the right scopes, writes the
+  single-step CI file and installs the secret.
+- Prefer the repository token (`gr_repo_…`) that init mints over a v0.x
+  organization key in CI: it carries only the scopes its passes need.
 
 ### Added
+
+- Multi-repository ownership (C4). Units are product-wide and any pass whose
+  change touches a unit may update the blocks bound to it, whichever repository
+  wrote them last: guides now reach pages outside their target through units
+  the repository declares or implements (updates of bound blocks only). Every
+  authored block carries provenance (commits and source refs), and repositories
+  that only document a unit are recorded with the `documents` role.
+- Claim verdicts are settled against the product inventory, block writers and
+  Nucleus: `true-elsewhere` (with the owning repository as evidence),
+  `unverifiable` (a soft note), `contradicted-here` (a finding); a
+  contradiction about behaviour another repository implements becomes a
+  cross-repository hint for that repository.
+- Handoffs: pull requests predict them from the API units the change adds or
+  removes; write runs report what the platform detected on ingest. Competing
+  changes (another run's open proposal on the same blocks) are listed in the
+  run output, the step summary and the pull request comment.
+- `gravity explain <page>`: per block the last writer (repository, pass,
+  commit, run), the earlier writers, the ownership, and the page's repository
+  lock with a link to the file.
+- Pull request comments on GitHub, GitLab (`GITLAB_TOKEN`), Bitbucket
+  (`BITBUCKET_ACCESS_TOKEN`) and Azure DevOps (`SYSTEM_ACCESSTOKEN`), upserted
+  by a per-repository marker and created only once a pull request has impact.
+  Findings become GitHub workflow commands, Azure logging commands or a GitLab
+  Code Quality report (`gl-code-quality-report.json`); `--annotate` on `run`
+  and `check`.
+- Every CI run writes a summary: GitHub step summary (pushes and releases too),
+  Azure build summary, `gravity-report.md` elsewhere. The GitHub action
+  receives `run-url` and `exit-code` outputs.
+- The 1.0 GitHub action (`ci/github@v1`): one step that resolves the version,
+  caches the prebuilt binary per release, installs it with `install.sh` (or
+  `install.ps1` on Windows) and runs `gravity run`, `check` or `status`.
+  Inputs `token`, `command`, `args`, `version` (default `1`),
+  `working-directory`, `api-url`.
+- Single-step templates for GitLab (with the Code Quality artifact), Bitbucket
+  and Azure under `ci/`, identical to what `gravity init` writes.
+- `install.sh` and `install.ps1` resolve `GRAVITY_VERSION=<major>` to the
+  newest release of that major and default to `1`; `latest`, `v1.2.3` and
+  `1.2.3` still work. `GRAVITY_RESOLVE_ONLY=1` prints the tag without
+  installing.
 
 - `gravity init` (C3): local detection (remote, languages, OpenAPI documents,
   UI and server routes, docs folders, runbooks, releases, CI provider), at most
@@ -60,10 +113,9 @@ entry tracks milestones C1 (CLI core), C2 (passes) and C3 (setup UX).
 - `gravity preview`: every pass as a dry run over the working tree, with page
   diffs, the composed instruction layers and the cost.
 - `gravity check`: the PR gate, with a built-in drift and coverage check when
-  no check pass is declared, the doc-impact report in the GitHub step summary,
-  GitHub annotations, the upserted PR comment (`GITHUB_TOKEN`), and exit `1`
-  on findings in `--fail-on`. Fork pull requests without a token exit `0` with
-  a warning.
+  no check pass is declared, the doc-impact report, annotations and the
+  upserted PR comment, and exit `1` on findings in `--fail-on`. Fork pull
+  requests without a token exit `0` with a warning.
 
 - New command tree: `login` (device flow, `--with-token`), `logout`, `whoami`,
   `init`, `status`, `passes`
@@ -99,8 +151,19 @@ entry tracks milestones C1 (CLI core), C2 (passes) and C3 (setup UX).
 - A `token_to_manifest_host` warning fires when `--token`/`GRAVITY_TOKEN` is
   sent to a manifest `apiUrl` that is not the default host.
 
+### Changed
+
+- `.github/workflows/docs.yml` (this repository's own docs) is one step on
+  pushes, tags and pull requests; this repository's `.gravity.yaml` is version
+  2 with passes-as-code.
+- The release workflow refuses a `v1.*` tag until a major-pinned v0.x release
+  exists, and moves the `v1` tag the action is referenced by.
+
 ### Removed
 
+- The v0.x GitLab template and Bitbucket pipe (`ci/gitlab/.gitlab-ci.yml`,
+  `ci/bitbucket/pipe`), and the action's `site`, `format`, `since` and
+  `continue-on-findings` inputs.
 - `auth *`, `doctor`, `ping`, `repos`, `spaces`, `sync`, `docs *`,
   `release-notes`, `check api|docs`, `coverage`, `capture`, `nucleus *`:
   invoking one prints its replacement and exits `2`.

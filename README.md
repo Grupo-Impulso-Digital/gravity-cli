@@ -1,77 +1,100 @@
 # gravity-cli
 
-`gravity` keeps a product's documentation in step with its code. A repository
-declares **code facts** in a small `.gravity.yaml`; the Gravity app holds the
+`gravity` keeps a product's documentation true to its code. A repository
+declares a few **code facts** in `.gravity.yaml`; the Gravity app holds the
 **editorial intent**: which sites and spaces the repository feeds, what each
-**pass** writes, for whom and in which voice. `gravity run` in CI detects what
-changed since each pass last ran and lets every pass update its target; the
-changes of one run are reviewed in the app as one bundle.
+**pass** writes, for whom, in which voice. In CI, `gravity run` loads the
+repository's effective configuration from the app, works out what changed since
+each pass last ran (commits **and** code: OpenAPI operations, symbols, units),
+and lets every pass update its target. Everything one run proposes is reviewed
+in the app as one bundle.
 
 > **1.0 is a clean break.** The v0.x commands (`sync`, `docs`, `release-notes`,
 > `check api|docs`, `coverage`, `capture`, `nucleus`, `auth`, `doctor`, `ping`,
-> `repos`, `spaces`) and the v1 manifest are gone. Invoking a removed command
-> prints its replacement and exits `2`. Keep using gravity v0.3 until your
-> pipeline is migrated.
-
-> **This build is milestone C3 (setup UX).** `login`, `logout`, `whoami`,
-> `init` (detection, at most three questions, CI wiring, token and secret),
-> `status`, `passes`, `explain`, `version`, `run`, `preview` and `check` work
-> end to end. The 1.0 GitHub action and per-provider PR comments (C4) are still
-> to come.
+> `repos`, `spaces`) and the v1 manifest are gone; invoking a removed command
+> prints its replacement and exits `2`. `gravity init` converts a v1
+> `.gravity.yaml` in one step. Pipelines pinned to `ci/github@v0` or
+> `GRAVITY_VERSION=0` stay on 0.x until you migrate them.
 
 ## Install
 
-`gravity` ships as a single static binary — no runtime, no dependencies.
-
-**macOS / Linux — one line:**
+`gravity` is a single static binary.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.sh | sh
 ```
 
-The script auto-detects your OS/arch, downloads the matching binary from the
-latest [release](https://github.com/Grupo-Impulso-Digital/gravity-cli/releases), verifies its
-checksum, and installs it to `/usr/local/bin` (or `~/.local/bin`). Override the
-target with `GRAVITY_INSTALL_DIR=...`, or pin a version with `GRAVITY_VERSION=v0.1.0`.
-
-**Homebrew (macOS / Linux):**
+The script installs the newest 1.x release for your OS and architecture,
+verifies its checksum, and puts it in `/usr/local/bin` (or `~/.local/bin`).
+`GRAVITY_VERSION` takes a major (`1`), a release (`v1.2.3`) or `latest`;
+`GRAVITY_INSTALL_DIR` picks the directory.
 
 ```bash
-brew install Grupo-Impulso-Digital/tap/gravity
-```
-
-**Scoop (Windows):**
-
-```powershell
+brew install Grupo-Impulso-Digital/tap/gravity                     # macOS, Linux
 scoop bucket add impulso https://github.com/Grupo-Impulso-Digital/scoop-bucket
-scoop install gravity
-```
-
-**Direct download:** grab the archive for your platform from the
-[releases page](https://github.com/Grupo-Impulso-Digital/gravity-cli/releases), unpack it, and
-put `gravity` on your `PATH`. Every release ships a `checksums.txt`.
-
-**From source** (requires Go 1.25+):
-
-```bash
+scoop install gravity                                               # Windows
+irm https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.ps1 | iex
 go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
-
-# Or build locally from a checkout
-make build      # -> ./bin/gravity
 ```
 
 ## Quick start
 
 ```bash
-gravity login           # browser device flow; stores a profile in ~/.config/gravity/profiles.yaml
-gravity init            # detect, suggest passes, write .gravity.yaml + the CI file, install the token
-gravity preview         # what every pass would write for your working tree
-gravity status          # auth, product, passes, targets, watermarks, runs, health, capability warnings
-gravity passes          # which passes apply to this branch and trigger
-gravity passes show developer-api
+gravity login      # browser sign-in; stores a profile in ~/.config/gravity/profiles.yaml
+gravity init       # at most three questions, a preview, then .gravity.yaml + the CI file + the secret
+gravity preview    # every page your working tree would change, before you push
 ```
 
-## The manifest (`.gravity.yaml`, version 2)
+`gravity init` writes the CI file for your provider. On GitHub it is one step:
+
+```yaml
+- uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
+  with:
+    token: ${{ secrets.GRAVITY_TOKEN }}
+```
+
+Anywhere else it is one line, with `GRAVITY_TOKEN` from the CI secret store:
+
+```bash
+curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 GRAVITY_INSTALL_DIR=.gravity-bin sh && .gravity-bin/gravity run
+```
+
+From then on, pull requests get a doc-impact comment, pushes to the default
+branch propose updates for review, and release tags write the changelog. See
+[ci/README.md](ci/README.md) for GitLab, Bitbucket and Azure.
+
+```bash
+gravity status     # auth, product, passes, targets, watermarks, last runs, open bundles, health
+gravity passes     # which passes apply to this branch and trigger
+gravity explain dev-portal/api/refunds   # who wrote each block, from which commit and run
+```
+
+## Passes
+
+A pass is one job a repository does for its documentation: a target (site,
+space, optionally a collection), a kind, triggers, audiences and instructions.
+
+| Kind | Writes | Typical target |
+| ---- | ------ | -------------- |
+| `reference` | API reference pages from OpenAPI documents (deterministic api blocks, optional AI prose) | Developer portal › API |
+| `guides` | Guides kept true to the code: an impact analysis, a page plan, then block-level edits that cite commits | Product docs › Guides |
+| `verbatim` | Markdown/MDX files imported as-is and locked to the repository | Handbook |
+| `changelog` | Release pages and an Unreleased page, from commits or `CHANGELOG.md` | Product › Changelog |
+| `nucleus` | Facts about the product in Nucleus, the shared memory, tagged with this repository | product namespace |
+| `check` | Nothing: drift, coverage and claim review for pull requests | — |
+| `capture` | Screenshots-and-steps pages through the Gravity Doc Agent | Product › Guides |
+
+Passes live in the app by default: `gravity init` registers them there, and
+you edit targets, instructions and review rules in the app without touching the
+repository. A pass declared in `.gravity.yaml` (passes-as-code,
+`gravity init --passes-as-code`) appears in the app locked as "managed in
+repo".
+
+Each pass carries its own instructions. The app composes them with the
+organization, site, space and collection layers; the CLI never embeds them,
+and `gravity preview` shows the composed result per pass.
+
+## `.gravity.yaml`
 
 The smallest valid manifest is one line:
 
@@ -79,40 +102,137 @@ The smallest valid manifest is one line:
 version: 2
 ```
 
-Identity comes from the git remote; passes come from the app. Everything else is
-optional: `product`, `apiUrl`, `appPasses` (`allow` | `ignore`), `code`
-(`openapi`, `entrypoints`, `include`, `exclude`, `units`), `docs` and
-`passes` (passes-as-code, shown locked as "managed in repo" in the app). Every
-pass needs a `name` and a `kind` (`guides`, `reference`, `verbatim`,
-`changelog`, `nucleus`, `check`, `capture`); passes that write pages also need
-a `target` of the form `<site>/<space>[/<collection>...]`. The key is
-`triggers`, not `on`.
+Identity comes from the git remote and passes come from the app. Everything else
+is optional: `product`, `apiUrl`, `appPasses` (`allow` | `ignore`), `code`
+(`openapi`, `entrypoints`, `include`, `exclude`, `units`), `docs`, and
+`passes`. Every pass has a `name` and a `kind`; passes that write pages need a
+`target` (`<site>/<space>[/<collection>...]`). The manifest is validated
+against an embedded JSON Schema: an unknown key fails with a suggestion
+(`passes[0].trigers: unknown key (did you mean "triggers"?)`), a `token:`
+anywhere is refused, and paths must stay inside the repository.
 
-The manifest is validated against the embedded JSON Schema
-(`internal/config/schema/gravity.schema.json`). Unknown keys fail with a
-suggestion (`passes[0].trigers: unknown key (did you mean "triggers"?)`), a
-`token:` anywhere is refused, and paths must stay inside the repository. A v1
-manifest is detected and refused outside `gravity init`.
+Only the authoritative branch (the default branch unless the app says
+otherwise) stores the manifest's passes in Gravity. Other branches see their
+local passes as an overlay (`gravity passes` marks them `repo (local)`).
 
-Only the repository's authoritative branch (the default branch unless the app
-says otherwise) stores the manifest's passes in Gravity. Other branches show
-their local passes as an overlay (`gravity passes` marks them `repo (local)`).
+### One repository, several sites
+
+A repository can feed different sites with different content. Here the same
+service keeps an API reference and integration guides on the developer portal,
+and task guides on the customer help center:
+
+```yaml
+version: 2
+product: acme-platform
+code:
+  openapi: [api/openapi.yaml]
+passes:
+  - name: developer-api
+    kind: reference
+    template: api-reference
+    target: dev-portal/api
+    triggers: [push, pr]
+    audiences: [developers]
+  - name: integration-guides
+    kind: guides
+    template: developer-guide
+    target: dev-portal/guides
+    triggers: [push, pr]
+    scope:
+      paths: ["api/**", "src/server/**"]
+    instructions: |
+      Developer instructions: authentication, endpoints, webhooks and error
+      codes, with request examples. Never describe the UI.
+  - name: help-center
+    kind: guides
+    template: user-guide
+    target: help-center/guides
+    triggers: [push]
+    scope:
+      paths: ["src/ui/**"]
+    instructions: |
+      What customers see and do in the app, one task per page, in plain
+      language. Never mention endpoints or code.
+```
+
+Each pass has its own range, watermark and scope: a change under `src/ui/**`
+runs `help-center` and skips the others at no AI cost.
+
+## Verbatim documents
+
+Some documents must be published exactly as written and edited only in the
+repository: specifications, compliance text, SDK READMEs, handbooks.
+
+```yaml
+passes:
+  - name: handbook
+    kind: verbatim
+    target: internal/handbook
+    triggers: [push]
+    options:
+      files:
+        - include: "docs/handbook/**/*.md"
+          stripPrefix: docs/handbook
+```
+
+Markdown and MDX become native blocks with high fidelity: front matter (title,
+slug, order, description), headings with their anchors, tables, code with its
+language, admonitions and GitHub alerts, mermaid, task lists, footnotes,
+details. Relative images are uploaded, links between files become links between
+pages, and folders become collections. Imported pages are **locked**: read-only
+in the editor with a banner and a link to the file, human edit proposals are
+refused, and AI passes may read and cite them but never change them. A file
+deleted in the repository becomes a deletion proposal. `gravity check` flags a
+code change that contradicts a locked page, as a finding against the
+repository.
+
+## Several repositories, one product
+
+Products span repositories, and ownership moves: services split, features
+migrate, a gateway declares an endpoint that a service behind it implements.
+Gravity does not fence pages per repository.
+
+- **Units are product-wide.** Every API operation (`api:post:/v1/refunds`) and
+  every feature a repository maps is a unit of the product, with contributing
+  repositories and their roles: `declares` (routes or re-exports it),
+  `implements` (owns its behaviour), `documents`. Set the repository's role with
+  `code.units.role` (`[declares, implements]` for a gateway that also
+  implements).
+- **Any pass whose change touches a unit may update the blocks bound to it**,
+  whichever repository wrote them last, including pages outside its own target
+  when this repository declares or implements the unit (updates of bound blocks
+  only, never new pages). Human-written blocks are never overwritten.
+- **Provenance is a history.** Every block records who wrote it (repository,
+  pass, commit, run) and why; `gravity explain <page>` shows the last writer and
+  the earlier ones per block, plus the page's repository lock.
+- **Claims are checked across repositories.** A statement this repository
+  cannot prove is not drift when another repository implements or declares the
+  unit, wrote the block, or recorded the fact in Nucleus (`true elsewhere`). A
+  claim nobody can prove is a soft note. Only a claim this repository's code
+  contradicts is a finding, and when the behaviour belongs to another
+  repository the CLI raises a hint for that repository instead.
+- **Handoffs are detected.** When a unit's source moves from one repository to
+  another, the inventory records the handoff and the new owner's next run
+  reviews the unit's pages. Pull requests already say "`api:post:/v1/refunds`
+  implements moves from gateway to billing-api once merged".
+- **Competing changes surface in review.** When two runs change the same blocks
+  at once, both versions are shown side by side, and the run summary says so.
 
 ## Commands
 
 | Command | Purpose |
 | ------- | ------- |
-| `gravity login` | Device flow: shows a code, opens the approval page, waits for approval, stores the token in a profile named after the organization. `--org`, `--profile`, `--no-browser`; headless: `--token <token>` or `--with-token` (reads it from stdin). |
-| `gravity logout` | Revokes the current user token and removes its profile. `--all`. |
-| `gravity whoami` | Principal, organization, other organizations, token kind, scopes, expiry, API URL, profile. |
-| `gravity init` | Connects the repository in at most three questions (see below). `--yes`, `--product`, `--passes-as-code`, `--app-passes`, `--ci github\|gitlab\|bitbucket\|azure\|jenkins\|circleci\|none`, `--no-secret`, `--dry-run`, `--repo <id>`. Never commits or pushes. |
-| `gravity status` | One view of the repository: auth and profile, connection, manifest, passes with targets, locked flags, watermarks and last runs, recent runs, open bundles, tokens, health and capability warnings (expiring token, missing module, missing scopes, no AI provider). `--runs N`, `--check` (exit `1` when health is not `live`). |
-| `gravity passes` | `list` (default), `show <name>`, `edit <name>`. `--trigger`, `--branch`. |
-| `gravity explain <page>` | Provenance of every block of a page (page id, `site/space/page` or viewer URL). `--block <key>`. |
-| `gravity run` | The pipeline: plan, ranges, zero-cost scope skips, one leased run, passes, finish. `--pass`, `--trigger`, `--branch`, `--from`, `--to`, `--note`, `--dry-run`, `--lease-timeout`, `--parallel`, `--no-comment`, `--strict`. |
-| `gravity preview` | Every pass as a dry run over your working tree (or `--committed`): the pages that would change, the instructions the app composes, the cost. `--format text\|diff\|json`, `--open`. Never writes. |
-| `gravity check` | The pull request gate: check passes (or built-in drift and coverage) plus every pass's doc impact. Step summary, GitHub annotations and the PR comment (when `GITHUB_TOKEN` is set or `--comment`). `--fail-on`, `--annotate`. |
-| `gravity version` | Version, commit, build date, Go version, platform (also `--version`). |
+| `gravity login` | Device flow sign-in; `--org`, `--profile`, `--no-browser`, `--with-token` (stdin). |
+| `gravity logout` | Revoke the current user token and remove its profile; `--all`. |
+| `gravity whoami` | Principal, organization, token kind, scopes, expiry, API URL, profile. |
+| `gravity init` | Connect the repository in at most three questions; `--yes`, `--product`, `--passes-as-code`, `--app-passes`, `--ci <provider>`, `--no-secret`, `--dry-run`, `--repo <id>`. Never commits or pushes. |
+| `gravity status` | Auth, connection, manifest, passes with targets and watermarks, recent runs, open bundles, tokens, health and capability warnings; `--runs N`, `--check`. |
+| `gravity passes` | `list`, `show <name>`, `edit <name>`; `--trigger`, `--branch`. |
+| `gravity run` | The pipeline; `--pass`, `--trigger`, `--branch`, `--from`, `--to`, `--note`, `--dry-run`, `--lease-timeout`, `--parallel`, `--no-comment`, `--annotate`, `--strict`. |
+| `gravity preview` | Every pass as a dry run over the working tree (or `--committed`): page diffs, composed instructions, cost; `--format text\|diff\|json`, `--open`. |
+| `gravity check` | The pull request gate: check passes (or a built-in drift and coverage check) plus every pass's doc impact; `--fail-on`, `--annotate`, `--comment`. |
+| `gravity explain <page>` | Per block: last writer (repository, pass, commit, run), history, ownership and the page lock; `--block <key>`. |
+| `gravity version` | Version, commit, build date, Go version, platform. |
 
 ### `gravity init`
 
@@ -133,130 +253,58 @@ Preview   (every file with its full content, passes, new spaces, token scopes, s
 ✓ Connected billing-api with 4 passes        Try it now:  gravity preview
 ```
 
-- Detection is local: the git remote, languages, OpenAPI/Swagger documents,
-  UI routes (Next.js, TanStack, React Router, SvelteKit, Nuxt/Vue, Angular),
-  server routes and cobra commands, Markdown folders, runbooks, release tags
-  and `CHANGELOG.md`, the CI provider, and an existing `.gravity.yaml`.
-- The product question is skipped when `--product`, the manifest or the
-  existing registration decides it; with no product in the organization a new
-  one is created silently. A repository that already has passes in the app
-  (or `--repo <id>`) skips straight to the write question.
-- Passes are registered in the app (editable there) unless you pass
-  `--passes-as-code`, which declares them in `.gravity.yaml` instead (locked
-  as "managed in repo" in the app). Targets the server flags are marked
-  "(needs approval)".
-- A v1 `.gravity.yaml` replaces the passes question with its conversion
-  report; the v2 file is written in place (passes-as-code, or `--app-passes`)
-  and the original is kept as `.gravity.v1.yaml.bak`. Converted verbatim
-  passes adopt the pages v0.x already synced.
-- The repository token carries exactly the scopes its passes need. It is
-  installed with `gh secret set` / `glab variable set` (on stdin, never in
-  argv) when that CLI is signed in to the remote's host, otherwise printed
-  once on stderr with where to paste it. CI files: GitHub
-  `.github/workflows/gravity.yml`, GitLab `.gitlab/gravity.yml` plus an
-  `include:` in `.gitlab-ci.yml`, Bitbucket `bitbucket-pipelines.yml`, Azure
-  `azure-pipelines.gravity.yml`; Jenkins and CircleCI snippets are printed.
-  Existing files are never overwritten.
-- `--yes` accepts every suggestion (required without a terminal);
-  `--dry-run` stops after the preview. A developer without
-  `docs.repos.manage` is told how to get the repository pre-registered instead
-  of being asked questions.
-
-On a terminal, prompts use `charmbracelet/huh` (`ACCESSIBLE=1` switches to its
-line-based mode), and `init`, `run`, `preview` and `check` show live per-step
-progress and a summary card with links. `--json`, `CI=true`, `NO_COLOR` and
-non-terminals get plain output.
+Detection is local (remote, languages, OpenAPI documents, UI and server routes,
+docs folders, runbooks, release tags, CI provider). The repository token
+carries exactly the scopes its passes need; it is installed with
+`gh secret set` / `glab variable set` on stdin when that CLI is signed in, or
+printed once to paste. Existing CI files are never overwritten. `--yes` accepts
+every suggestion (required without a terminal); `--dry-run` stops after the
+preview.
 
 ### Global flags
 
-`--profile` (env `GRAVITY_PROFILE`), `--api-url` (env `GRAVITY_API_URL`),
-`--token` (env `GRAVITY_TOKEN`), `--manifest` (env `GRAVITY_MANIFEST`),
-`-C <dir>`, `--json`, `--no-color` (also `NO_COLOR`), `-q/--quiet`,
-`-v/--verbose`.
+`--profile` (`GRAVITY_PROFILE`), `--api-url` (`GRAVITY_API_URL`), `--token`
+(`GRAVITY_TOKEN`), `--manifest` (`GRAVITY_MANIFEST`), `-C <dir>`, `--json`,
+`--no-color` (`NO_COLOR`), `-q`, `-v`.
 
-- Credentials: `--token` > `GRAVITY_TOKEN` > profile (`--profile` >
-  `GRAVITY_PROFILE` > the current profile). Tokens are never read from
-  `.gravity.yaml`.
+- Credentials: `--token` > `GRAVITY_TOKEN` > profile. Tokens are never read
+  from `.gravity.yaml`.
 - API URL: `--api-url` > `GRAVITY_API_URL` > manifest `apiUrl` > profile
-  `apiUrl` > `https://api.gravitydocs.io`. A profile token is only ever sent to
-  the host that issued it: when the resolved API URL is another host, the
-  command exits `2` (`token_host_mismatch`) before any request. Pair another
-  host with `--token` or `GRAVITY_TOKEN`, or sign in to it with
-  `gravity login --api-url <url> --profile <name>`. `gravity init` never signs
-  in to a host named only by `.gravity.yaml`: run that `gravity login --api-url`
-  first. When `--token` or `GRAVITY_TOKEN` goes to a manifest `apiUrl` other
-  than the default host, a `token_to_manifest_host` warning suggests pinning
-  `GRAVITY_API_URL`. API URLs must use https; plain http is accepted for
-  localhost only.
+  `apiUrl` > `https://api.gravitydocs.io`. A profile token is only sent to the
+  host that issued it (`token_host_mismatch` otherwise). API URLs must use
+  https; plain http is accepted for localhost only.
 - `--json` prints exactly one JSON document on stdout
-  (`{ ok, command, version, data, warnings, error }`); progress and messages go
-  to stderr.
-- With `CI=true`, or when stdin/stderr is not a terminal, output is plain ASCII
-  and nothing prompts.
+  (`{ ok, command, version, data, warnings, error }`); progress goes to stderr.
+- With `CI=true`, or without a terminal, output is plain ASCII and nothing
+  prompts. On a terminal, prompts and live progress use the Charm libraries.
+- CI detection is overridable with `GRAVITY_TRIGGER`, `GRAVITY_BRANCH`,
+  `GRAVITY_HEAD_SHA`, `GRAVITY_BASE_SHA`, `GRAVITY_PR`, `GRAVITY_TAG`,
+  `GRAVITY_RUN_URL`.
 
-### Profiles
-
-CLI 1.x reads and writes `~/.config/gravity/profiles.yaml` (mode `0600`,
-honors `XDG_CONFIG_HOME`). On first use, a token found in the v0.x
-`~/.config/gravity/config.yaml` is copied into the profile `default`; the v0.x
-file is never modified, so a v0.3 binary on the same machine keeps working.
+Profiles live in `~/.config/gravity/profiles.yaml` (mode `0600`, honors
+`XDG_CONFIG_HOME`). A token in the v0.x `config.yaml` is copied once into the
+profile `default`; the old file is never modified.
 
 ## Exit codes
 
 | Code | Meaning |
 | ---- | ------- |
-| `0`  | success |
-| `1`  | findings: `check` findings in `failOn`, or `status --check` on an unhealthy repository |
-| `2`  | operational error: auth, network, bad input, invalid manifest, missing target, removed command |
-| `3`  | license refusal (`module_disabled`, `seat_limit`); ask a workspace administrator |
+| `0` | Success, or nothing to do (no change in scope, fork pull request without a token). |
+| `1` | Findings: `check` findings in `failOn` (`run` and `check`), or `status --check` on an unhealthy repository. |
+| `2` | Operational error: auth, network, bad input, invalid manifest, missing target, failed pass, lease timeout, removed command. |
+| `3` | Licence refusal (`module_disabled`, `seat_limit`): ask a workspace administrator. |
 
-A `404` is never treated as "feature unavailable": the CLI reads server
-capabilities from `/whoami` and refuses servers without CLI 1.0 pipelines.
-`429` and `5xx` answers are retried three times with exponential backoff from
-one second, honoring `Retry-After`.
+Precedence is `3` > `2` > `1` > `0`. Documentation writes never fail a deploy:
+only `check` findings exit `1`. `--strict` turns unapproved targets and missing
+scopes into `2` and missing modules into `3`.
 
 ## Development
 
 ```bash
-make build   # build ./bin/gravity
+make build   # ./bin/gravity
 make test    # go test ./...
-make vet     # go vet ./...
-make fmt     # go tool golangci-lint fmt  (gofumpt + goimports)
-make lint    # go tool golangci-lint run  (govet + staticcheck + curated set)
+make lint    # golangci-lint (pinned in go.mod) incl. the format check
 make ci      # lint + test + build
 ```
 
-`golangci-lint` is pinned via the go.mod `tool` directive, so `make lint` needs
-no separate install. Contributor standards and architecture conventions live in
-[AGENTS.md](AGENTS.md).
-
-## Architecture
-
-```
-cmd/gravity            entrypoint (signal-aware context)
-internal/cli           cobra command tree, global flags, output modes, exit codes
-internal/ui            output for terminals, CI logs and the --json envelope; huh prompts, bubbletea progress, summary cards
-internal/auth          profiles.yaml, credential precedence, device login
-internal/config        manifest v2: strict parsing, embedded JSON Schema, did-you-mean, v1 detection and conversion, token scopes
-internal/config/legacy v1 manifest model (input of the v1 conversion)
-internal/api           REST client for the CLI 1.0 contract + LLM gateway, error envelope, retries
-internal/ci            CI provider detection (GitHub, GitLab, Bitbucket, Azure, Jenkins, CircleCI, generic)
-internal/detect        local repository detection for init
-internal/setup         init suggestions: product ranking, target site, pass templates, spaces to create
-internal/cisetup       CI file templates per provider, gh/glab secret installers
-internal/plan          plan fetch, manifest overlay (the repository wins on declared passes), skip decisions
-internal/changeset     range resolution per trigger, ChangeSet, OpenAPI diff, symbols, unit mapping
-internal/normalize     product slugs, API unit keys, canonical JSON (shared golden fixtures)
-internal/git           wrapper over the system git binary
-internal/glob          doublestar path matching
-internal/run           run orchestration: connect, plan, lease wait, heartbeat, ingest, passes, finish, exit code
-internal/passes        Pass interface and the seven kinds: guides, reference, verbatim, changelog, nucleus, check, capture
-internal/verbatim      Markdown/MDX -> native blocks with high fidelity; file -> page mapping
-internal/agent         one agent harness: forced submit, token budgets, ref-aware git tools, doc tools
-internal/prompts       baked fallbacks of the hosted pass prompts
-internal/report        PR doc-impact comment, step summary, annotations, page diffs
-internal/docs          OpenAPI -> api blocks
-internal/checks        OpenAPI parsing (libopenapi)
-internal/pathsafe      repo-root path validation (leaf, stdlib-only)
-internal/version       version and build info
-```
+Contributor standards and the architecture live in [AGENTS.md](AGENTS.md).

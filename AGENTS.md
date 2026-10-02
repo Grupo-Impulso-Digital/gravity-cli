@@ -10,9 +10,11 @@ tool.
 `gravity` connects a repository to the Gravity docs platform and runs its
 documentation **passes** in CI. Code facts live in the repository
 (`.gravity.yaml`, manifest v2); editorial intent (targets, instructions,
-review) lives in the app. It is a single static Go binary that signals results
+review) lives in the app, and the CLI loads the effective configuration from
+the app on every run. It is a single static Go binary that signals results
 through its exit code. The authoritative design is the platform repository's
-`docs/pipelines/spec.md` (CLI milestones C1-C4).
+`docs/pipelines/spec.md` (CLI milestones C1-C4); CLI-side deviations are
+recorded with each milestone.
 
 ## Architecture
 
@@ -21,20 +23,22 @@ One-way layering: dependencies point downward. **No package imports
 
 ```
 cmd/gravity              entrypoint: signal-aware context
-  └─ internal/cli        cobra command tree, global flags, exit codes (orchestration)
+  └─ internal/cli        cobra command tree, global flags, exit codes, report publishing (orchestration)
        ├─ internal/ui         TTY / plain CI / --json envelope output, huh prompts, bubbletea progress, lipgloss cards
        ├─ internal/auth       profiles.yaml, credential precedence, device login
        ├─ internal/plan       plan fetch, manifest overlay, skip decisions
-       ├─ internal/run        run orchestration: plan/lease loop, heartbeat, ingest, passes, finish
-       │    └─ internal/passes  Pass interface + guides, reference, verbatim, changelog, nucleus, check, capture
+       ├─ internal/run        run orchestration: plan/lease loop, heartbeat, ingest (roles, documents), handoffs, passes, finish
+       │    └─ internal/passes  Pass interface + guides, reference, verbatim, changelog, nucleus, check, capture;
+       │         │              Ownership (product-wide units, roles, claim verdicts), unit reach, provenance
        │         ├─ internal/verbatim  Markdown/MDX -> native blocks, file -> page mapping, link rewriting
        │         └─ internal/agent     one harness: forced submit, token budget, git + doc tools, submit tools
-       ├─ internal/report     PR comment, step summary, annotations, page diffs
+       ├─ internal/report     doc-impact comment and run summary; comment upsert on GitHub, GitLab, Bitbucket, Azure;
+       │                      GitHub/Azure annotations, GitLab Code Quality; page diffs
        ├─ internal/prompts    hosted pass prompts with baked fallbacks
        ├─ internal/changeset  range resolution, ChangeSet, OpenAPI diff, symbols, unit mapping
        ├─ internal/setup      init suggestions: product ranking, target site, pass templates, spaces to create
        │    └─ internal/detect  local repository detection (languages, specs, routes, docs, releases, CI files)
-       ├─ internal/cisetup    CI file templates per provider, gh/glab secret installers (token on stdin)
+       ├─ internal/cisetup    CI file templates per provider (also published under ci/), gh/glab secret installers
        ├─ internal/ci         CI provider detection
        ├─ internal/api        REST client for the CLI 1.0 contract + LLM gateway
        ├─ internal/docs       OpenAPI -> api blocks
@@ -45,6 +49,10 @@ cmd/gravity              entrypoint: signal-aware context
        ├─ internal/glob       doublestar matching (leaf)
        ├─ internal/version    the single version variable (ldflags stamp, else build info)
        └─ internal/pathsafe   repo-root path validation (leaf, stdlib-only)
+
+internal/distribution    tests only: install.sh (major resolution, checksum), the GitHub action, ci/ templates, workflows
+ci/                      the GitHub action (ci/github/action.yml) and the CI templates init writes, per provider
+install.sh, install.ps1  release installers (also mirrored by the app's /install.sh route)
 ```
 
 `internal/cli` resolves credentials, the manifest and the repository, then each
@@ -64,52 +72,55 @@ make ci      # lint + test + build  — what CI runs
 The linter is pinned via the go.mod `tool` directive, so `make lint` uses the
 same `golangci-lint` version as CI with no separate install. Config lives in
 [`.golangci.yml`](.golangci.yml). CI runs on every push/PR via
-`.github/workflows/ci.yml`.
+`.github/workflows/ci.yml`, which is self-contained on purpose: this repository
+is public and cannot call the organization's private reusable `go-ci.yml`, so
+it mirrors that contract directly.
 
 ## Releasing / distribution
 
-The downloadable binaries behind the app's Download button are cut by
-[GoReleaser](https://goreleaser.com) ([`.goreleaser.yaml`](.goreleaser.yaml)),
-driven by `.github/workflows/release.yml` on any `v*` tag:
+The binaries are cut by [GoReleaser](https://goreleaser.com)
+([`.goreleaser.yaml`](.goreleaser.yaml)), driven by
+`.github/workflows/release.yml` on any `v*` tag. It builds static binaries for
+`{linux,darwin,windows} × {amd64,arm64}`, uploads the archives and
+`checksums.txt`, publishes the Homebrew cask (`Grupo-Impulso-Digital/homebrew-tap`)
+and the Scoop manifest (`Grupo-Impulso-Digital/scoop-bucket`), then moves the
+major tag (`v1`) that `uses: …/ci/github@v1` resolves. The version is stamped
+via `-X …/internal/version.Version={{.Version}}` (plus `Commit` and `Date`),
+the same symbols the Makefile sets; an unstamped `go install` build falls back
+to `debug.ReadBuildInfo`.
 
-```bash
-git tag v0.1.0 && git push origin v0.1.0   # → cross-compiled release
-```
-
-That builds static binaries for `{linux,darwin,windows} × {amd64,arm64}`,
-uploads the archives + `checksums.txt` as GitHub Release assets, and publishes
-the Homebrew cask (`Grupo-Impulso-Digital/homebrew-tap`) and Scoop manifest
-(`Grupo-Impulso-Digital/scoop-bucket`). Version is stamped via
-`-X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{.Version}}`,
-the same symbol the Makefile sets; an unstamped `go install` build falls back to
-`debug.ReadBuildInfo`. That one variable feeds `gravity version`, the ping
-payload, generator stamps and the HTTP `User-Agent`.
-
-- **Validate config changes** with `goreleaser check`, and dry-run the whole
-  pipeline with `goreleaser release --snapshot --clean --skip=publish` (writes
-  to `dist/`, gitignored) before tagging.
-- **Two secrets** in repo settings: the default `GITHUB_TOKEN` creates the
-  release; a `GORELEASER_TOKEN` PAT pushes the cask/manifest cross-repo into
-  `Grupo-Impulso-Digital/homebrew-tap` + `…/scoop-bucket`. Without it binaries
-  still ship — only the package-manager publish steps fail. Least-privilege PAT:
-  a **fine-grained** token, resource owner `Grupo-Impulso-Digital`, scoped to
-  just those two repos, with **Contents: read and write** (Metadata: read is
-  added automatically). A classic PAT with the `repo` scope also works but grants
-  far more than needed.
-- **`install.sh`** (repo root) is the `curl … | sh` installer; it reconstructs
-  the archive name from the release tag + `uname`, so keep it in lockstep with
-  the archive `name_template` in `.goreleaser.yaml`.
-- The binaries are **unsigned**. `curl`/terminal downloads aren't Gatekeeper-
-  quarantined, and the Homebrew cask strips the quarantine xattr on install, so
-  no notarization is wired up. Revisit only if a browser-download path is added.
+- **1.0 release gate.** A `v1.*` tag fails its `gate` job unless a `v0.x`
+  release exists whose action and `install.sh` default to major `0` (milestone
+  C0.1): without it every v0.3 pipeline would install 1.0 and break. The 1.0
+  release notes header tells v0.3 users how to stay on 0.x or migrate.
+- **Majors are pinned everywhere.** `install.sh`/`install.ps1` default to
+  `GRAVITY_VERSION=1` and resolve `<major>` to the newest `v<major>.x.y`
+  release (pre-releases excluded); the action's `version` input defaults to
+  `1`; the CI templates install `GRAVITY_VERSION=1`. Bump all of them together
+  for a new major, and keep the app's `/install.sh` route byte-identical to
+  `install.sh`.
+- **Validate** with `goreleaser check`; dry-run with
+  `goreleaser release --snapshot --clean --skip=publish` (writes `dist/`).
+- **Secrets**: the default `GITHUB_TOKEN` creates the release and moves the
+  major tag; a fine-grained `GORELEASER_TOKEN` (Contents read/write on the tap
+  and bucket repositories only) publishes the cask and manifest. Without it the
+  binaries still ship.
+- `install.sh` reconstructs the archive name from the tag and `uname`; keep it
+  in lockstep with the archive `name_template`.
+- The binaries are unsigned; the cask strips the quarantine attribute.
 
 ## Coding standard
 
-- **Code is comment-free.** Write no narrative or explanatory comments. Keep
+- **Code is comment-free** (the owner's rule; it replaces the old "comment the
+  why" guidance). Write no narrative or explanatory comments, no doc prose
+  beyond what tools demand, and no arrange/act/assert markers in tests. Keep
   only what tooling requires: the one-line package doc, a one-line doc comment
   on exported symbols (`revive`'s `exported` rule), `//go:` directives, and
-  `//nolint:x // reason`. Never edit string literals that merely look like
-  comments (prompts, YAML templates).
+  `//nolint:x // reason`. The same holds for `install.sh`, `install.ps1`,
+  `.goreleaser.yaml`, the workflows and the `ci/` files: the shebang is the only
+  comment they need. Explanations belong in commit messages, README,
+  `ci/README.md` and this file. Never edit string or template literals that
+  merely look like comments (prompts, YAML templates).
 - **Errors.** `errors.New` for static messages; `fmt.Errorf("…: %w", err)` to
   wrap an underlying error (preserve the chain — `errorlint` guards it). Error
   strings are lowercase and unpunctuated. No `panic` in non-test code.
@@ -141,22 +152,33 @@ payload, generator stamps and the HTTP `User-Agent`.
   re-implement the check inline.
 - **One file per cobra command** in `internal/cli` (`newXxxCmd`, registered in
   `root.go`).
-- **Dependencies**: stdlib-first. The HTTP client and the Messages protocol are
-  hand-rolled on `net/http`. Direct deps and their reasons: `cobra` (command
-  tree), `libopenapi` (spec parsing and the OpenAPI diff), `goldmark` (Markdown),
-  `go.yaml.in/yaml/v3` (manifest), `santhosh-tekuri/jsonschema/v6` (validating
-  the manifest against the embedded schema, as the spec requires), and the
-  terminal UI the spec names (§11.1): `charmbracelet/huh` (init's prompts,
-  with an accessible line mode that also drives the scripted tests),
-  `charmbracelet/bubbletea` + `charmbracelet/bubbles` (the live per-step
-  progress of `init`, `login`, `run`, `preview`, `check`; bubbles only for its
-  spinner), `charmbracelet/lipgloss` + `muesli/termenv` (the summary card;
-  termenv to force an ASCII profile with `--no-color`). They are used only on a
-  terminal; `--json`, `CI=true` and non-terminals never start them. The UI
-  stack stays on the v1 lines already in the module cache (huh v1.0.0,
-  bubbletea v1.3.10, lipgloss v1.1.0), and `charmbracelet/x/cellbuf` is pinned
-  to `v0.0.15`: the version huh's stack selects is incompatible with the newer
-  `x/ansi` golangci-lint pulls in (see the v0.3 history).
+- **Dependencies**: stdlib-first. The HTTP clients (platform, LLM gateway,
+  GitHub, GitLab, Bitbucket and Azure comment APIs) and the Messages protocol
+  are hand-rolled on `net/http`; no provider SDK is worth its tree for four
+  endpoints each. Every direct dependency has one job:
+  - `spf13/cobra`: the command tree, flags and help.
+  - `pb33f/libopenapi`: OpenAPI 3.x/Swagger parsing and the deterministic
+    OpenAPI diff of the ChangeSet.
+  - `yuin/goldmark`: Markdown parsing for the verbatim converter (GFM,
+    footnotes, definition lists).
+  - `go.yaml.in/yaml/v3`: the manifest, CI files and the action under test.
+  - `santhosh-tekuri/jsonschema/v6`: validating the manifest against the
+    embedded schema, as the spec requires.
+  - `charmbracelet/huh`: init's prompts, with an accessible line mode that also
+    drives the scripted tests.
+  - `charmbracelet/bubbletea` + `charmbracelet/bubbles`: the live per-step
+    progress of `init`, `login`, `run`, `preview`, `check` (bubbles only for its
+    spinner).
+  - `charmbracelet/lipgloss` + `muesli/termenv`: the summary card; termenv to
+    force an ASCII profile with `--no-color`.
+
+  The terminal libraries are used only on a terminal; `--json`, `CI=true` and
+  non-terminals never start them. They stay on the v1 lines already in the
+  module cache (huh v1.0.0, bubbletea v1.3.10, lipgloss v1.1.0), and
+  `charmbracelet/x/cellbuf` is pinned to `v0.0.15` because the version huh's
+  stack selects is incompatible with the newer `x/ansi` golangci-lint pulls
+  in. `golangci-lint` itself is a go.mod `tool`, not a build dependency. A new
+  dependency needs the same one-line justification here, in the same commit.
 - **Testing**: stdlib `testing` + `httptest` mocks, table-driven where it fits.
   No live-server integration tests.
 - **Capabilities, not 404s**: server features come from `/whoami` (and
@@ -213,6 +235,23 @@ payload, generator stamps and the HTTP `User-Agent`.
   platform in `internal/run/platform_test.go`.
 - **Change the Markdown converter**: update `internal/verbatim` and regenerate
   the golden with `go test ./internal/verbatim -update`; review the diff.
+- **Change a CI template**: edit it in `internal/cisetup`, then
+  `go test ./internal/cisetup -update` rewrites the init goldens and the
+  published copies under `ci/`; `internal/distribution` checks that every
+  template installs major `1`, runs `gravity run` and never uses
+  `pull_request_target`.
+- **Add a CI provider's comments or annotations**: a `report.Commenter`
+  (`Upsert` by `report.Marker`, editing only its own comment) tested against an
+  `httptest` API in `internal/report/providers_test.go`, then wire its token in
+  `internal/cli/publish.go` (`commentTarget`).
+- **Change ownership rules**: `passes.Ownership` (`Settle` for claim verdicts,
+  `Others`, `Role`) is the one place that reads contributors; guides' unit
+  reach is `internal/passes/reach.go`; expected handoffs and the `documents`
+  role are `internal/run/handoffs.go`. Cover rule changes in the table test of
+  `internal/passes/ownership_test.go`.
+- **Change the installer or the action**: `internal/distribution` runs
+  `install.sh` against a fake `curl` and runs the action's `gravity` step with a
+  fake binary; keep both green.
 
 ## Known limitations / deliberate decisions
 
@@ -230,11 +269,20 @@ payload, generator stamps and the HTTP `User-Agent`.
 - **Unit keys are filtered client-side** (`passes.Units`: plan inventory plus
   what this run ingested) before `/changes`, so a write never fails on a key
   the product does not know yet.
-- **PR comments are GitHub-only in C2**; other providers get
-  `gravity-report.md` until C4.
-- **`ci/` templates and `.github/workflows/docs.yml` still target v0.x**; they
-  are rewritten with the 1.0 action (milestone C4) Until then the dogfood
-  `docs.yml` runs on `workflow_dispatch` only, so pushes and PRs stay green.
+- **Pull request comments need the provider's token** (`GITHUB_TOKEN`,
+  `GITLAB_TOKEN`, `BITBUCKET_ACCESS_TOKEN`, `SYSTEM_ACCESSTOKEN`); without it
+  the report goes to `gravity-report.md`. Jenkins and CircleCI only get the
+  file. A comment is created only once a pull request has had impact; after
+  that it is updated, down to "No documentation impact".
+- **Unit reach is update-only and block-bound**: guides change a page outside
+  their target only through existing blocks bound to a touched unit this
+  repository declares or implements; the server re-checks reach and a refusal
+  is a warning, not a failure.
+- **Handoffs in pull requests are predictions** from API units added or removed
+  in the ChangeSet; write runs report what the platform detected on ingest.
+- **The dogfood `.github/workflows/docs.yml` builds the CLI from source**
+  (`version: source`) so pull requests exercise their own code; it needs a 1.0
+  repository token in `GRAVITY_TOKEN`.
 - **`read_file` reads at the end of the range under review** (`--to`, else
   `HEAD`), not the working tree, so the agent stays deterministic in CI.
 - **No live integration tests**: server interactions use `httptest` mocks.
@@ -246,4 +294,5 @@ payload, generator stamps and the HTTP `User-Agent`.
 - [README.md](README.md): install, commands, flags, exit codes.
 - The platform's `docs/pipelines/spec.md`: the REST contract, manifest schema
   and CLI milestones.
-- [ci/](ci/): v0.x pipeline snippets for downstream consumers (rewritten in C4).
+- [ci/](ci/): the GitHub action and the CI templates, with
+  [ci/README.md](ci/README.md) for consumers.
