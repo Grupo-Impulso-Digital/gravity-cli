@@ -591,6 +591,52 @@ func approveDevice(h *harness) {
 	h.platform.json("POST /api/v1/auth/device/poll", 200, `{"status":"approved","token":"gr_user_device","tokenKind":"user","expiresAt":"2026-12-30T12:00:00Z","organization":{"id":"org_1","slug":"acme","name":"Acme"},"user":{"id":"u","email":"dave@acme.io"},"apiUrl":"`+h.platform.srv.URL+`"}`)
 }
 
+func TestLogoutRevokesExplicitUserToken(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_user_env"
+	h.platform.json("POST /api/v1/auth/logout", 204, ``)
+	expectCode(t, h, h.run("logout"), 0)
+	reqs := h.platform.find("POST", "/api/v1/auth/logout")
+	if len(reqs) != 1 || reqs[0].Token != "gr_user_env" {
+		t.Fatalf("logout requests = %+v", reqs)
+	}
+	if !strings.Contains(h.stdout.String(), "Revoked the GRAVITY_TOKEN token") || strings.Contains(h.stdout.String(), "nothing to sign out") {
+		t.Fatalf("out = %s", h.stdout.String())
+	}
+}
+
+func TestLogoutTokenFlagRemovesOnlyItsProfile(t *testing.T) {
+	h := newHarness(t)
+	writeProfiles(t, h.config, fmt.Sprintf("version: 2\ncurrent: acme\nprofiles:\n  acme:\n    apiUrl: %s\n    token: gr_user_a\n    tokenKind: user\n  ci:\n    apiUrl: %s\n    token: gr_user_ci\n    tokenKind: user\n", h.platform.srv.URL, h.platform.srv.URL))
+	h.platform.json("POST /api/v1/auth/logout", 204, ``)
+	expectCode(t, h, h.run("logout", "--token", "gr_user_ci", "--json"), 0)
+	reqs := h.platform.find("POST", "/api/v1/auth/logout")
+	if len(reqs) != 1 || reqs[0].Token != "gr_user_ci" {
+		t.Fatalf("logout requests = %+v", reqs)
+	}
+	data, _ := os.ReadFile(filepath.Join(h.config, "profiles.yaml"))
+	if strings.Contains(string(data), "gr_user_ci") || !strings.Contains(string(data), "gr_user_a") {
+		t.Fatalf("profiles = %s", data)
+	}
+	env := h.envelope()
+	d, _ := env["data"].(map[string]any)
+	tok, _ := d["token"].(map[string]any)
+	if tok["revoked"] != true || tok["source"] != "--token" || fmt.Sprint(d["removed"]) != "[ci]" || fmt.Sprint(d["revoked"]) != "[ci]" {
+		t.Fatalf("data = %+v", d)
+	}
+}
+
+func TestLogoutRefusesRepoToken(t *testing.T) {
+	h := newHarness(t)
+	expectCode(t, h, h.run("logout", "--token", "gr_repo_x"), 0)
+	if len(h.platform.requests) != 0 {
+		t.Fatalf("repository tokens are revoked in the app: %+v", h.platform.requests)
+	}
+	if !strings.Contains(h.stderr.String(), "not a user token") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+}
+
 func TestLogoutIgnoresAPIURLFlag(t *testing.T) {
 	h := newHarness(t)
 	writeProfiles(t, h.config, "version: 2\ncurrent: default\nprofiles:\n  default:\n    token: gr_user_old\n    tokenKind: user\n")

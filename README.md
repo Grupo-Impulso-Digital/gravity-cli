@@ -223,7 +223,7 @@ Gravity does not fence pages per repository.
 | Command | Purpose |
 | ------- | ------- |
 | `gravity login` | Device flow sign-in; `--org`, `--profile`, `--no-browser`, `--with-token` (stdin). |
-| `gravity logout` | Revoke the current user token and remove its profile; `--all`. |
+| `gravity logout` | Revoke the current user token and remove its profile; `--all`. With `--token`/`GRAVITY_TOKEN` holding a user token, revokes that token (repository tokens are revoked in the app). |
 | `gravity whoami` | Principal, organization, token kind, scopes, expiry, API URL, profile. |
 | `gravity init` | Connect the repository in at most three questions; `--yes`, `--product`, `--passes-as-code`, `--app-passes`, `--ci <provider>`, `--no-secret`, `--dry-run`, `--repo <id>`. Never commits or pushes. |
 | `gravity status` | Auth, connection, manifest, passes with targets and watermarks, recent runs, open bundles, tokens, health and capability warnings; `--runs N`, `--check`. |
