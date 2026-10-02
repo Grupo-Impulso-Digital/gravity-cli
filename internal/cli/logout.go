@@ -8,6 +8,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/auth"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
 )
 
@@ -50,7 +51,7 @@ func newLogoutCmd(a *app) *cobra.Command {
 					return Failf(CodeError, "profile %q does not exist", name)
 				}
 				if prof.TokenKind == api.TokenKindUser || auth.TokenKindOf(prof.Token) == api.TokenKindUser {
-					c := a.client(auth.Credentials{Token: prof.Token, APIURL: firstNonEmpty(prof.APIURL, a.gf.apiURL, "https://api.gravitydocs.io")})
+					c := a.client(auth.Credentials{Token: prof.Token, APIURL: firstNonEmpty(prof.APIURL, config.DefaultAPIURL)})
 					if err := c.Logout(cmd.Context()); err != nil {
 						if !errors.Is(err, api.ErrUnauthorized) {
 							a.ui.Warn("revoke_failed", "could not revoke the token of profile "+name+" on the server: "+err.Error())

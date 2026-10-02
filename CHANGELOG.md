@@ -35,6 +35,13 @@ the pass engine.
   `GRAVITY_API_URL` or a manifest `apiUrl` points elsewhere, the command exits
   `2` (`token_host_mismatch`) before any request; a cloned repository can no
   longer redirect a stored token. `--token`/`GRAVITY_TOKEN` may target any host.
+- `gravity init` refuses to start the browser sign-in against a `.gravity.yaml`
+  `apiUrl` other than the default host (`manifest_api_url`); name the host
+  yourself with `gravity login --api-url <url>`. `logout` revokes a token only
+  on the host that issued it, whatever `--api-url` says.
+- API URLs must be https; plain http is accepted for loopback hosts only.
+- A `token_to_manifest_host` warning fires when `--token`/`GRAVITY_TOKEN` is
+  sent to a manifest `apiUrl` that is not the default host.
 
 ### Removed
 

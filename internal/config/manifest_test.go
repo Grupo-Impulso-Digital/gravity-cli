@@ -219,12 +219,12 @@ func TestLoadMissingAndPath(t *testing.T) {
 }
 
 func TestCheckAPIURL(t *testing.T) {
-	for _, ok := range []string{"https://api.gravitydocs.io", "http://localhost:8787"} {
+	for _, ok := range []string{"https://api.gravitydocs.io", "http://localhost:8787", "http://127.0.0.1:9000", "http://[::1]:8787", "http://api.localhost"} {
 		if err := CheckAPIURL(ok); err != nil {
 			t.Errorf("%s: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"api.gravitydocs.io", "ftp://x", "https://www.gravitydocs.io"} {
+	for _, bad := range []string{"api.gravitydocs.io", "ftp://x", "https://www.gravitydocs.io", "http://api.example.com", "http://10.0.0.5:8787"} {
 		if CheckAPIURL(bad) == nil {
 			t.Errorf("%s accepted", bad)
 		}

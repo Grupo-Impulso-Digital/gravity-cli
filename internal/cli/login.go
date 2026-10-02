@@ -19,7 +19,6 @@ type loginOptions struct {
 	org       string
 	noBrowser bool
 	withToken bool
-	apiURL    string
 }
 
 type loginData struct {
@@ -58,7 +57,7 @@ func (a *app) login(ctx context.Context, o loginOptions) (*loginData, error) {
 	if err != nil {
 		return nil, Fail(CodeError, err)
 	}
-	creds, err := auth.Resolve(auth.Inputs{FlagAPIURL: a.gf.apiURL, ManifestAPIURL: o.apiURL, Getenv: func(k string) string {
+	creds, err := auth.Resolve(auth.Inputs{FlagAPIURL: a.gf.apiURL, Getenv: func(k string) string {
 		if k == "GRAVITY_TOKEN" || k == "GRAVITY_PROFILE" {
 			return ""
 		}

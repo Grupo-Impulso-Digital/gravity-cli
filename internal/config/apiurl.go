@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -35,5 +36,16 @@ func CheckAPIURL(raw string) error {
 	if marketingHosts[strings.ToLower(u.Hostname())] {
 		return fmt.Errorf("invalid API URL %q: %s is the marketing site and serves no API; use %s", raw, u.Hostname(), DefaultAPIURL)
 	}
+	if u.Scheme == "http" && !isLoopback(u.Hostname()) {
+		return fmt.Errorf("invalid API URL %q: tokens are only sent over https (plain http is allowed for localhost only)", raw)
+	}
 	return nil
+}
+
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

@@ -158,6 +158,13 @@ func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
 	if err != nil {
 		return auth.Credentials{}, Fail(CodeError, err)
 	}
+	if (creds.TokenSource == auth.SourceEnv || creds.TokenSource == auth.SourceFlag) && creds.APIURLSource == auth.SourceManifest && !auth.SameAPIURL(creds.APIURL, config.DefaultAPIURL) {
+		from := config.EnvToken
+		if creds.TokenSource == auth.SourceFlag {
+			from = "--token"
+		}
+		a.ui.Warn("token_to_manifest_host", fmt.Sprintf("sending the %s token to %s, taken from %s apiUrl; set %s to pin the host (in CI, and when the repository is not yours)", from, creds.APIURL, config.ManifestFileName, config.EnvAPIURL))
+	}
 	a.ui.Debugf("api %s (%s), token from %s, profile %q", creds.APIURL, creds.APIURLSource, creds.TokenSource, creds.ProfileName)
 	return creds, nil
 }

@@ -3,8 +3,9 @@
 `gravity` keeps a product's documentation in step with its code. A repository
 declares **code facts** in a small `.gravity.yaml`; the Gravity app holds the
 **editorial intent**: which sites and spaces the repository feeds, what each
-**pass** writes, for whom and in which voice. In CI, `gravity run` detects what
-changed since the last successful run and lets every pass update its target.
+**pass** writes, for whom and in which voice. Once the pass engine ships,
+`gravity run` in CI detects what changed since the last successful run and lets
+every pass update its target.
 
 > **1.0 is a clean break.** The v0.x commands (`sync`, `docs`, `release-notes`,
 > `check api|docs`, `coverage`, `capture`, `nucleus`, `auth`, `doctor`, `ping`,
@@ -124,7 +125,12 @@ their local passes as an overlay (`gravity passes` marks them `repo (local)`).
   the host that issued it: when the resolved API URL is another host, the
   command exits `2` (`token_host_mismatch`) before any request. Pair another
   host with `--token` or `GRAVITY_TOKEN`, or sign in to it with
-  `gravity login --api-url <url> --profile <name>`.
+  `gravity login --api-url <url> --profile <name>`. `gravity init` never signs
+  in to a host named only by `.gravity.yaml`: run that `gravity login --api-url`
+  first. When `--token` or `GRAVITY_TOKEN` goes to a manifest `apiUrl` other
+  than the default host, a `token_to_manifest_host` warning suggests pinning
+  `GRAVITY_API_URL`. API URLs must use https; plain http is accepted for
+  localhost only.
 - `--json` prints exactly one JSON document on stdout
   (`{ ok, command, version, data, warnings, error }`); progress and messages go
   to stderr.

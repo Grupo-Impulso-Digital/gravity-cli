@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"io"
 	"net/http"
@@ -98,9 +99,17 @@ type harness struct {
 	config   string
 	env      map[string]string
 	stdin    string
+	terminal bool
 	stdout   bytes.Buffer
 	stderr   bytes.Buffer
 	opened   []string
+	bases    []string
+}
+
+type offline struct{}
+
+func (offline) RoundTrip(r *http.Request) (*http.Response, error) {
+	return nil, errors.New("offline: test refused a request to " + r.URL.Host)
 }
 
 func gitCmd(t *testing.T, dir string, args ...string) string {
@@ -150,16 +159,21 @@ func (h *harness) run(args ...string) int {
 	h.stdout.Reset()
 	h.stderr.Reset()
 	a := &app{
-		stdin:  strings.NewReader(h.stdin),
-		stdout: &h.stdout,
-		stderr: &h.stderr,
-		getenv: func(k string) string { return h.env[k] },
+		stdin:    strings.NewReader(h.stdin),
+		stdout:   &h.stdout,
+		stderr:   &h.stderr,
+		terminal: h.terminal,
+		getenv:   func(k string) string { return h.env[k] },
 		openBrowser: func(u string) error {
 			h.opened = append(h.opened, u)
 			return nil
 		},
 		configure: func(c *api.Client) {
 			c.Sleep = func(context.Context, time.Duration) error { return nil }
+			h.bases = append(h.bases, c.BaseURL)
+			if c.BaseURL != h.platform.srv.URL {
+				c.HTTPClient = &http.Client{Transport: offline{}}
+			}
 		},
 		sleep: func(context.Context, time.Duration) error { return nil },
 	}

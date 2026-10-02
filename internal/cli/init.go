@@ -92,7 +92,10 @@ func (a *app) runInit(ctx context.Context, o initOptions) error {
 		if !a.ui.Interactive() {
 			return requireToken(creds)
 		}
-		if _, err := a.login(ctx, loginOptions{apiURL: apiURL}); err != nil {
+		if creds.APIURLSource == auth.SourceManifest && !auth.SameAPIURL(creds.APIURL, config.DefaultAPIURL) {
+			return &ExitError{Code: CodeError, ErrCode: "manifest_api_url", Err: fmt.Errorf("not signed in, and %s points at %s; gravity only signs you in to a host you name yourself: run `gravity login --api-url %s` if you trust it, then `gravity init` again", data.Manifest.Path, creds.APIURL, creds.APIURL)}
+		}
+		if _, err := a.login(ctx, loginOptions{}); err != nil {
 			return err
 		}
 		if creds, err = a.credentials(apiURL); err != nil {

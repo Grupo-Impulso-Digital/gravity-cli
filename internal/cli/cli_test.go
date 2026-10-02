@@ -136,6 +136,14 @@ func TestManifestAPIURLWithEnvToken(t *testing.T) {
 	if reqs := h.platform.find("GET", "/api/v1/whoami"); len(reqs) != 1 || reqs[0].Token != "gr_repo_ci" {
 		t.Fatalf("whoami follows the manifest apiUrl: %+v", reqs)
 	}
+	if !strings.Contains(h.stderr.String(), "sending the GRAVITY_TOKEN token to "+h.platform.srv.URL) || !strings.Contains(h.stderr.String(), "GRAVITY_API_URL") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+	h.env["GRAVITY_API_URL"] = h.platform.srv.URL
+	expectCode(t, h, h.run("whoami"), 0)
+	if strings.Contains(h.stderr.String(), "sending the") {
+		t.Fatalf("a pinned host needs no warning: %s", h.stderr.String())
+	}
 }
 
 func writeProfiles(t *testing.T, dir, content string) {
@@ -641,5 +649,73 @@ func TestNoRemote(t *testing.T) {
 	expectCode(t, h, h.run("status"), 2)
 	if !strings.Contains(h.stderr.String(), "no git remote") {
 		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+}
+
+func approveDevice(h *harness) {
+	h.platform.json("POST /api/v1/auth/device/start", 201, `{"deviceCode":"dc","userCode":"BCDF-GHJK","verificationUri":"https://app/cli/device","verificationUriComplete":"https://app/cli/device?code=BCDF-GHJK","expiresIn":600,"interval":5}`)
+	h.platform.json("POST /api/v1/auth/device/poll", 200, `{"status":"approved","token":"gr_user_device","tokenKind":"user","expiresAt":"2026-12-30T12:00:00Z","organization":{"id":"org_1","slug":"acme","name":"Acme"},"user":{"id":"u","email":"dave@acme.io"},"apiUrl":"`+h.platform.srv.URL+`"}`)
+}
+
+func TestInitInteractiveLoginNeverFollowsManifestAPIURL(t *testing.T) {
+	h := newHarness(t)
+	h.terminal = true
+	delete(h.env, "GRAVITY_API_URL")
+	approveDevice(h)
+	h.write(".gravity.yaml", "version: 2\napiUrl: "+h.platform.srv.URL+"\n")
+	expectCode(t, h, h.run("init"), 2)
+	if !strings.Contains(h.stderr.String(), "gravity login --api-url "+h.platform.srv.URL) {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+	if len(h.platform.requests) != 0 {
+		t.Fatalf("no request may reach the manifest host without opt-in: %+v", h.platform.requests)
+	}
+	expectCode(t, h, h.run("init", "--json"), 2)
+	if e := h.envelope()["error"].(map[string]any); !strings.Contains(e["message"].(string), "not signed in") {
+		t.Fatalf("non-interactive error = %v", e)
+	}
+	if len(h.platform.requests) != 0 {
+		t.Fatalf("requests = %+v", h.platform.requests)
+	}
+
+	expectCode(t, h, h.run("login", "--api-url", h.platform.srv.URL), 0)
+	if len(h.platform.find("POST", "/api/v1/auth/device/start")) != 1 {
+		t.Fatal("an explicit --api-url opts in to that host")
+	}
+	expectCode(t, h, h.run("init"), 0)
+	if reqs := h.platform.find("GET", "/api/v1/whoami"); len(reqs) != 1 || reqs[0].Token != "gr_user_device" {
+		t.Fatalf("whoami = %+v", reqs)
+	}
+	if len(h.platform.find("POST", "/api/v1/auth/device/start")) != 1 {
+		t.Fatal("init reuses the stored profile")
+	}
+}
+
+func TestInitInteractiveSignsIn(t *testing.T) {
+	h := newHarness(t)
+	h.terminal = true
+	approveDevice(h)
+	expectCode(t, h, h.run("init", "--product", "acme-platform"), 0)
+	if len(h.platform.find("POST", "/api/v1/auth/device/start")) != 1 || len(h.opened) != 1 {
+		t.Fatalf("init signs in through the device flow: opened %v", h.opened)
+	}
+	if reqs := h.platform.find("GET", "/api/v1/whoami"); len(reqs) != 1 || reqs[0].Token != "gr_user_device" {
+		t.Fatalf("whoami = %+v", reqs)
+	}
+	if data, err := os.ReadFile(filepath.Join(h.dir, ".gravity.yaml")); err != nil || string(data) != "version: 2\nproduct: acme-platform\n" {
+		t.Fatalf("manifest = %q %v", data, err)
+	}
+}
+
+func TestLogoutIgnoresAPIURLFlag(t *testing.T) {
+	h := newHarness(t)
+	writeProfiles(t, h.config, "version: 2\ncurrent: default\nprofiles:\n  default:\n    token: gr_user_old\n    tokenKind: user\n")
+	h.platform.json("POST /api/v1/auth/logout", 204, ``)
+	expectCode(t, h, h.run("logout", "--api-url", h.platform.srv.URL), 0)
+	if len(h.platform.requests) != 0 {
+		t.Fatalf("the token only goes back to its issuer: %+v", h.platform.requests)
+	}
+	if len(h.bases) != 1 || h.bases[0] != config.DefaultAPIURL {
+		t.Fatalf("logout targeted %v", h.bases)
 	}
 }
