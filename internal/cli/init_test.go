@@ -204,6 +204,9 @@ func TestInitYesAsksNothing(t *testing.T) {
 	if strings.Contains(h.stdout.String(), "gr_repo_minted_secret") {
 		t.Fatal("the token never goes to the JSON document")
 	}
+	if ci := data["ci"].(map[string]any); ci["commentToken"] != "GITLAB_TOKEN" || !strings.Contains(ci["commentHint"].(string), "api scope") {
+		t.Fatalf("init names the GitLab comment token: %v", ci)
+	}
 	for _, c := range h.platform.find("POST", "/api/v1/repos/connect") {
 		repo := c.Body["repo"].(map[string]any)
 		if repo["defaultBranch"] == nil || repo["defaultBranch"] != repo["branch"] {
@@ -514,6 +517,9 @@ func TestInitInstallsSecretWithGlab(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.dir, ".gitlab", "gravity.yml")); err != nil {
 		t.Fatal(err)
+	}
+	if out := h.stdout.String(); !strings.Contains(out, "Comments: create a project access token") || !strings.Contains(out, "GITLAB_TOKEN") {
+		t.Fatalf("the closing summary names the GitLab comment token:\n%s", out)
 	}
 }
 

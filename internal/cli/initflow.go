@@ -659,6 +659,9 @@ func (r *initRun) printPreview() {
 	} else {
 		p.Println("  - no token minted: %s", ip.mintReason)
 	}
+	if ip.ci.CommentToken != "" {
+		p.Println("  ! by hand, for pull request comments: %s", ip.ci.CommentHint)
+	}
 	if r.previewConn != nil {
 		for _, w := range r.previewConn.Manifest.Warnings {
 			p.Println("  %s %s", p.Mark(ui.MarkWarn), w.Message)
@@ -951,6 +954,9 @@ func (r *initRun) printSummary(conn *api.ConnectResponse) {
 	}
 	if len(r.data.Written) > 0 {
 		lines = append(lines, "Commit: "+strings.Join(r.data.Written, ", "))
+	}
+	if r.ip != nil && r.ip.ci != nil && r.ip.ci.CommentToken != "" {
+		lines = append(lines, "Comments: "+r.ip.ci.CommentHint)
 	}
 	links := []ui.Link{{Label: "Repository", URL: conn.Repo.AppURL}}
 	for _, ps := range r.data.Passes {

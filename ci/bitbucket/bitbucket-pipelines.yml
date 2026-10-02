@@ -9,6 +9,8 @@ definitions:
           - apk add --no-cache git curl
           - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh
           - gravity run
+        artifacts:
+          - gravity-report.md
 pipelines:
   branches:
     main:

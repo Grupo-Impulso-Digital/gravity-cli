@@ -50,7 +50,9 @@ Pull request comments need a provider token next to it:
 | Azure | `SYSTEM_ACCESSTOKEN` (mapped by the template) | the build service may contribute to pull requests |
 
 Without it the report is written to `gravity-report.md` and the log says so.
-`--no-comment` turns comments off.
+`--no-comment` turns comments off. `gravity init` cannot mint the GitLab or
+Bitbucket token for you: its preview and closing summary name the token to
+create and where to store it.
 
 Fork pull requests run without secrets. The CLI then exits `0` with a warning
 instead of failing. The GitHub template uses `pull_request`, never
@@ -62,11 +64,13 @@ instead of failing. The GitHub template uses `pull_request`, never
   `::error`/`::warning` annotations, and the action exposes `run-url` and
   `exit-code` outputs.
 - **GitLab**: findings go to `gl-code-quality-report.json`, which the template
-  publishes as a Code Quality report.
+  publishes as a Code Quality report; `gravity-report.md` is kept as a job
+  artifact.
 - **Azure**: the report is attached to the build summary
   (`##vso[task.uploadsummary]`) and findings become `##vso[task.logissue]`
   entries.
-- **Bitbucket, Jenkins, CircleCI**: `gravity-report.md` in the working copy.
+- **Bitbucket**: `gravity-report.md`, kept as a step artifact.
+- **Jenkins, CircleCI**: `gravity-report.md` in the working copy.
 
 ## The GitHub action
 

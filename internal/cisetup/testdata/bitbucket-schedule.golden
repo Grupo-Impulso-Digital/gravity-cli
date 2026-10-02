@@ -12,6 +12,8 @@ definitions:
           - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh
           - 'export GRAVITY_API_URL=https://api.acme.test'
           - gravity run
+        artifacts:
+          - gravity-report.md
 pipelines:
   branches:
     trunk:

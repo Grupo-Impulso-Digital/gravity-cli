@@ -65,6 +65,8 @@ type Plan struct {
 	Snippet       string `json:"snippet,omitempty"`
 	SnippetTarget string `json:"snippetTarget,omitempty"`
 	PasteHint     string `json:"pasteHint"`
+	CommentToken  string `json:"commentToken,omitempty"`
+	CommentHint   string `json:"commentHint,omitempty"`
 }
 
 // Valid reports whether p is a provider --ci accepts.
@@ -151,6 +153,7 @@ func Build(root, provider string, o Options) (*Plan, error) {
 		d.InstallURL = DefaultInstallURL
 	}
 	p := &Plan{Provider: provider, Label: Label(provider), Files: []File{}, PasteHint: pasteHint(provider, o.WebURL)}
+	p.CommentToken, p.CommentHint = commentToken(provider, o.WebURL)
 	switch provider {
 	case GitHub:
 		f, err := planFile(root, ".github/workflows/gravity.yml", render("github", githubTemplate, d))
@@ -307,6 +310,24 @@ func pasteHint(provider, webURL string) string {
 	return "store it in your CI's secret store as " + SecretName
 }
 
+const commentReport = "gravity-report.md"
+
+func commentToken(provider, webURL string) (name, hint string) {
+	switch provider {
+	case GitLab:
+		where := "Settings > Access tokens"
+		vars := "Settings > CI/CD > Variables"
+		if webURL != "" {
+			where = webURL + "/-/settings/access_tokens"
+			vars = webURL + "/-/settings/ci_cd"
+		}
+		return "GITLAB_TOKEN", "create a project access token with the api scope (" + where + ") and add it as the masked CI/CD variable GITLAB_TOKEN (" + vars + "); CI_JOB_TOKEN cannot post merge request notes, so without it the report is only kept as the job artifact " + commentReport
+	case Bitbucket:
+		return "BITBUCKET_ACCESS_TOKEN", "create a repository access token with Pull requests: Write (Repository settings > Security > Access tokens) and add it as the secured repository variable BITBUCKET_ACCESS_TOKEN; without it the report is only kept as the step artifact " + commentReport
+	}
+	return "", ""
+}
+
 const githubTemplate = `name: Gravity
 on:
   push:
@@ -351,6 +372,8 @@ const gitlabTemplate = `gravity:
     - gravity run
   artifacts:
     when: always
+    paths:
+      - gravity-report.md
     reports:
       codequality: gl-code-quality-report.json
   rules:
@@ -374,6 +397,8 @@ definitions:
           - {{yaml (print "export GRAVITY_API_URL=" (sh .APIURL))}}
 {{- end}}
           - gravity run
+        artifacts:
+          - gravity-report.md
 pipelines:
   branches:
     {{yaml .Branch}}:
@@ -420,7 +445,12 @@ pipelines:
           script:
             - apk add --no-cache git curl
             - curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
+{{- if .APIURL}}
+            - {{yaml (print "export GRAVITY_API_URL=" (sh .APIURL))}}
+{{- end}}
             - gravity run
+          artifacts:
+            - gravity-report.md
   tags:
     'v*':
       - step:
@@ -429,6 +459,9 @@ pipelines:
           script:
             - apk add --no-cache git curl
             - curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
+{{- if .APIURL}}
+            - {{yaml (print "export GRAVITY_API_URL=" (sh .APIURL))}}
+{{- end}}
             - gravity run
 `
 
