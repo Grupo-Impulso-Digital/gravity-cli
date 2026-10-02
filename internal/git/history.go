@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,29 +291,76 @@ func (r *Repo) untracked(ctx context.Context, known map[string]int) ([]FileChang
 	}
 	var files []FileChange
 	for _, path := range strings.Split(out, "\x00") {
-		if path == "" {
+		if path == "" || strings.HasSuffix(path, "/") {
 			continue
 		}
 		if _, ok := known[path]; ok {
 			continue
 		}
-		fc := FileChange{Status: "A", Path: path}
-		data, err := os.ReadFile(filepath.Join(r.Root, filepath.FromSlash(path)))
+		full := filepath.Join(r.Root, filepath.FromSlash(path))
+		info, err := os.Lstat(full)
 		if err != nil {
-			return nil, fmt.Errorf("read untracked %s: %w", path, err)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("stat untracked %s: %w", path, err)
 		}
+		fc := FileChange{Status: "A", Path: path}
 		switch {
-		case bytes.IndexByte(data, 0) >= 0:
-			fc.Binary = true
-		case len(data) > 0:
-			fc.Additions = bytes.Count(data, []byte("\n"))
-			if data[len(data)-1] != '\n' {
-				fc.Additions++
+		case info.Mode()&os.ModeSymlink != 0:
+			fc.Additions = 1
+		case !info.Mode().IsRegular():
+			continue
+		default:
+			if err := countLines(full, &fc); err != nil {
+				return nil, fmt.Errorf("read untracked %s: %w", path, err)
 			}
 		}
 		files = append(files, fc)
 	}
 	return files, nil
+}
+
+const maxUntrackedBytes = 32 << 20
+
+func countLines(path string, fc *FileChange) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	buf := make([]byte, 64<<10)
+	var total int64
+	var last byte
+	lines := 0
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			if bytes.IndexByte(chunk, 0) >= 0 {
+				fc.Binary = true
+				return nil
+			}
+			lines += bytes.Count(chunk, []byte("\n"))
+			last = chunk[n-1]
+			total += int64(n)
+			if total > maxUntrackedBytes {
+				fc.Binary = true
+				return nil
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if total > 0 && last != '\n' {
+		lines++
+	}
+	fc.Additions = lines
+	return nil
 }
 
 // DiffZeroContext returns the zero-context unified diff of base..head (working tree when head is empty).

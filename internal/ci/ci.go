@@ -166,17 +166,19 @@ func Detect(ctx context.Context, env Env, git Git) (Context, error) {
 }
 
 func detachedBranch(ctx context.Context, git Git, sha string) string {
-	def := git.DefaultBranch(ctx)
-	if def == "" {
-		return ""
+	candidates := []string{"main", "master"}
+	if def := git.DefaultBranch(ctx); def != "" {
+		candidates = []string{def}
 	}
 	branches, err := git.RemoteBranchesContaining(ctx, sha)
 	if err != nil {
 		return ""
 	}
-	for _, b := range branches {
-		if b == def {
-			return def
+	for _, want := range candidates {
+		for _, b := range branches {
+			if b == want {
+				return want
+			}
 		}
 	}
 	return ""

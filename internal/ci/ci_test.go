@@ -251,6 +251,18 @@ func TestDetachedHead(t *testing.T) {
 	if !c.Detached || c.Branch != "" {
 		t.Fatalf("c = %+v", c)
 	}
+	c = detect(t, map[string]string{"CI": "true"}, nil, fakeGit{branch: "HEAD", refs: map[string]string{"HEAD": head}, containing: []string{"feature", "master", "main"}})
+	if c.Detached || c.Branch != "main" {
+		t.Fatalf("c = %+v", c)
+	}
+	c = detect(t, map[string]string{"CI": "true"}, nil, fakeGit{branch: "HEAD", refs: map[string]string{"HEAD": head}, containing: []string{"master"}})
+	if c.Detached || c.Branch != "master" {
+		t.Fatalf("c = %+v", c)
+	}
+	c = detect(t, map[string]string{"CI": "true"}, nil, fakeGit{branch: "HEAD", refs: map[string]string{"HEAD": head}, defBranch: "develop", containing: []string{"main"}})
+	if !c.Detached || c.Branch != "" {
+		t.Fatalf("c = %+v", c)
+	}
 }
 
 func TestInvalidOverrides(t *testing.T) {

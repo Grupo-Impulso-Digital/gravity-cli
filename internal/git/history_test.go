@@ -3,6 +3,7 @@ package git_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,6 +135,44 @@ func TestHistoryHelpers(t *testing.T) {
 	}
 	if _, ok := untracked["debug.log"]; ok {
 		t.Fatalf("ignored files stay out: %+v", wt)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "vendor", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", filepath.Join(dir, "vendor", "nested"), "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init nested: %v %s", err, out)
+	}
+	write("vendor/nested/file.txt", "x\n")
+	if err := os.Symlink(filepath.Join(dir, "docs"), filepath.Join(dir, "docs-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", filepath.Join(dir, "zero")); err != nil {
+		t.Fatal(err)
+	}
+	wt, err = repo.ChangedFilesDetailed(ctx, head, "")
+	if err != nil {
+		t.Fatalf("nested repos and symlinks must not break the working tree change set: %v", err)
+	}
+	untracked = map[string]git.FileChange{}
+	for _, f := range wt {
+		untracked[f.Path] = f
+	}
+	if _, ok := untracked["vendor/nested/"]; ok {
+		t.Fatalf("nested repositories stay out: %+v", wt)
+	}
+	if f, ok := untracked["docs-link"]; !ok || f.Additions != 1 {
+		t.Fatalf("symlink = %+v in %+v", f, wt)
+	}
+	if f, ok := untracked["zero"]; !ok || f.Additions != 1 || f.Binary {
+		t.Fatalf("symlink to a device = %+v", f)
+	}
+	for _, p := range []string{"docs-link", "zero"} {
+		if err := os.Remove(filepath.Join(dir, p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "vendor")); err != nil {
+		t.Fatal(err)
 	}
 	diff, err := repo.DiffZeroContext(ctx, head, "", "a.txt")
 	if err != nil || !strings.Contains(diff, "+three") {
