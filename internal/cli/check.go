@@ -26,10 +26,8 @@ func newCheckCmd(a *app) *cobra.Command {
 					return Failf(CodeError, "--fail-on %q must be drift, coverage, claims or verbatim", c)
 				}
 			}
-			switch f.annotate {
-			case "auto", "github", "gitlab", "azure", "none":
-			default:
-				return Failf(CodeError, "--annotate %q must be auto, github, gitlab, azure or none", f.annotate)
+			if err := validAnnotate(f.annotate); err != nil {
+				return err
 			}
 			ctx := cmd.Context()
 			s, err := a.pipelineSession(ctx, modeCheck, f, false)
@@ -46,8 +44,8 @@ func newCheckCmd(a *app) *cobra.Command {
 			if err != nil {
 				return runError(err)
 			}
-			comment := f.comment || a.env("GITHUB_TOKEN") != ""
-			a.publishPR(ctx, s, res, comment, f.annotate)
+			comment := f.comment || a.hasCommentToken(s)
+			a.publishReport(ctx, s, res, comment, f.annotate)
 			return a.finishPipeline(res, false, nil)
 		},
 	}
@@ -57,6 +55,6 @@ func newCheckCmd(a *app) *cobra.Command {
 	fl.StringVar(&f.to, "to", "", "compare up to this commit instead of HEAD")
 	fl.StringSliceVar(&f.failOn, "fail-on", nil, "finding categories that fail the check: drift, coverage, claims, verbatim")
 	fl.StringVar(&f.annotate, "annotate", "auto", "auto, github, gitlab, azure or none")
-	fl.BoolVar(&f.comment, "comment", false, "post the doc-impact comment (also posted when GITHUB_TOKEN is set)")
+	fl.BoolVar(&f.comment, "comment", false, "post the doc-impact comment (also posted when the CI provider's comment token is set)")
 	return cmd
 }

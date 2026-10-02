@@ -1,14 +1,10 @@
 package report
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // GitHub posts the doc-impact comment through the GitHub REST API.
@@ -31,13 +27,6 @@ type ghComment struct {
 	User    ghUser `json:"user"`
 }
 
-func (g GitHub) client() *http.Client {
-	if g.HTTP != nil {
-		return g.HTTP
-	}
-	return &http.Client{Timeout: 30 * time.Second}
-}
-
 func (g GitHub) base() string {
 	if g.API != "" {
 		return strings.TrimRight(g.API, "/")
@@ -46,39 +35,11 @@ func (g GitHub) base() string {
 }
 
 func (g GitHub) do(ctx context.Context, method, url string, body, out any) error {
-	var reader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("encode: %w", err)
-		}
-		reader = bytes.NewReader(data)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+g.Token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := g.client().Do(req)
-	if err != nil {
-		return fmt.Errorf("%s %s: %w", method, url, err)
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s: %s %s", method, url, resp.Status, strings.TrimSpace(string(data)))
-	}
-	if out != nil && len(data) > 0 {
-		if err := json.Unmarshal(data, out); err != nil {
-			return fmt.Errorf("decode %s: %w", url, err)
-		}
-	}
-	return nil
+	return doJSON(ctx, g.HTTP, method, url, map[string]string{
+		"Authorization":        "Bearer " + g.Token,
+		"Accept":               "application/vnd.github+json",
+		"X-GitHub-Api-Version": "2022-11-28",
+	}, body, out)
 }
 
 // Upsert updates the comment carrying marker, or creates one when create is true; it returns the comment URL ("" when nothing was posted).

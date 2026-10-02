@@ -17,6 +17,9 @@ func newRunCmd(a *app) *cobra.Command {
 		Long:  "Plan the passes for this trigger, resolve each pass's commit range, skip passes whose scope did not change, then run the rest inside one Gravity run whose changes are reviewed as a bundle.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validAnnotate(f.annotate); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			s, err := a.pipelineSession(ctx, modeRun, f, false)
 			if errors.Is(err, errForkPR) {
@@ -32,8 +35,8 @@ func newRunCmd(a *app) *cobra.Command {
 			if err != nil {
 				return runError(err)
 			}
-			if s.opts.Trigger == config.TriggerPR {
-				a.publishPR(ctx, s, res, !f.noComment, "auto")
+			if s.opts.Trigger == config.TriggerPR || s.ci.IsCI() {
+				a.publishReport(ctx, s, res, !f.noComment, f.annotate)
 			}
 			return a.finishPipeline(res, f.strict, nil)
 		},
@@ -50,5 +53,6 @@ func newRunCmd(a *app) *cobra.Command {
 	fl.IntVar(&f.parallel, "parallel", 1, "run up to N independent passes concurrently (max 4)")
 	fl.BoolVar(&f.noComment, "no-comment", false, "do not post the pull request comment")
 	fl.BoolVar(&f.strict, "strict", false, "treat unapproved targets, missing scopes and unlicensed modules as failures")
+	fl.StringVar(&f.annotate, "annotate", "auto", "finding annotations: auto, github, gitlab, azure or none")
 	return cmd
 }

@@ -495,8 +495,26 @@ func TestExplain(t *testing.T) {
 {"key":"guide:refunds:intro","history":[{"action":"create","state":"proposed","repo":"billing-api","pass":"product-guides","runId":"prun_2","commitSha":"ffff0000","sourceRefs":[],"units":[],"at":"2026-10-01T10:00:00Z"}]}]}`)
 	expectCode(t, h, h.run("explain", "dev-portal/api/refunds"), 0)
 	out := h.stdout.String()
-	if !strings.Contains(out, "billing-api/developer-api@a1b2c3d") || !strings.Contains(out, "2 writes, previously gateway") {
+	if !strings.Contains(out, "billing-api/developer-api@a1b2c3d") || !strings.Contains(out, "2 writes, previously gateway@9f8e7d6") || !strings.Contains(out, "prun_1") {
 		t.Fatalf("out = %s", out)
+	}
+	h.platform.json("GET /api/v1/content/pages/pg_1", 200, `{"page":{"id":"pg_1","slug":"refunds","title":"Refunds","lock":{"repo":{"name":"billing-api","remoteKey":"github.com/acme/billing-api"},"pass":"handbook","path":"docs/refunds.md","branch":"main","url":"https://github.com/acme/billing-api/blob/main/docs/refunds.md","hash":"sha256:x"}},"blocks":[
+{"key":"guide:refunds:note","type":"prose","ownership":"human","position":0,"content":{"text":"x"}},
+{"key":"api:POST:/v1/refunds","type":"api","ownership":"machine","position":1,"content":{}}]}`)
+	expectCode(t, h, h.run("explain", "dev-portal/api/refunds"), 0)
+	out = h.stdout.String()
+	for _, want := range []string{"Locked: managed in billing-api/docs/refunds.md@main (pass handbook); edit it in the repository: https://github.com/acme/billing-api/blob/main/docs/refunds.md", "written in Gravity", "removed"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+	expectCode(t, h, h.run("explain", "pg_1", "--json"), 0)
+	full := h.envelope()["data"].(map[string]any)
+	blocks := full["blocks"].([]any)
+	first := blocks[0].(map[string]any)
+	second := blocks[1].(map[string]any)
+	if len(blocks) != 3 || first["key"] != "guide:refunds:note" || first["lastWriter"] != nil || second["lastWriter"].(map[string]any)["runId"] != "prun_1" || full["lock"] == nil {
+		t.Fatalf("explain json = %v", full)
 	}
 	if q := h.platform.find("GET", "/api/v1/content/resolve")[0].Query; q["ref"][0] != "dev-portal/api/refunds" {
 		t.Fatalf("resolve query = %v", q)

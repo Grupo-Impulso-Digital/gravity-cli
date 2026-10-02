@@ -14,6 +14,28 @@ import (
 // NoImpact is the comment body when no pass has documentation impact.
 const NoImpact = "No documentation impact from this pull request."
 
+// NoChanges is the run summary when a run changed no documentation.
+const NoChanges = "No documentation changes from this run."
+
+// Handoff is a unit role moving between repositories.
+type Handoff struct {
+	UnitKey string `json:"unitKey"`
+	Role    string `json:"role"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Status  string `json:"status"`
+}
+
+// Competing is a page another run is changing at the same time.
+type Competing struct {
+	Pass    string   `json:"pass"`
+	Page    string   `json:"page"`
+	Repos   []string `json:"repos,omitempty"`
+	Runs    []string `json:"runs,omitempty"`
+	Keys    []string `json:"keys,omitempty"`
+	Pending bool     `json:"pending,omitempty"`
+}
+
 // Pass is one row of the doc-impact report.
 type Pass struct {
 	Name       string               `json:"name"`
@@ -29,13 +51,18 @@ type Pass struct {
 	Claims     []agent.ClaimFinding `json:"claims,omitempty"`
 }
 
-// Doc is everything the doc-impact report shows.
+// Doc is everything the doc-impact report (pull requests) or run summary (other triggers) shows.
 type Doc struct {
-	Repo   string `json:"repo"`
-	PR     int    `json:"pr,omitempty"`
-	RunURL string `json:"runUrl,omitempty"`
-	Survey bool   `json:"survey,omitempty"`
-	Passes []Pass `json:"passes"`
+	Repo      string      `json:"repo"`
+	PR        int         `json:"pr,omitempty"`
+	Heading   string      `json:"heading,omitempty"`
+	Applied   bool        `json:"applied,omitempty"`
+	RunURL    string      `json:"runUrl,omitempty"`
+	BundleURL string      `json:"bundleUrl,omitempty"`
+	Survey    bool        `json:"survey,omitempty"`
+	Passes    []Pass      `json:"passes"`
+	Handoffs  []Handoff   `json:"handoffs,omitempty"`
+	Competing []Competing `json:"competing,omitempty"`
 }
 
 // Marker is the hidden line that identifies this repository's comment on a pull request.
@@ -43,8 +70,11 @@ func Marker(repo string) string {
 	return "<!-- gravity:doc-impact repo=" + repo + " -->"
 }
 
-// HasImpact reports whether any pass would change documentation or found something.
+// HasImpact reports whether any pass would change documentation or found something, or ownership moved.
 func (d Doc) HasImpact() bool {
+	if len(d.Handoffs) > 0 || len(d.Competing) > 0 {
+		return true
+	}
 	for _, p := range d.Passes {
 		if len(p.Impact) > 0 || len(p.Findings) > 0 {
 			return true
@@ -62,7 +92,7 @@ func (d Doc) Findings() []api.Finding {
 	return out
 }
 
-func impactCell(p Pass) string {
+func impactCell(p Pass, applied bool) string {
 	switch {
 	case p.Status == api.StatusSkipped:
 		return "skipped: " + strings.ReplaceAll(p.SkipReason, "_", " ")
@@ -90,7 +120,12 @@ func impactCell(p Pass) string {
 			pages = append(pages, fmt.Sprintf("%s (%s)", escape(name), action))
 		}
 		noun := "pages would change"
-		if len(p.Impact) == 1 {
+		switch {
+		case applied && len(p.Impact) == 1:
+			noun = "page changed"
+		case applied:
+			noun = "pages changed"
+		case len(p.Impact) == 1:
 			noun = "page would change"
 		}
 		parts = append(parts, fmt.Sprintf("%d %s: %s", len(p.Impact), noun, strings.Join(pages, ", ")))
@@ -109,9 +144,16 @@ func Markdown(d Doc) string {
 	if d.PR > 0 {
 		title += fmt.Sprintf(" for #%d", d.PR)
 	}
+	if d.Heading != "" {
+		title = "### " + d.Heading
+	}
 	b.WriteString(title + "\n\n")
 	if !d.HasImpact() {
-		b.WriteString(NoImpact + "\n")
+		if d.Applied || d.Heading != "" {
+			b.WriteString(NoChanges + "\n")
+		} else {
+			b.WriteString(NoImpact + "\n")
+		}
 		if d.RunURL != "" {
 			fmt.Fprintf(&b, "\n[Open run in Gravity](%s)\n", d.RunURL)
 		}
@@ -122,7 +164,7 @@ func Markdown(d Doc) string {
 	}
 	b.WriteString("| Pass | Target | Impact |\n| --- | --- | --- |\n")
 	for _, p := range d.Passes {
-		fmt.Fprintf(&b, "| %s | %s | %s |\n", escape(p.Name), escape(firstOf(p.Target, "-")), impactCell(p))
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", escape(p.Name), escape(firstOf(p.Target, "-")), impactCell(p, d.Applied))
 	}
 	findings := d.Findings()
 	if len(findings) > 0 {
@@ -172,10 +214,53 @@ func Markdown(d Doc) string {
 	if len(extra) > 0 {
 		b.WriteString(strings.Join(extra, " · ") + ".\n")
 	}
-	if d.RunURL != "" {
+	writeCompeting(&b, d.Competing)
+	writeHandoffs(&b, d.Handoffs)
+	switch {
+	case d.BundleURL != "":
+		fmt.Fprintf(&b, "\n[Review the bundle in Gravity](%s)\n", d.BundleURL)
+	case d.RunURL != "":
 		fmt.Fprintf(&b, "\n[Open run in Gravity](%s)\n", d.RunURL)
 	}
 	return b.String()
+}
+
+func writeCompeting(b *strings.Builder, list []Competing) {
+	if len(list) == 0 {
+		return
+	}
+	var parts []string
+	for _, c := range list {
+		who := strings.Join(c.Repos, ", ")
+		if who == "" {
+			who = "run " + strings.Join(c.Runs, ", ")
+		}
+		if c.Pending {
+			parts = append(parts, fmt.Sprintf("%s already has an open change from %s", escape(c.Page), who))
+			continue
+		}
+		s := fmt.Sprintf("%s also changed by %s", escape(c.Page), who)
+		if len(c.Keys) > 0 {
+			s += " (" + plural(len(c.Keys), "block", "blocks") + ")"
+		}
+		parts = append(parts, s)
+	}
+	fmt.Fprintf(b, "\n**Competing changes**: %s. The review shows both versions side by side.\n", strings.Join(parts, "; "))
+}
+
+func writeHandoffs(b *strings.Builder, list []Handoff) {
+	if len(list) == 0 {
+		return
+	}
+	var parts []string
+	for _, h := range list {
+		when := "detected"
+		if h.Status == "expected" {
+			when = "once merged"
+		}
+		parts = append(parts, fmt.Sprintf("`%s` %s moves from %s to %s (%s)", h.UnitKey, h.Role, h.From, h.To, when))
+	}
+	fmt.Fprintf(b, "\n**Handoffs**: %s.\n", strings.Join(parts, "; "))
 }
 
 // AppendFile appends a report to a step-summary file.

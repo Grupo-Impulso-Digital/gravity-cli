@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -273,6 +271,14 @@ func (a *app) forkPR(s *pipelineSession) error {
 	return a.ui.Result(map[string]any{"skipped": "fork_pr_no_token"})
 }
 
+func validAnnotate(v string) error {
+	switch v {
+	case "auto", ci.GitHub, ci.GitLab, ci.Azure, "none":
+		return nil
+	}
+	return Failf(CodeError, "--annotate %q must be auto, github, gitlab, azure or none", v)
+}
+
 func runError(err error) error {
 	switch {
 	case err == nil:
@@ -377,6 +383,22 @@ func (a *app) printRun(res *engine.Result, info *repoInfo) {
 		for _, n := range ps.Report.Notes {
 			p.Println("  %s %s: %s", p.Mark(ui.MarkInfo), ps.Name, n.Title)
 		}
+		for _, c := range ps.Report.Competing {
+			row := competingRow(ps.Name, c.Page, c.With, c.Pending)
+			who := firstNonEmpty(strings.Join(row.Repos, ", "), strings.Join(row.Runs, ", "))
+			if c.Pending {
+				p.Println("  %s %s: %s already has an open change from %s; the review shows both", p.Mark(ui.MarkWarn), ps.Name, row.Page, who)
+				continue
+			}
+			p.Println("  %s %s: %s also changed by %s; the review shows both versions", p.Mark(ui.MarkWarn), ps.Name, row.Page, who)
+		}
+	}
+	for _, h := range res.Handoffs {
+		when := "detected"
+		if h.Status == engine.HandoffExpected {
+			when = "once merged"
+		}
+		p.Println("  %s handoff: %s %s moves from %s to %s (%s)", p.Mark(ui.MarkInfo), h.UnitKey, h.Role, h.From, h.To, when)
 	}
 	if p.Interactive() {
 		a.runCard(res)
@@ -432,83 +454,6 @@ func findingMark(f api.Finding) string {
 		return ui.MarkWarn
 	}
 	return ui.MarkInfo
-}
-
-func reportDoc(res *engine.Result, info *repoInfo, prNumber int) report.Doc {
-	d := report.Doc{Repo: info.remoteKey, PR: prNumber}
-	if res.Run != nil {
-		d.RunURL = res.Run.AppURL
-	}
-	if res.Range != nil && res.Range.Kind == api.RangeSurvey {
-		d.Survey = true
-	}
-	for _, p := range res.Passes {
-		rp := report.Pass{Name: p.Name, Kind: p.Kind, Target: p.Target, Status: p.Status, SkipReason: p.SkipReason, Error: p.Error}
-		if p.Report != nil {
-			rp.Summary = p.Report.Summary
-			rp.Impact = p.Report.Impact
-			rp.Findings = p.Report.Findings
-			rp.Notes = p.Report.Notes
-			rp.Claims = p.Report.Claims
-		}
-		d.Passes = append(d.Passes, rp)
-	}
-	return d
-}
-
-func (a *app) publishPR(ctx context.Context, s *pipelineSession, res *engine.Result, comment bool, annotate string) {
-	prNumber := 0
-	if s.opts.PR != nil {
-		prNumber = s.opts.PR.Number
-	}
-	doc := reportDoc(res, s.info, prNumber)
-	body := report.Markdown(doc)
-	if annotate == "auto" && s.ci.Provider == ci.GitHub || annotate == ci.GitHub {
-		out := a.stdout
-		if a.ui.JSON() {
-			out = a.stderr
-		}
-		for _, line := range report.GitHubAnnotations(doc.Findings()) {
-			fmt.Fprintln(out, line)
-		}
-	}
-	summaryWritten := false
-	if path := a.env("GITHUB_STEP_SUMMARY"); path != "" && s.ci.Provider == ci.GitHub {
-		if err := report.AppendFile(path, body); err != nil {
-			a.ui.Warn("step_summary", err.Error())
-		} else {
-			summaryWritten = true
-		}
-	}
-	posted := false
-	if comment && prNumber > 0 {
-		token := a.env("GITHUB_TOKEN")
-		repo := a.env("GITHUB_REPOSITORY")
-		switch {
-		case s.ci.Provider == ci.GitHub && token != "" && repo != "":
-			gh := report.GitHub{API: a.env("GITHUB_API_URL"), Token: token, Repo: repo}
-			url, err := gh.Upsert(ctx, prNumber, report.Marker(s.info.remoteKey), body, doc.HasImpact())
-			switch {
-			case err != nil:
-				a.ui.Warn("pr_comment", "could not post the pull request comment: "+err.Error())
-			case url != "":
-				posted = true
-				a.ui.Println("Pull request comment: %s", url)
-			default:
-				posted = true
-			}
-		case s.ci.Provider == ci.GitHub:
-			a.ui.Warn("pr_comment", "GITHUB_TOKEN is not set (pull-requests: write); the report is in "+reportFile)
-		}
-	}
-	if !posted && !summaryWritten && s.ci.IsCI() {
-		path := filepath.Join(s.info.root, reportFile)
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			a.ui.Warn("report_file", err.Error())
-		} else {
-			a.ui.Println("Report written to %s", reportFile)
-		}
-	}
 }
 
 func (a *app) finishPipeline(res *engine.Result, strict bool, extra error) error {
