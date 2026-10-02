@@ -3,9 +3,9 @@
 `gravity` keeps a product's documentation in step with its code. A repository
 declares **code facts** in a small `.gravity.yaml`; the Gravity app holds the
 **editorial intent**: which sites and spaces the repository feeds, what each
-**pass** writes, for whom and in which voice. Once the pass engine ships,
-`gravity run` in CI detects what changed since the last successful run and lets
-every pass update its target.
+**pass** writes, for whom and in which voice. `gravity run` in CI detects what
+changed since each pass last ran and lets every pass update its target; the
+changes of one run are reviewed in the app as one bundle.
 
 > **1.0 is a clean break.** The v0.x commands (`sync`, `docs`, `release-notes`,
 > `check api|docs`, `coverage`, `capture`, `nucleus`, `auth`, `doctor`, `ping`,
@@ -13,10 +13,10 @@ every pass update its target.
 > prints its replacement and exits `2`. Keep using gravity v0.3 until your
 > pipeline is migrated.
 
-> **This build is milestone C1 (CLI core).** `login`, `logout`, `whoami`,
-> `init` (minimal), `status`, `passes`, `explain` and `version` work end to
-> end. `run`, `preview` and `check` are registered and exit `2` until the pass
-> engine lands.
+> **This build is milestone C2 (passes).** `login`, `logout`, `whoami`,
+> `init` (minimal), `status`, `passes`, `explain`, `version`, `run`, `preview`
+> and `check` work end to end. The setup wizard (C3) and the 1.0 CI templates
+> (C4) are still to come.
 
 ## Install
 
@@ -107,7 +107,9 @@ their local passes as an overlay (`gravity passes` marks them `repo (local)`).
 | `gravity status` | One view of the repository. `--runs N`, `--check` (exit `1` when health is not `live`). |
 | `gravity passes` | `list` (default), `show <name>`, `edit <name>`. `--trigger`, `--branch`. |
 | `gravity explain <page>` | Provenance of every block of a page (page id, `site/space/page` or viewer URL). `--block <key>`. |
-| `gravity run`, `preview`, `check` | The pipeline, the local preview and the PR gate (not available in this build). |
+| `gravity run` | The pipeline: plan, ranges, zero-cost scope skips, one leased run, passes, finish. `--pass`, `--trigger`, `--branch`, `--from`, `--to`, `--note`, `--dry-run`, `--lease-timeout`, `--parallel`, `--no-comment`, `--strict`. |
+| `gravity preview` | Every pass as a dry run over your working tree (or `--committed`): the pages that would change, the instructions the app composes, the cost. `--format text\|diff\|json`, `--open`. Never writes. |
+| `gravity check` | The pull request gate: check passes (or built-in drift and coverage) plus every pass's doc impact. Step summary, GitHub annotations and the PR comment (when `GITHUB_TOKEN` is set or `--comment`). `--fail-on`, `--annotate`. |
 | `gravity version` | Version, commit, build date, Go version, platform (also `--version`). |
 
 ### Global flags
@@ -149,7 +151,7 @@ file is never modified, so a v0.3 binary on the same machine keeps working.
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | success |
-| `1`  | findings (`status --check` on an unhealthy repository; check findings once `check` ships) |
+| `1`  | findings: `check` findings in `failOn`, or `status --check` on an unhealthy repository |
 | `2`  | operational error: auth, network, bad input, invalid manifest, missing target, removed command |
 | `3`  | license refusal (`module_disabled`, `seat_limit`); ask a workspace administrator |
 
@@ -189,8 +191,13 @@ internal/changeset     range resolution per trigger, ChangeSet, OpenAPI diff, sy
 internal/normalize     product slugs, API unit keys, canonical JSON (shared golden fixtures)
 internal/git           wrapper over the system git binary
 internal/glob          doublestar path matching
-internal/agent         tool-using agent loop over the LLM gateway
-internal/docs          OpenAPI -> api blocks, Markdown -> native blocks
+internal/run           run orchestration: connect, plan, lease wait, heartbeat, ingest, passes, finish, exit code
+internal/passes        Pass interface and the seven kinds: guides, reference, verbatim, changelog, nucleus, check, capture
+internal/verbatim      Markdown/MDX -> native blocks with high fidelity; file -> page mapping
+internal/agent         one agent harness: forced submit, token budgets, ref-aware git tools, doc tools
+internal/prompts       baked fallbacks of the hosted pass prompts
+internal/report        PR doc-impact comment, step summary, annotations, page diffs
+internal/docs          OpenAPI -> api blocks
 internal/checks        OpenAPI parsing (libopenapi)
 internal/pathsafe      repo-root path validation (leaf, stdlib-only)
 internal/version       version and build info

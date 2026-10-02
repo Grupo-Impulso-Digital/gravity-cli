@@ -175,7 +175,13 @@ func (h *harness) run(args ...string) int {
 				c.HTTPClient = &http.Client{Transport: offline{}}
 			}
 		},
-		sleep: func(context.Context, time.Duration) error { return nil },
+		sleep: func(ctx context.Context, d time.Duration) error {
+			if d >= time.Hour {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		},
 	}
 	return run(context.Background(), a, append([]string{"-C", h.dir}, args...))
 }

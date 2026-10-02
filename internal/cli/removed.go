@@ -6,10 +6,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func errorf(format string, args ...any) error {
-	return fmt.Errorf(format, args...)
-}
-
 func removedPointer(old, replacement string) error {
 	return &ExitError{
 		Code:    CodeError,

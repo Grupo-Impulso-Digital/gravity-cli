@@ -25,11 +25,16 @@ cmd/gravity              entrypoint: signal-aware context
        ├─ internal/ui         TTY / plain CI / --json envelope output
        ├─ internal/auth       profiles.yaml, credential precedence, device login
        ├─ internal/plan       plan fetch, manifest overlay, skip decisions
+       ├─ internal/run        run orchestration: plan/lease loop, heartbeat, ingest, passes, finish
+       │    └─ internal/passes  Pass interface + guides, reference, verbatim, changelog, nucleus, check, capture
+       │         ├─ internal/verbatim  Markdown/MDX -> native blocks, file -> page mapping, link rewriting
+       │         └─ internal/agent     one harness: forced submit, token budget, git + doc tools, submit tools
+       ├─ internal/report     PR comment, step summary, annotations, page diffs
+       ├─ internal/prompts    hosted pass prompts with baked fallbacks
        ├─ internal/changeset  range resolution, ChangeSet, OpenAPI diff, symbols, unit mapping
        ├─ internal/ci         CI provider detection
        ├─ internal/api        REST client for the CLI 1.0 contract + LLM gateway
-       ├─ internal/agent      tool-using loop + sandboxed read-only git tools + submit tools
-       ├─ internal/docs       OpenAPI -> api blocks, Markdown -> native blocks
+       ├─ internal/docs       OpenAPI -> api blocks
        ├─ internal/checks     OpenAPI parsing
        ├─ internal/config     manifest v2 (embedded JSON Schema, strict parse, did-you-mean), v1 detection
        ├─ internal/normalize  productSlug, apiUnitKey, canonical JSON (golden fixtures shared with the platform)
@@ -171,13 +176,32 @@ payload, generator stamps and the HTTP `User-Agent`.
   `endpoints_test.go` built from the spec's JSON example.
 - **Change range or ChangeSet logic**: cover it with a scripted repository in
   `internal/changeset` (`newScripted`), never a fixture checkout.
+- **Add or change a pass kind**: implement `passes.Pass` in
+  `internal/passes/<kind>.go`, register it in `passes.For`, write only through
+  the `Sink`, and test it with the in-process fakes of
+  `internal/passes/fake_test.go` on a scripted repository. Engine behaviour
+  (lease, heartbeat, finish, exit codes) is tested against the httptest
+  platform in `internal/run/platform_test.go`.
+- **Change the Markdown converter**: update `internal/verbatim` and regenerate
+  the golden with `go test ./internal/verbatim -update`; review the diff.
 
 ## Known limitations / deliberate decisions
 
-- **`run`, `preview` and `check` are registered but exit `2`** until the pass
-  engine (milestone C2). `init` is the minimal C1 version: it connects the
-  repository and writes `version: 2`; detection, questions, CI files and the v1
-  conversion arrive with C3.
+- **`init` is the minimal C1 version**: it connects the repository and writes
+  `version: 2`; detection, questions, CI files and the v1 conversion arrive
+  with C3.
+- **The CLI never embeds instruction layers.** Every gateway call sends only
+  the kind prompt (`internal/prompts`) and `context { runId, runPassId,
+  purpose }`; the gateway composes the org/site/space/collection/pass/note
+  layers server-side.
+- **Writes only through a `passes.Sink`**: `PlatformSink` in write runs,
+  `Recorder` in dry runs (PRs, `preview`, `--dry-run`), which records the
+  would-be requests into the pass report's `impact` and the preview diffs.
+- **Unit keys are filtered client-side** (`passes.Units`: plan inventory plus
+  what this run ingested) before `/changes`, so a write never fails on a key
+  the product does not know yet.
+- **PR comments are GitHub-only in C2**; other providers get
+  `gravity-report.md` until C4.
 - **`ci/` templates and `.github/workflows/docs.yml` still target v0.x**; they
   are rewritten with the 1.0 action (milestone C4) Until then the dogfood
   `docs.yml` runs on `workflow_dispatch` only, so pushes and PRs stay green.

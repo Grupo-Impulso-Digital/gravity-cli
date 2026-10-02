@@ -3,15 +3,46 @@
 ## v1.0.0 — Unreleased
 
 Clean break (R12): the v0.x command set and the v1 manifest are removed. This
-entry tracks milestone C1 (CLI core); `run`, `preview` and `check` land with
-the pass engine.
+entry tracks milestones C1 (CLI core) and C2 (passes).
 
 ### Added
 
+- `gravity run`: connect, plan (dry runs overlay the branch's manifest by
+  hash), per-pass ranges with `stale_head`, one ChangeSet per distinct base,
+  zero-cost scope skips and the no-run rule, `POST /runs` with lease waiting
+  (`--lease-timeout`) and re-planning on `plan_stale`, heartbeats, inventory
+  ingest v2 with `roles[]` (authoritative and release runs; batches plus a
+  closing `entries` call), passes in plan order (`--parallel N`, never two
+  passes on one space at once), pass reports, finish. `lease_lost` stops the
+  run without a finish call.
+- Pass kinds: `guides` (impact from unit bindings, search and hints; an AI plan;
+  block-level edits that cite commits, never touch human blocks or locked
+  pages, deprecate instead of deleting; cross-repo hints), `reference`
+  (deterministic api blocks with endpoint bindings and canonical unit keys,
+  upgrades v0.3 pages in place, explicit removals, optional AI prose),
+  `verbatim` (Markdown/MDX import with front matter, admonitions, GitHub
+  alerts, MkDocs, details, MDX tabs, mermaid, tables, task lists, footnotes,
+  images uploaded once per run, intra-repository links rewritten, folders to
+  collections, whole-page re-import on hash change, deletion proposals),
+  `changelog` (release pages and the Unreleased page), `nucleus` (namespaced,
+  repository-tagged atoms), `check` (drift, coverage, claim verdicts, verbatim
+  contradictions, PR notes) and `capture` (waits for the server Doc Agent run).
+- One agent harness for every AI pass: forced submit on the last turn, a token
+  budget per pass, `read_file` at the range head or any ref (the working tree
+  for previews), and doc tools `read_page`, `search_docs`, `recall_nucleus`,
+  `product_inventory`, `list_target`. Hosted pass prompts fall back to baked
+  copies.
+- `gravity preview`: every pass as a dry run over the working tree, with page
+  diffs, the composed instruction layers and the cost.
+- `gravity check`: the PR gate, with a built-in drift and coverage check when
+  no check pass is declared, the doc-impact report in the GitHub step summary,
+  GitHub annotations, the upserted PR comment (`GITHUB_TOKEN`), and exit `1`
+  on findings in `--fail-on`. Fork pull requests without a token exit `0` with
+  a warning.
+
 - New command tree: `login` (device flow, `--with-token`), `logout`, `whoami`,
   `init` (connect + minimal `version: 2` manifest), `status`, `passes`
-  (`list`, `show`, `edit`), `explain`, `version`. `run`, `preview` and `check`
-  are registered and exit `2` until the pass engine ships.
+  (`list`, `show`, `edit`), `explain`, `version`.
 - Global flags `--profile`, `--api-url`, `--token`, `--manifest`, `-C`,
   `--json` (one envelope on stdout), `--no-color`, `-q`, `-v`.
 - Profiles in `~/.config/gravity/profiles.yaml`; the v0.x `config.yaml` token

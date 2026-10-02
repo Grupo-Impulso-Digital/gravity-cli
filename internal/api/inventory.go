@@ -91,6 +91,7 @@ type IngestEntry struct {
 
 // IngestRequest is the body of POST /api/v1/products/self/inventory.
 type IngestRequest struct {
+	Product  string        `json:"-"`
 	RunID    string        `json:"runId"`
 	HeadSHA  string        `json:"headSha"`
 	Complete bool          `json:"complete"`
@@ -123,7 +124,11 @@ type IngestResult struct {
 // IngestInventory calls POST /api/v1/products/self/inventory.
 func (c *Client) IngestInventory(ctx context.Context, req IngestRequest) (*IngestResult, error) {
 	var out IngestResult
-	if err := c.Post(ctx, "/api/v1/products/self/inventory", req, &out); err != nil {
+	var q url.Values
+	if req.Product != "" {
+		q = url.Values{"product": {req.Product}}
+	}
+	if err := c.do(ctx, request{method: "POST", path: "/api/v1/products/self/inventory", query: q, body: req}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

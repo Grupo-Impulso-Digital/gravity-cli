@@ -1,80 +1,483 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/auth"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ci"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/passes"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/report"
+	engine "github.com/Grupo-Impulso-Digital/gravity-cli/internal/run"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
 
-func notYet(name string) error {
-	return &ExitError{
-		Code:    CodeError,
-		Err:     errorf("gravity %s is not available in this build yet: the pass engine ships in a later 1.0 milestone (use gravity v0.3 meanwhile)", name),
-		ErrCode: "not_available",
-	}
+const reportFile = "gravity-report.md"
+
+type pipelineFlags struct {
+	passes       []string
+	trigger      string
+	branch       string
+	from         string
+	to           string
+	note         string
+	dryRun       bool
+	leaseTimeout time.Duration
+	parallel     int
+	noComment    bool
+	comment      bool
+	strict       bool
+	failOn       []string
+	annotate     string
 }
 
-func newRunCmd(*app) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "run",
-		Short: "Run the documentation pipeline for this repository (not available in this build)",
-		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return notYet("run")
-		},
-	}
-	f := cmd.Flags()
-	f.StringSlice("pass", nil, "run only these passes")
-	f.String("trigger", "", "override the detected trigger")
-	f.String("branch", "", "override the detected branch")
-	f.String("from", "", "start of an explicit range")
-	f.String("to", "", "end of an explicit range")
-	f.String("note", "", "a note for reviewers and the AI")
-	f.Bool("dry-run", false, "plan and report without writing")
-	f.Duration("lease-timeout", 20*time.Minute, "how long to wait for another run on the same branch")
-	f.Int("parallel", 1, "run up to N independent passes concurrently")
-	f.Bool("no-comment", false, "do not post the pull request comment")
-	f.Bool("strict", false, "treat skipped passes as failures")
-	return cmd
+type pipelineMode int
+
+const (
+	modeRun pipelineMode = iota
+	modePreview
+	modeCheck
+)
+
+type uiLogger struct{ p *ui.Printer }
+
+func (l uiLogger) Infof(format string, args ...any) { l.p.Println(format, args...) }
+
+func (l uiLogger) Warn(code, message string) { l.p.Warn(code, message) }
+
+func (l uiLogger) Debugf(format string, args ...any) { l.p.Debugf(format, args...) }
+
+type pipelineSession struct {
+	info     *repoInfo
+	manifest *config.Manifest
+	client   *api.Client
+	who      *api.WhoAmI
+	ci       ci.Context
+	opts     engine.Options
 }
 
-func newPreviewCmd(*app) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "preview",
-		Short: "Show what every pass would write for your working tree, without writing (not available in this build)",
-		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return notYet("preview")
-		},
+var errForkPR = errors.New("fork pull request without a token")
+
+func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipelineFlags, committed bool) (*pipelineSession, error) {
+	info, err := a.inspectRepo(ctx)
+	if err != nil {
+		return nil, err
 	}
-	f := cmd.Flags()
-	f.StringSlice("pass", nil, "preview only these passes")
-	f.String("from", "", "start of the range")
-	f.String("to", "", "end of the range")
-	f.Bool("committed", false, "preview HEAD instead of the working tree")
-	f.String("note", "", "a note for the AI")
-	f.String("format", "text", "text, diff or json")
-	f.Bool("open", false, "open the target pages")
-	return cmd
+	m, err := a.loadManifest(info.root)
+	if err != nil {
+		var ee *ExitError
+		if errors.As(err, &ee) && errors.Is(ee.Err, config.ErrV1Manifest) {
+			ee.ErrCode = "manifest_v1"
+			ee.Err = fmt.Errorf("%w; run `gravity init` to convert it to version 2", ee.Err)
+		}
+		return nil, err
+	}
+	c, err := a.detectCI(ctx, info.repo)
+	if err != nil {
+		return nil, err
+	}
+	s := &pipelineSession{info: info, manifest: m, ci: c}
+	opts, err := a.pipelineOptions(ctx, s, mode, f, committed)
+	if err != nil {
+		return nil, err
+	}
+	s.opts = opts
+	apiURL := ""
+	if m != nil {
+		apiURL = m.APIURL
+	}
+	creds, err := a.credentials(apiURL)
+	if err != nil {
+		return nil, err
+	}
+	if creds.Token == "" && opts.Trigger == config.TriggerPR && creds.TokenSource != auth.SourceFlag {
+		return s, errForkPR
+	}
+	if err := requireToken(creds); err != nil {
+		return nil, err
+	}
+	s.client = a.client(creds)
+	who, err := s.client.WhoAmI(ctx)
+	if err != nil {
+		return nil, explainAPI(err)
+	}
+	if err := requirePipelines(who.Features); err != nil {
+		return nil, err
+	}
+	s.who = who
+	s.opts.RepoParam = repoParam(who, info)
+	return s, nil
 }
 
-func newCheckCmd(*app) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "check",
-		Short: "The pull request gate: drift, coverage, claims and doc impact (not available in this build)",
-		RunE: func(_ *cobra.Command, args []string) error {
-			if len(args) > 0 && (args[0] == "api" || args[0] == "docs") {
-				return removedPointer("check "+args[0], "gravity check")
+func (a *app) pipelineOptions(ctx context.Context, s *pipelineSession, mode pipelineMode, f pipelineFlags, committed bool) (engine.Options, error) {
+	c := s.ci
+	opts := engine.Options{Passes: f.passes, From: f.from, To: f.to, Note: f.note, LeaseTimeout: f.leaseTimeout, Parallel: f.parallel, FailOn: f.failOn, Origin: origin(c)}
+	trigger := f.trigger
+	switch mode {
+	case modePreview:
+		trigger = ci.TriggerManual
+		opts.Preview = true
+		opts.Mode = api.ModeDry
+		opts.WorkingTree = !committed
+		opts.ConnectContext = api.ContextPreview
+	case modeCheck:
+		trigger = ci.TriggerPR
+		opts.ImplicitCheck = true
+	default:
+		if trigger == "" {
+			trigger = c.Trigger
+			if trigger == "" || !c.IsCI() {
+				trigger = ci.TriggerManual
 			}
-			return notYet("check")
-		},
+		}
 	}
-	f := cmd.Flags()
-	f.StringSlice("pass", nil, "check only these passes")
-	f.String("from", "", "start of the range")
-	f.String("to", "", "end of the range")
-	f.StringSlice("fail-on", nil, "drift, coverage, claims, verbatim")
-	f.String("annotate", "auto", "auto, github, gitlab, azure or none")
-	f.Bool("comment", false, "post the doc-impact comment")
-	return cmd
+	if !ci.ValidTrigger(trigger) {
+		return opts, Failf(CodeError, "--trigger %q must be one of pr, push, release, schedule, manual", trigger)
+	}
+	if f.parallel > 4 {
+		return opts, Failf(CodeError, "--parallel is at most 4")
+	}
+	opts.Trigger = trigger
+	if f.dryRun {
+		opts.Mode = api.ModeDry
+	}
+	branch := firstNonEmpty(f.branch, c.Branch, s.info.branch)
+	if trigger == ci.TriggerSchedule && f.branch == "" && c.Branch == "" {
+		branch = s.info.defaultBranch
+	}
+	opts.Branch = branch
+	opts.Head = c.HeadSHA
+	opts.Tag = c.Tag
+	if c.IsCI() {
+		opts.CI = &api.CIInfo{Provider: c.Provider, RunURL: c.RunURL, Event: c.Event}
+	}
+	switch trigger {
+	case ci.TriggerPR:
+		pr := &api.PRInfo{TargetBranch: firstNonEmpty(s.info.defaultBranch, "main")}
+		if c.PR != nil {
+			pr.Number, pr.URL = c.PR.Number, c.PR.URL
+			if c.PR.TargetBranch != "" {
+				pr.TargetBranch = c.PR.TargetBranch
+			}
+			if c.PR.HeadSHA != "" {
+				opts.Head = c.PR.HeadSHA
+			}
+		}
+		if f.from != "" {
+			pr.TargetBranch = ""
+			opts.PRBase = f.from
+		} else {
+			opts.PRBase = c.BaseSHA
+		}
+		if f.to != "" {
+			opts.Head = f.to
+		}
+		opts.PR = pr
+		opts.Branch = firstNonEmpty(c.Branch, s.info.branch)
+	case ci.TriggerRelease:
+		if opts.Tag == "" {
+			return opts, Failf(CodeError, "a release run needs its tag: run on a tag in CI or set GRAVITY_TAG")
+		}
+	default:
+		if branch == "" {
+			return opts, &ExitError{Code: CodeError, ErrCode: "branch_unknown", Err: errors.New("HEAD is detached and is not on the default branch; pass --branch (or set GRAVITY_BRANCH)")}
+		}
+	}
+	if opts.WorkingTree {
+		opts.Head = ""
+	}
+	if opts.ConnectContext == "" {
+		opts.ConnectContext = trigger
+	}
+	_ = ctx
+	return opts, nil
+}
+
+func (a *app) runEnv(s *pipelineSession) *engine.Env {
+	branch := firstNonEmpty(s.opts.Branch, s.info.defaultBranch)
+	return &engine.Env{
+		Client: s.client, Repo: s.info.repo, Manifest: s.manifest,
+		Info:      passes.RepoInfo{RemoteKey: s.info.remoteKey, Name: s.info.name, WebURL: s.info.webURL, Provider: s.info.provider, Branch: branch, ID: principalRepoID(s.who)},
+		Connect:   a.connectRequest(s.info, s.manifest, s.opts.ConnectContext, s.opts.Origin, s.opts.Mode == api.ModeDry),
+		Log:       uiLogger{p: a.ui},
+		Sleep:     a.sleep,
+		Generator: "gravity-cli/" + version.String(),
+	}
+}
+
+func principalRepoID(who *api.WhoAmI) string {
+	if who != nil && who.Principal != nil && who.Principal.Repo != nil {
+		return who.Principal.Repo.ID
+	}
+	return ""
+}
+
+func (a *app) forkPR(s *pipelineSession) error {
+	msg := "No Gravity token in this pull request run (secrets are not shared with forks); skipping the doc check"
+	a.ui.Warn("fork_pr_no_token", msg)
+	if path := a.env("GITHUB_STEP_SUMMARY"); path != "" && s.ci.Provider == ci.GitHub {
+		if err := report.AppendFile(path, "### Gravity\n\n"+msg+"."); err != nil {
+			a.ui.Debugf("step summary: %v", err)
+		}
+	}
+	return a.ui.Result(map[string]any{"skipped": "fork_pr_no_token"})
+}
+
+func runError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, engine.ErrLeaseTimeout):
+		return &ExitError{Code: CodeError, ErrCode: api.CodeLeaseHeld, Err: err}
+	case errors.Is(err, engine.ErrStopped) && errors.Is(err, api.ErrLeaseLost):
+		return &ExitError{Code: CodeError, ErrCode: api.CodeLeaseLost, Err: err}
+	case errors.Is(err, engine.ErrStopped):
+		return &ExitError{Code: CodeError, ErrCode: api.CodeRunNotRunning, Err: err}
+	}
+	return explainAPI(err)
+}
+
+func passMark(p engine.PassResult) string {
+	switch {
+	case p.Status == api.StatusFailed:
+		return ui.MarkFail
+	case p.Report != nil && p.Report.Failing:
+		return ui.MarkFail
+	case p.SkipReason == api.SkipTargetMissing:
+		return ui.MarkFail
+	case p.SkipReason == api.SkipTargetUnapproved || p.SkipReason == api.SkipScopeMissing:
+		return ui.MarkWarn
+	case p.Status == api.StatusSkipped:
+		return ui.MarkSkip
+	}
+	return ui.MarkOK
+}
+
+func passOutcome(p engine.PassResult) string {
+	switch {
+	case p.Status == api.StatusFailed:
+		return "failed: " + p.Error
+	case p.Status == api.StatusSkipped:
+		reason := "skipped: " + skipLabel(p.SkipReason)
+		if p.ApproveURL != "" && p.SkipReason == api.SkipTargetUnapproved {
+			reason += " (" + p.ApproveURL + ")"
+		}
+		if len(p.Missing) > 0 {
+			reason += " (" + strings.Join(p.Missing, ", ") + ")"
+		}
+		return reason
+	case p.Report == nil:
+		return ""
+	}
+	if line := p.Report.Counts.Line(); line != "" && p.Kind != "check" {
+		return line
+	}
+	return p.Report.Summary
+}
+
+func (a *app) printRun(res *engine.Result, info *repoInfo) {
+	p := a.ui
+	where := res.Trigger
+	if res.Branch != "" {
+		where += " " + res.Branch
+	}
+	if res.Range != nil {
+		head := shortSHA(res.Range.Head)
+		if head == "" {
+			head = "working tree"
+		}
+		where += fmt.Sprintf(" (%s..%s, %d commits)", firstNonEmpty(shortSHA(res.Range.Base), "root"), head, res.Commits)
+	}
+	product := "-"
+	if res.Plan != nil {
+		product = firstNonEmpty(res.Plan.Product.Name, res.Plan.Product.Slug, "-")
+	}
+	mode := ""
+	if res.Mode == api.ModeDry {
+		mode = " · dry run"
+	}
+	p.Println("%s %s → %s · %s%s", p.Bold("Gravity ·"), info.name, product, where, mode)
+	rows := make([][]string, 0, len(res.Passes))
+	for _, ps := range res.Passes {
+		cost := ""
+		if ps.RunPassID != "" && (ps.Status == api.StatusSucceeded || ps.Status == api.StatusFailed) {
+			cost = fmt.Sprintf("$%.2f", ps.CostUSD)
+		}
+		rows = append(rows, []string{p.Mark(passMark(ps)), ps.Name, ps.Kind, ps.Target, passOutcome(ps), cost})
+	}
+	p.Table("", rows)
+	for _, ps := range res.Passes {
+		if ps.Report == nil {
+			continue
+		}
+		for _, w := range ps.Report.Warnings {
+			p.Println("  %s %s: %s", p.Mark(ui.MarkWarn), ps.Name, w)
+		}
+		for _, f := range ps.Report.Findings {
+			loc := ""
+			if f.File != "" {
+				loc = " (" + f.File
+				if f.Line > 0 {
+					loc += fmt.Sprintf(":%d", f.Line)
+				}
+				loc += ")"
+			}
+			p.Println("  %s %s: %s%s", p.Mark(findingMark(f)), ps.Name, f.Title, loc)
+		}
+		for _, n := range ps.Report.Notes {
+			p.Println("  %s %s: %s", p.Mark(ui.MarkInfo), ps.Name, n.Title)
+		}
+	}
+	if res.Mode == api.ModeWrite && res.Finish != nil && res.Finish.Bundle.Changes > 0 {
+		p.Println("Bundle: %d changes awaiting review → %s", res.Finish.Bundle.Changes, firstNonEmpty(res.Finish.Bundle.AppURL, res.Finish.Run.AppURL))
+	} else if res.Run != nil && res.Run.AppURL != "" {
+		p.Println("Run: %s", res.Run.AppURL)
+	}
+}
+
+func findingMark(f api.Finding) string {
+	switch f.Severity {
+	case api.SeverityError:
+		return ui.MarkFail
+	case api.SeverityWarning:
+		return ui.MarkWarn
+	}
+	return ui.MarkInfo
+}
+
+func reportDoc(res *engine.Result, info *repoInfo, prNumber int) report.Doc {
+	d := report.Doc{Repo: info.remoteKey, PR: prNumber}
+	if res.Run != nil {
+		d.RunURL = res.Run.AppURL
+	}
+	if res.Range != nil && res.Range.Kind == api.RangeSurvey {
+		d.Survey = true
+	}
+	for _, p := range res.Passes {
+		rp := report.Pass{Name: p.Name, Kind: p.Kind, Target: p.Target, Status: p.Status, SkipReason: p.SkipReason, Error: p.Error}
+		if p.Report != nil {
+			rp.Summary = p.Report.Summary
+			rp.Impact = p.Report.Impact
+			rp.Findings = p.Report.Findings
+			rp.Notes = p.Report.Notes
+			rp.Claims = p.Report.Claims
+		}
+		d.Passes = append(d.Passes, rp)
+	}
+	return d
+}
+
+func (a *app) publishPR(ctx context.Context, s *pipelineSession, res *engine.Result, comment bool, annotate string) {
+	prNumber := 0
+	if s.opts.PR != nil {
+		prNumber = s.opts.PR.Number
+	}
+	doc := reportDoc(res, s.info, prNumber)
+	body := report.Markdown(doc)
+	if annotate == "auto" && s.ci.Provider == ci.GitHub || annotate == ci.GitHub {
+		out := a.stdout
+		if a.ui.JSON() {
+			out = a.stderr
+		}
+		for _, line := range report.GitHubAnnotations(doc.Findings()) {
+			fmt.Fprintln(out, line)
+		}
+	}
+	summaryWritten := false
+	if path := a.env("GITHUB_STEP_SUMMARY"); path != "" && s.ci.Provider == ci.GitHub {
+		if err := report.AppendFile(path, body); err != nil {
+			a.ui.Warn("step_summary", err.Error())
+		} else {
+			summaryWritten = true
+		}
+	}
+	posted := false
+	if comment && prNumber > 0 {
+		token := a.env("GITHUB_TOKEN")
+		repo := a.env("GITHUB_REPOSITORY")
+		switch {
+		case s.ci.Provider == ci.GitHub && token != "" && repo != "":
+			gh := report.GitHub{API: a.env("GITHUB_API_URL"), Token: token, Repo: repo}
+			url, err := gh.Upsert(ctx, prNumber, report.Marker(s.info.remoteKey), body, doc.HasImpact())
+			switch {
+			case err != nil:
+				a.ui.Warn("pr_comment", "could not post the pull request comment: "+err.Error())
+			case url != "":
+				posted = true
+				a.ui.Println("Pull request comment: %s", url)
+			default:
+				posted = true
+			}
+		case s.ci.Provider == ci.GitHub:
+			a.ui.Warn("pr_comment", "GITHUB_TOKEN is not set (pull-requests: write); the report is in "+reportFile)
+		}
+	}
+	if !posted && !summaryWritten && s.ci.IsCI() {
+		path := filepath.Join(s.info.root, reportFile)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			a.ui.Warn("report_file", err.Error())
+		} else {
+			a.ui.Println("Report written to %s", reportFile)
+		}
+	}
+}
+
+func (a *app) finishPipeline(res *engine.Result, strict bool, extra error) error {
+	if extra != nil {
+		return extra
+	}
+	code := res.ExitCode(strict)
+	if code == CodeOK {
+		return a.ui.Result(res)
+	}
+	errCode := "pass_failed"
+	msg := "one or more passes failed"
+	switch code {
+	case CodeFindings:
+		errCode, msg = "findings", findingsMessage(res.Findings())
+	case CodeLicense:
+		errCode, msg = api.CodeModuleDisabled, "a pass needs a module this organization does not have"
+	default:
+		for _, p := range res.Passes {
+			if p.SkipReason == api.SkipTargetMissing {
+				msg = fmt.Sprintf("pass %s targets %s, which does not exist (fix it in the app or %s)", p.Name, p.Target, config.ManifestFileName)
+			}
+		}
+	}
+	ee := &ExitError{Code: code, ErrCode: errCode, Err: errors.New(msg)}
+	if err := a.ui.Failure(ui.ErrorInfo{Code: errCode, Message: msg, ExitCode: code}, res); err != nil {
+		return err
+	}
+	return ee
+}
+
+func findingsMessage(findings []api.Finding) string {
+	n := 0
+	for _, f := range findings {
+		if f.Severity == api.SeverityError {
+			n++
+		}
+	}
+	if n == 1 {
+		return "1 finding fails the check"
+	}
+	return fmt.Sprintf("%d findings fail the check", n)
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

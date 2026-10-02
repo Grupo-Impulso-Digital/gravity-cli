@@ -606,16 +606,6 @@ func TestRemovedCommandsPoint(t *testing.T) {
 	}
 }
 
-func TestPipelineCommandsNotAvailableYet(t *testing.T) {
-	h := newHarness(t)
-	for _, cmd := range []string{"run", "preview", "check"} {
-		expectCode(t, h, h.run(cmd), 2)
-		if !strings.Contains(h.stderr.String(), "not available in this build") {
-			t.Fatalf("%s: %s", cmd, h.stderr.String())
-		}
-	}
-}
-
 func TestExitCodeTable(t *testing.T) {
 	license := &api.ModuleDisabledError{Module: "cli", APIError: &api.APIError{StatusCode: 403, Code: api.CodeModuleDisabled}}
 	cases := []struct {
