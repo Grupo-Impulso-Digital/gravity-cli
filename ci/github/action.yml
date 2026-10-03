@@ -7,7 +7,7 @@ branding:
 
 inputs:
   token:
-    description: "Gravity token: pass `${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}` (the repository token gravity init stores as GRAVITY_REPO_TOKEN, else a GRAVITY_TOKEN user or organization token). Empty only on fork and Dependabot pull requests, where the run is skipped with a notice; empty anywhere else fails with exit code 4."
+    description: "Gravity token: the expression secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN (the repository token gravity init stores as GRAVITY_REPO_TOKEN, else a GRAVITY_TOKEN user or organization token). Empty only on fork and Dependabot pull requests, where the run is skipped with a notice; empty anywhere else fails with exit code 4."
     required: true
   command:
     description: "gravity command to run: run (default), check or status."

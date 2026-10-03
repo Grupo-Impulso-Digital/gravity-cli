@@ -23,8 +23,9 @@ type actionStep struct {
 
 type actionFile struct {
 	Inputs map[string]struct {
-		Required bool   `yaml:"required"`
-		Default  string `yaml:"default"`
+		Required    bool   `yaml:"required"`
+		Default     string `yaml:"default"`
+		Description string `yaml:"description"`
 	} `yaml:"inputs"`
 	Outputs map[string]struct {
 		Value string `yaml:"value"`
@@ -62,6 +63,11 @@ func TestActionInputsAndOutputs(t *testing.T) {
 	}
 	if len(a.Inputs) != len(want) {
 		t.Fatalf("inputs = %v (no site, format or since inputs in 1.x)", a.Inputs)
+	}
+	for name, in := range a.Inputs {
+		if strings.Contains(in.Description, "${{") {
+			t.Fatalf("input %s: GitHub evaluates expressions in action metadata, so a description must not contain one", name)
+		}
 	}
 	if !a.Inputs["token"].Required {
 		t.Fatal("token is required")
