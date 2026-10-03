@@ -153,7 +153,8 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
    saw and its skip reason. `409 lease_held` is retried after its `retryAfter`
    (clamped to 5-60 s) until `--lease-timeout`; `409 plan_stale` re-plans, up to
    three times.
-4. Heartbeats run every `heartbeatSeconds`. `lease_lost` or `run_not_running`
+4. Heartbeats run every `heartbeatSeconds`. `lease_lost`, `run_not_running`
+   or a `401` (on a heartbeat or any other call of the run, `api.StopsRun`)
    stops the run without a finish call.
 5. Authoritative write runs and release runs ingest the inventory when the
    plan advertises `product-inventory`: units with roles, in one call, or in
@@ -200,8 +201,9 @@ collection, pass and note layers. `402 no_provider_key` means the organization
 has no LLM key; the AI pass fails with that error. Hosted prompts come from
 `GET /api/llm/v1/prompts/{name}` and are cached per process
 (`prompts.Resolver`). An error or an empty answer falls back to the prompt
-baked into the binary, except a licence refusal, a stopped run (`lease_lost`,
-`run_not_running`) or a cancelled context, which fail the pass.
+baked into the binary, except a licence refusal, a run-stopping error
+(`lease_lost`, `run_not_running` or a `401`) or a cancelled context, which fail
+the pass.
 
 ## Nucleus
 
