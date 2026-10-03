@@ -109,6 +109,7 @@ type Options struct {
 	Trigger     string
 	Branch      string
 	CodeExclude []string
+	CodeInclude []string
 	OpenAPI     []string
 	DocsInclude []string
 	DocsExclude []string
@@ -243,7 +244,9 @@ func Build(ctx context.Context, repo *git.Repo, rng Range, opts Options) (*Chang
 	if err != nil {
 		return nil, err
 	}
-	cs.Symbols = ParseSymbols(diff, func(p string) bool { return !Excluded(p, opts.CodeExclude) })
+	cs.Symbols = ParseSymbols(diff, func(p string) bool {
+		return !Excluded(p, opts.CodeExclude) && (len(opts.CodeInclude) == 0 || glob.MatchAny(opts.CodeInclude, p))
+	})
 	return cs, nil
 }
 

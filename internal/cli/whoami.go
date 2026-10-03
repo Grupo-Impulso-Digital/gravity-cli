@@ -39,7 +39,7 @@ func newWhoamiCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := requireToken(creds); err != nil {
+			if err := a.requireToken(creds); err != nil {
 				return err
 			}
 			who, err := a.client(creds).WhoAmI(cmd.Context())

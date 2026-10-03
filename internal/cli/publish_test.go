@@ -61,7 +61,7 @@ func TestCheckOnGitLabPostsANoteAndACodeQualityReport(t *testing.T) {
 	} {
 		h.env[k] = v
 	}
-	expectCode(t, h, h.run("check"), 1)
+	expectCode(t, h, h.run("check", "--fail-on", "coverage"), 0)
 	if len(gl.posted) != 1 || !strings.Contains(gl.posted[0], "### Gravity · doc impact for #42") || !strings.Contains(gl.posted[0], "<!-- gravity:doc-impact repo=github.com/acme/billing-api -->") {
 		t.Fatalf("notes = %v\nstderr: %s", gl.posted, h.stderr.String())
 	}
@@ -94,7 +94,7 @@ func TestCheckWithoutAProviderTokenFallsBackToTheReportFile(t *testing.T) {
 	} {
 		h.env[k] = v
 	}
-	expectCode(t, h, h.run("check", "--comment"), 1)
+	expectCode(t, h, h.run("check", "--comment"), 0)
 	if !strings.Contains(h.stderr.String(), "BITBUCKET_ACCESS_TOKEN is not set") {
 		t.Fatalf("stderr = %s", h.stderr.String())
 	}

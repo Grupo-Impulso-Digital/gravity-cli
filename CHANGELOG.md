@@ -1,5 +1,68 @@
 # Changelog
 
+## v1.0.1 — Unreleased
+
+Hardening of 1.0 after a documentation audit and the first production runs.
+
+### Fixed
+
+- A local `gravity run` (and a GitHub `workflow_dispatch`) no longer ends
+  silently with nothing written. A manual run names the passes it left out and
+  how to run one; `gravity run --pass <name>` asks the server to run that pass
+  whatever its triggers (the plan's `pass=` and the new `selected` field of
+  `POST /runs`), and fails with `pass_not_applicable` and a hint when the
+  server still refuses it. An unknown `--pass` fails with `pass_unknown`
+  instead of skipping everything.
+- `gravity run` warns about uncommitted changes: a run reads committed history
+  only (`gravity preview` reads the working tree), and its help now says so.
+- `gravity check` no longer fails every pull request that changes a documented
+  API operation. Drift compares api blocks with the pull request's base and
+  head: a change that a push-triggered reference pass will apply on merge is a
+  note, drift that predates the pull request is a warning, and only a change
+  nothing will follow fails (`drift` stays in the default `failOn`).
+- The built-in check now covers coverage, as documented: new operations that no
+  pass will document are reported (warnings, or failures with
+  `--fail-on coverage`), with the share of documented units as a note. Help,
+  README and this changelog say exactly what the built-in check covers.
+- Missing credentials are an error, not a pass: an empty `GRAVITY_TOKEN` in CI,
+  a signed-out local `gravity check`, a literal `$(GRAVITY_TOKEN)` (an undefined
+  Azure variable) or another unexpanded reference, and a token the server
+  rejects (`401`) exit `4` (`token_missing`, `token_unresolved`,
+  `unauthorized`). Only a fork pull request, detected per provider, skips with
+  exit `0` and a notice.
+- `code.include` is honoured: passes without `scope.paths` react to changes
+  under it (plus `code.openapi`), and symbols are read only there.
+- The survey depth set on the repository in the app (`repo.survey.maxCommits`
+  in the plan) is used for passes without a watermark, unless a pass sets
+  `surveyCommits`.
+- `gravity logout` names the right screen for repository and organization
+  tokens: Settings › CLI & machines, with its link.
+- `gravity passes edit` links the manifest on the repository's own host
+  (GitHub, GitLab, Bitbucket, Azure DevOps, including Azure SSH remotes) and
+  prints the file and branch for other hosts instead of a GitHub-style link.
+- `gravity init` no longer replaces a `GRAVITY_TOKEN` that a gravity 0.x
+  pipeline still uses (0.x refuses repository tokens): it detects 0.x CI files
+  and v1 manifests, keeps the secret and prints the new token to set when the
+  migration is merged. `--replace-secret` replaces it anyway; without a terminal
+  init mints nothing it could not show.
+- AI-authored list blocks with a variant the platform does not know
+  (`unordered`, `ordered`, ...) are normalized to `bulleted`, `numbered` or
+  `task`, and heading levels are clamped, so guides pages are no longer refused
+  with `Invalid content for list block`. The tool schema names the variants.
+- Nucleus atoms with an unknown kind are written as `other` instead of being
+  refused.
+- Cross-repository hints that no repository can receive are dropped with a
+  warning instead of failing the whole batch (`has no recipient repository`);
+  `forRepos` is limited to the product's repositories, and a refused batch is
+  retried hint by hint.
+- The v0.3.0 entry below said the action's `version` input defaulted to
+  `latest`; it defaults to `0`.
+
+### Changed
+
+- New exit code `4` for missing, unresolved or rejected credentials; the
+  action's `exit-code` output documents it.
+
 ## v1.0.0 — 2026-10-02
 
 Clean break: the v0.x command set and the v1 manifest are removed, and every CI
@@ -302,7 +365,7 @@ would break the day 1.0 is published.
 ### CI templates
 
 - The GitHub composite action downloads the prebuilt release binary through
-  `install.sh` (`version` input, default `latest`, cached per release) instead of
+  `install.sh` (`version` input, default `0`, cached per release) instead of
   installing Go and building on every run. `--format` is appended only for
   `check api`, `check docs` and `coverage`; `api-url` and `site` default to empty
   so `.gravity.yaml` wins. `version: source` builds from the action checkout.

@@ -330,8 +330,10 @@ func scopeLine(s api.PassScope) string {
 
 type editData struct {
 	Pass   string `json:"pass"`
-	URL    string `json:"url"`
+	URL    string `json:"url,omitempty"`
 	Locked bool   `json:"locked"`
+	File   string `json:"file,omitempty"`
+	Branch string `json:"branch,omitempty"`
 }
 
 func (a *app) passesEdit(ctx context.Context, f passesFlags, name string) error {
@@ -350,11 +352,18 @@ func (a *app) passesEdit(ctx context.Context, f passesFlags, name string) error 
 		if s.manifest != nil {
 			path = relPath(s.info.root, s.manifest.Path)
 		}
-		base := firstNonEmpty(data.Repo.WebURL, s.info.webURL)
-		if base == "" {
-			return Failf(CodeError, "pass %s is managed in the repository: edit %s", name, path)
+		base, provider := s.info.webURL, s.info.provider
+		if data.Repo.WebURL != "" {
+			base = data.Repo.WebURL
+			if _, p := webURL(strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")); p != "" {
+				provider = p
+			}
 		}
-		url = base + "/blob/" + branch + "/" + path
+		url = fileURL(base, provider, branch, path)
+		if url == "" {
+			a.ui.Println("Pass %s is managed in the repository; edit it in %s on %s", name, path, branch)
+			return a.ui.Result(editData{Pass: name, Locked: true, File: path, Branch: branch})
+		}
 		a.ui.Println("Pass %s is managed in the repository; edit it in %s", name, url)
 	} else {
 		if data.Repo.AppURL == "" || ps.ID == "" {

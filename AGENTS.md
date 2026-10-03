@@ -134,8 +134,11 @@ to `debug.ReadBuildInfo`.
   wrap an underlying error (preserve the chain — `errorlint` guards it). Error
   strings are lowercase and unpunctuated. No `panic` in non-test code.
 - **Exit-code contract** (`internal/cli/exit.go`): `0` success/no findings,
-  `1` findings produced, `2` operational error (auth/network/bad input),
-  `3` license refusal; precedence 3 > 2 > 1 > 0. Commands return an
+  `1` findings produced, `2` operational error (network/bad input),
+  `3` license refusal, `4` no usable credentials (`token_missing`,
+  `token_unresolved`, any `401`); precedence 3 > 2 > 1 > 0, and `4` ends a
+  command before it does anything else. Only a fork pull request detected by
+  `internal/ci` (`Context.Fork`) may skip without a token. Commands return an
   `*ExitError` (with an `ErrCode` for the `--json` envelope); never call
   `os.Exit` inside a command.
 - **License refusals** (`internal/api/license.go`): a 403 whose envelope code is
@@ -294,6 +297,21 @@ to `debug.ReadBuildInfo`.
   repository token in `GRAVITY_TOKEN`.
 - **`read_file` reads at the end of the range under review** (`--to`, else
   `HEAD`), not the working tree, so the agent stays deterministic in CI.
+- **`gravity run` never reads the working tree.** Writes cite commits and
+  watermarks advance to commits, so a run covers committed history only and
+  warns about uncommitted changes; `gravity preview` is the working-tree view.
+- **Manual runs and `--pass`.** Trigger matching is the server's
+  (`evaluateSkip`): the CLI sends `pass=` on the plan and `selected` on
+  `POST /runs`, and fails a manual run whose named pass the plan still skips
+  for `disabled`, `trigger_mismatch` or `branch_mismatch` (`pass_not_applicable`)
+  instead of writing nothing. An unknown `--pass` is `pass_unknown`.
+- **Check drift has a baseline.** Drift compares api blocks with the range's
+  base and head: a change a push-triggered reference pass will apply is a note,
+  drift that predates the range is a warning, and only a change nothing will
+  follow is an error.
+- **`init` and 0.x pipelines.** `cisetup.LegacyPipelines` finds CI files that
+  still run gravity 0.x; init then keeps `GRAVITY_TOKEN` (0.x refuses
+  repository tokens) unless `--replace-secret`.
 - **No live integration tests**: server interactions use `httptest` mocks.
 - **`gosec` is intentionally not enabled yet**; the git `exec.Command` and
   computed-path reads are sandboxed.

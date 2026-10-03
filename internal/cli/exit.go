@@ -9,12 +9,13 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
-// Exit codes: success, findings, operational error, license refusal.
+// Exit codes: success, findings, operational error, license refusal, missing or rejected credentials.
 const (
-	CodeOK       = 0
-	CodeFindings = 1
-	CodeError    = 2
-	CodeLicense  = 3
+	CodeOK          = 0
+	CodeFindings    = 1
+	CodeError       = 2
+	CodeLicense     = 3
+	CodeCredentials = 4
 )
 
 // ExitError carries an explicit process exit code alongside an error.
@@ -51,6 +52,9 @@ func CodeFor(err error) int {
 	if api.IsLicenseError(err) {
 		return CodeLicense
 	}
+	if errors.Is(err, api.ErrUnauthorized) {
+		return CodeCredentials
+	}
 	var ee *ExitError
 	if errors.As(err, &ee) {
 		return ee.Code
@@ -83,6 +87,8 @@ func errorCode(err error) string {
 		return "findings"
 	case CodeLicense:
 		return api.CodeModuleDisabled
+	case CodeCredentials:
+		return api.CodeUnauthorized
 	}
 	return "error"
 }

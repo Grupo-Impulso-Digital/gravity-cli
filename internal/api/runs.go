@@ -74,6 +74,7 @@ type StartRunRequest struct {
 	Note         string         `json:"note,omitempty"`
 	PlanHash     string         `json:"planHash"`
 	ManifestHash *string        `json:"manifestHash"`
+	Selected     []string       `json:"selected,omitempty"`
 	Passes       []RunPassStart `json:"passes"`
 }
 

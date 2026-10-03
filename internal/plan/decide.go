@@ -66,7 +66,7 @@ func Decide(pp api.PlanPass, rng changeset.Range, cs *changeset.ChangeSet, m *co
 	default:
 		paths := pp.Scope.Paths
 		if len(paths) == 0 {
-			paths = []string{"**"}
+			paths = m.DefaultScope()
 		}
 		hit = filesHit(cs, paths, pp.Scope.Exclude, m.CodeExclude()) || unitsHit(cs, pp.Scope.Units) || len(pp.Hints) > 0
 	}

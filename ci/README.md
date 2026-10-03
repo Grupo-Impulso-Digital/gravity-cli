@@ -30,6 +30,7 @@ Jenkins and CircleCI snippets are printed by `gravity init --ci jenkins` and
 | Push to another branch | write, not authoritative | Passes that apply to that branch run; the manifest and the inventory are not updated from it. |
 | Release tag (`v*`) | write | Changelog pages for the release; release-only passes. |
 | Schedule | write | Passes that list the `schedule` trigger. |
+| Manual (`workflow_dispatch`, GitLab web/API pipelines, Azure manual runs) | write | Passes whose triggers allow a manual run; the log names the passes it left out. `args: --pass <name>` runs one pass whatever its triggers. |
 
 Deploys are never gated by documentation writes. Only `check` findings exit `1`.
 
@@ -54,8 +55,13 @@ Without it the report is written to `gravity-report.md` and the log says so.
 Bitbucket token for you: its preview and closing summary name the token to
 create and where to store it.
 
-Fork pull requests run without secrets. The CLI then exits `0` with a warning
-instead of failing. The GitHub template uses `pull_request`, never
+Fork pull requests run without secrets. The CLI detects them per provider
+(the GitHub event's head and base repositories, GitLab's source and target
+projects, `SYSTEM_PULLREQUEST_ISFORK` on Azure, `CHANGE_FORK` on Jenkins,
+`CIRCLE_PR_*` on CircleCI) and then skips with a notice and exit `0`. Anywhere
+else an empty `GRAVITY_TOKEN`, or one that is still a literal variable
+reference such as `$(GRAVITY_TOKEN)` on Azure when the variable is not defined,
+fails with exit `4`, so a missing secret never passes silently. The GitHub template uses `pull_request`, never
 `pull_request_target`, which would run fork code with your secrets.
 
 ## Reports
@@ -82,7 +88,7 @@ instead of failing. The GitHub template uses `pull_request`, never
 
 | Input | Default | Notes |
 | ----- | ------- | ----- |
-| `token` | required | The repository token. Empty on fork pull requests (the run is skipped). |
+| `token` | required | The repository token. Empty on fork pull requests (the run is skipped); empty anywhere else fails with exit `4`. |
 | `command` | `run` | `run`, `check` or `status`. |
 | `args` | `""` | Extra flags, for example `--pass developer-api`. |
 | `version` | `1` | A major (`1`), a release (`v1.2.3`), `latest`, or `source` (build from the action checkout). |
@@ -92,7 +98,7 @@ instead of failing. The GitHub template uses `pull_request`, never
 | Output | Value |
 | ------ | ----- |
 | `run-url` | The Gravity run, or the bundle to review when the run proposed changes. |
-| `exit-code` | `0` success, `1` findings, `2` error, `3` licence refusal. |
+| `exit-code` | `0` success, `1` findings, `2` error, `3` licence refusal, `4` missing, unresolved or rejected token. |
 
 The action resolves the version through `install.sh`, caches the binary per
 resolved release with `actions/cache`, and installs it with `install.sh`

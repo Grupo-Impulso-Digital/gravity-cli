@@ -72,7 +72,7 @@ func prepare(ctx context.Context, env *Env, opts Options, p *api.Plan) (*prepare
 	prep := &prepared{
 		resolver: changeset.NewResolver(env.Repo),
 		builder: changeset.NewBuilder(env.Repo, changeset.Options{
-			Trigger: opts.Trigger, Branch: opts.Branch, CodeExclude: m.CodeExclude(), OpenAPI: specPatterns(p, m),
+			Trigger: opts.Trigger, Branch: opts.Branch, CodeExclude: m.CodeExclude(), CodeInclude: m.CodeInclude(), OpenAPI: specPatterns(p, m),
 			DocsInclude: docsInclude, DocsExclude: docsExclude, Inventory: p.Inventory.Units, RepoKey: env.Info.RemoteKey, RepoName: env.Info.Name,
 		}),
 	}
@@ -88,7 +88,7 @@ func prepare(ctx context.Context, env *Env, opts Options, p *api.Plan) (*prepare
 			Trigger: opts.Trigger, Head: opts.Head, PRBase: opts.PRBase, Tag: opts.Tag,
 			From: opts.From, To: opts.To, WorkingTree: opts.WorkingTree,
 			TagPattern: optionString(pp, "tagPattern", changeset.DefaultTagPattern),
-			SurveyMax:  optionInt(pp, "surveyCommits", changeset.DefaultSurveyCommits),
+			SurveyMax:  optionInt(pp, "surveyCommits", surveyDepth(p)),
 		}
 		if opts.PR != nil && opts.From == "" {
 			in.PRTarget = opts.PR.TargetBranch
@@ -136,6 +136,13 @@ func prepare(ctx context.Context, env *Env, opts Options, p *api.Plan) (*prepare
 		prep.inventory = units
 	}
 	return prep, nil
+}
+
+func surveyDepth(p *api.Plan) int {
+	if p.Repo.Survey != nil && p.Repo.Survey.MaxCommits > 0 {
+		return p.Repo.Survey.MaxCommits
+	}
+	return changeset.DefaultSurveyCommits
 }
 
 func optionString(pp api.PlanPass, key, def string) string {
@@ -226,6 +233,7 @@ func startRequest(env *Env, opts Options, p *api.Plan, prep *prepared) api.Start
 		ClientKey: env.key(), Trigger: opts.Trigger, Mode: opts.Mode, Origin: firstOf(opts.Origin, api.OriginLocal),
 		Branch: opts.Branch, HeadSHA: prep.headSHA, PR: opts.PR, CI: opts.CI,
 		CLI: api.CLIInfo{Version: strings.TrimPrefix(env.Generator, "gravity-cli/")}, Note: opts.Note, PlanHash: p.PlanHash,
+		Selected: opts.Passes,
 	}
 	if opts.Trigger == config.TriggerRelease {
 		req.Branch = ""

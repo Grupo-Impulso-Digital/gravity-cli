@@ -12,6 +12,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
 func expectCode(t *testing.T, h *harness, got, want int) {
@@ -41,13 +42,13 @@ func TestVersion(t *testing.T) {
 
 func TestWhoamiNeedsToken(t *testing.T) {
 	h := newHarness(t)
-	expectCode(t, h, h.run("whoami"), 2)
+	expectCode(t, h, h.run("whoami"), 4)
 	if !strings.Contains(h.stderr.String(), "not signed in") {
 		t.Fatalf("stderr = %q", h.stderr.String())
 	}
-	expectCode(t, h, h.run("whoami", "--json"), 2)
+	expectCode(t, h, h.run("whoami", "--json"), 4)
 	env := h.envelope()
-	if env["ok"] != false || env["error"].(map[string]any)["exitCode"].(float64) != 2 {
+	if env["ok"] != false || env["error"].(map[string]any)["exitCode"].(float64) != 4 || env["error"].(map[string]any)["code"] != "token_missing" {
 		t.Fatalf("envelope = %v", env)
 	}
 }
@@ -675,4 +676,49 @@ func TestLoginWithTokenFlagIsHeadless(t *testing.T) {
 		t.Fatal("no device flow with --token")
 	}
 	expectCode(t, h, h.run("login", "--token", "nope"), 2)
+}
+
+func TestManifestLinksFollowTheProvider(t *testing.T) {
+	cases := []struct {
+		remote string
+		want   string
+	}{
+		{"git@github.com:acme/billing-api.git", "https://github.com/acme/billing-api/blob/main/.gravity.yaml"},
+		{"https://gitlab.com/acme/billing-api.git", "https://gitlab.com/acme/billing-api/-/blob/main/.gravity.yaml"},
+		{"git@bitbucket.org:acme/billing-api.git", "https://bitbucket.org/acme/billing-api/src/main/.gravity.yaml"},
+		{"https://acme@dev.azure.com/acme/platform/_git/billing-api", "https://dev.azure.com/acme/platform/_git/billing-api?path=%2F.gravity.yaml&version=GBmain"},
+		{"git@ssh.dev.azure.com:v3/acme/platform/billing-api", "https://dev.azure.com/acme/platform/_git/billing-api?path=%2F.gravity.yaml&version=GBmain"},
+		{"git@git.example.com:acme/billing-api.git", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.remote, func(t *testing.T) {
+			web, provider := webURL(git.NormalizeRemoteKey(tc.remote))
+			if got := fileURL(web, provider, "main", ".gravity.yaml"); got != tc.want {
+				t.Fatalf("link = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	gitCmd(t, h.dir, "remote", "set-url", "origin", "git@git.example.com:acme/billing-api.git")
+	h.platform.json("GET /api/v1/repos/self/plan", 200, strings.Replace(planBody, `"webUrl":"https://github.com/acme/billing-api",`, "", 1))
+	expectCode(t, h, h.run("passes", "edit", "developer-api", "--json"), 0)
+	data := h.envelope()["data"].(map[string]any)
+	if _, ok := data["url"]; ok || data["file"] != ".gravity.yaml" || data["branch"] != "main" {
+		t.Fatalf("an unknown host gets no link: %v", data)
+	}
+	if !strings.Contains(h.stderr.String(), "edit it in .gravity.yaml on main") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+}
+
+func TestLogoutNamesTheCLIAndMachinesScreen(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.env["GRAVITY_API_URL"] = "https://api.staging.gravitydocs.io"
+	expectCode(t, h, h.run("logout"), 0)
+	if !strings.Contains(h.stderr.String(), "CLI & machines (https://app.staging.gravitydocs.io/app/settings/tokens)") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
 }

@@ -90,6 +90,29 @@ func (i *Installer) Install(ctx context.Context, name, token string) error {
 	return nil
 }
 
+// Exists reports whether the secret is already set; only names are listed, never values.
+func (i *Installer) Exists(ctx context.Context, name string) (bool, error) {
+	var args []string
+	switch i.Tool {
+	case "gh":
+		args = []string{"secret", "list", "--repo", i.Repo}
+	case "glab":
+		args = []string{"variable", "list", "--repo", i.Repo}
+	default:
+		return false, fmt.Errorf("no secret installer for %s", i.Provider)
+	}
+	out, err := i.run(ctx, nil, i.Tool, args...)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Describe returns the command shown in the preview.
 func (i *Installer) Describe(name string) string {
 	switch i.Tool {

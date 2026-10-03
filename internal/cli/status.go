@@ -73,7 +73,7 @@ func (a *app) openSession(ctx context.Context, allowV1 bool) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := requireToken(creds); err != nil {
+	if err := a.requireToken(creds); err != nil {
 		return nil, err
 	}
 	s.client = a.client(creds)

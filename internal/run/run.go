@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -122,6 +123,83 @@ type Result struct {
 
 // ErrLeaseTimeout means another run held the lease for longer than --lease-timeout.
 var ErrLeaseTimeout = errors.New("lease timeout")
+
+// SelectionError reports a pass named with --pass that the plan does not know or will not run.
+type SelectionError struct {
+	Pass          string
+	Reason        string
+	Known         []string
+	Triggers      []string
+	Branches      []string
+	Trigger       string
+	Branch        string
+	DefaultBranch string
+}
+
+// SelectionUnknown is the reason of a SelectionError for a pass the plan does not list.
+const SelectionUnknown = "unknown"
+
+func (e *SelectionError) Error() string {
+	switch e.Reason {
+	case SelectionUnknown:
+		known := strings.Join(e.Known, ", ")
+		if known == "" {
+			known = "none"
+		}
+		return fmt.Sprintf("no pass named %q (passes: %s)", e.Pass, known)
+	case api.SkipDisabled:
+		return fmt.Sprintf("pass %s is disabled; enable it in the app (or %s) to run it", e.Pass, config.ManifestFileName)
+	case api.SkipTriggerMismatch:
+		return fmt.Sprintf("pass %s does not run on %s runs (its triggers: %s), and this Gravity server applies triggers even to a pass named with --pass; add %q to its triggers in the app (or %s), or run it with --trigger %s", e.Pass, e.Trigger, firstOf(strings.Join(e.Triggers, ", "), "none"), e.Trigger, config.ManifestFileName, firstOf(firstWriteTrigger(e.Triggers), config.TriggerPush))
+	case api.SkipBranchMismatch:
+		where := "the default branch"
+		if len(e.Branches) > 0 {
+			where = strings.Join(e.Branches, ", ")
+		} else if e.DefaultBranch != "" {
+			where = "the default branch " + e.DefaultBranch
+		}
+		return fmt.Sprintf("pass %s runs only on %s, not on %s; run it from there, or widen its branches in the app (or %s)", e.Pass, where, firstOf(e.Branch, "this branch"), config.ManifestFileName)
+	}
+	return fmt.Sprintf("pass %s does not run: %s", e.Pass, strings.ReplaceAll(e.Reason, "_", " "))
+}
+
+func firstWriteTrigger(triggers []string) string {
+	for _, t := range []string{config.TriggerPush, config.TriggerSchedule} {
+		for _, have := range triggers {
+			if have == t {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
+func checkSelection(p *api.Plan, opts Options) error {
+	if len(opts.Passes) == 0 {
+		return nil
+	}
+	byName := map[string]api.PlanPass{}
+	known := make([]string, 0, len(p.Passes))
+	for _, pp := range p.Passes {
+		byName[pp.Name] = pp
+		known = append(known, pp.Name)
+	}
+	sort.Strings(known)
+	for _, name := range opts.Passes {
+		pp, ok := byName[name]
+		if !ok {
+			return &SelectionError{Pass: name, Reason: SelectionUnknown, Known: known}
+		}
+		if pp.Applies || opts.Trigger != config.TriggerManual {
+			continue
+		}
+		switch pp.SkipReason {
+		case api.SkipDisabled, api.SkipTriggerMismatch, api.SkipBranchMismatch:
+			return &SelectionError{Pass: name, Reason: pp.SkipReason, Triggers: pp.Triggers, Branches: pp.Branches, Trigger: opts.Trigger, Branch: opts.Branch, DefaultBranch: p.Repo.DefaultBranch}
+		}
+	}
+	return nil
+}
 
 // Exit codes a run maps to.
 const (
@@ -241,6 +319,9 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 			return res, err
 		}
 		res.Plan = p
+		if err := checkSelection(p, opts); err != nil {
+			return res, err
+		}
 		if env.OnPlan != nil {
 			env.OnPlan(p)
 		}

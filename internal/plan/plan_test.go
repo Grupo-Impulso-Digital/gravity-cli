@@ -241,3 +241,32 @@ func TestFetch(t *testing.T) {
 		t.Fatalf("plan = %+v %v", p, err)
 	}
 }
+
+func TestDecideDefaultScopeFollowsCodeInclude(t *testing.T) {
+	scoped := manifest(t, "version: 2\ncode:\n  openapi: [api/openapi.yaml]\n  include: [\"src/**\"]\n")
+	open := manifest(t, "version: 2\n")
+	guides := api.PlanPass{Name: "g", Kind: "guides", Applies: true}
+	nucleus := api.PlanPass{Name: "n", Kind: "nucleus", Applies: true}
+	explicit := api.PlanPass{Name: "e", Kind: "guides", Applies: true, Scope: api.PassScope{Paths: []string{"docs/**"}}}
+	watermark := changeset.Range{Kind: api.RangeWatermark}
+	cases := []struct {
+		name string
+		m    *config.Manifest
+		pass api.PlanPass
+		cs   *changeset.ChangeSet
+		run  bool
+	}{
+		{"code change inside code.include", scoped, guides, cs("push", 1, "src/billing.go"), true},
+		{"change outside code.include", scoped, guides, cs("push", 1, "docs/notes.md"), false},
+		{"openapi documents count as code", scoped, nucleus, cs("push", 1, "api/openapi.yaml"), true},
+		{"scope.paths wins over code.include", scoped, explicit, cs("push", 1, "docs/notes.md"), true},
+		{"no code.include means everything", open, guides, cs("push", 1, "docs/notes.md"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if d := Decide(tc.pass, watermark, tc.cs, tc.m); d.Run != tc.run {
+				t.Fatalf("decision = %+v, want run=%v", d, tc.run)
+			}
+		})
+	}
+}

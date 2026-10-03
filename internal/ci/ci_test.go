@@ -307,3 +307,47 @@ func TestDefaultBranchFromProviders(t *testing.T) {
 		})
 	}
 }
+
+func TestForkDetection(t *testing.T) {
+	gh := func(event string) (map[string]string, map[string]string) {
+		return map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": "/ev.json"}, map[string]string{"/ev.json": event}
+	}
+	type forkCase struct {
+		name  string
+		vars  map[string]string
+		files map[string]string
+		fork  bool
+	}
+	var cases []forkCase
+	add := func(name string, vars, files map[string]string, fork bool) {
+		cases = append(cases, forkCase{name, vars, files, fork})
+	}
+	v, f := gh(`{"pull_request":{"number":1,"head":{"sha":"a","repo":{"full_name":"someone/billing-api"}},"base":{"ref":"main","repo":{"full_name":"acme/billing-api"}}}}`)
+	add("github fork", v, f, true)
+	v, f = gh(`{"pull_request":{"number":1,"head":{"sha":"a","repo":{"full_name":"Acme/Billing-API"}},"base":{"ref":"main","repo":{"full_name":"acme/billing-api"}}}}`)
+	add("github same repository", v, f, false)
+	v, f = gh(`{"pull_request":{"number":1,"head":{"sha":"a","repo":null},"base":{"ref":"main","repo":{"full_name":"acme/billing-api"}}}}`)
+	add("github deleted fork", v, f, true)
+	v, f = gh(`{"pull_request":{"number":1,"head":{"sha":"a"},"base":{"ref":"main"}}}`)
+	add("github event without repositories", v, f, false)
+	add("gitlab fork", map[string]string{"GITLAB_CI": "true", "CI_PIPELINE_SOURCE": "merge_request_event", "CI_MERGE_REQUEST_SOURCE_PROJECT_ID": "7", "CI_MERGE_REQUEST_PROJECT_ID": "3"}, nil, true)
+	add("gitlab same project", map[string]string{"GITLAB_CI": "true", "CI_PIPELINE_SOURCE": "merge_request_event", "CI_MERGE_REQUEST_SOURCE_PROJECT_ID": "3", "CI_MERGE_REQUEST_PROJECT_ID": "3"}, nil, false)
+	add("azure fork", map[string]string{"TF_BUILD": "True", "BUILD_REASON": "PullRequest", "SYSTEM_PULLREQUEST_ISFORK": "True"}, nil, true)
+	add("azure same repository", map[string]string{"TF_BUILD": "True", "BUILD_REASON": "PullRequest", "SYSTEM_PULLREQUEST_ISFORK": "False"}, nil, false)
+	add("jenkins fork", map[string]string{"JENKINS_URL": "https://ci", "CHANGE_ID": "4", "CHANGE_FORK": "someone"}, nil, true)
+	add("jenkins same repository", map[string]string{"JENKINS_URL": "https://ci", "CHANGE_ID": "4"}, nil, false)
+	add("circleci fork", map[string]string{"CIRCLECI": "true", "CIRCLE_PULL_REQUEST": "https://github.com/acme/x/pull/9", "CIRCLE_PR_USERNAME": "someone"}, nil, true)
+	add("circleci same repository", map[string]string{"CIRCLECI": "true", "CIRCLE_PULL_REQUEST": "https://github.com/acme/x/pull/9"}, nil, false)
+	add("bitbucket never reports a fork", map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "BITBUCKET_PR_ID": "2"}, nil, false)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := detect(t, tc.vars, tc.files, nil)
+			if c.Trigger != TriggerPR {
+				t.Fatalf("trigger = %q, want pr", c.Trigger)
+			}
+			if c.Fork != tc.fork {
+				t.Fatalf("fork = %v, want %v", c.Fork, tc.fork)
+			}
+		})
+	}
+}

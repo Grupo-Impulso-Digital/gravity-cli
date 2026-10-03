@@ -85,7 +85,7 @@ func (Nucleus) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 		if written == maxAtoms {
 			break
 		}
-		kind := firstOf(a.Kind, "fact")
+		kind := agent.MemoryKind(a.Kind)
 		if len(allowed) > 0 && !allowed[kind] {
 			continue
 		}

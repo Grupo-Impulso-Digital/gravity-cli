@@ -45,6 +45,15 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	return run(ctx, r.Root, args...)
 }
 
+// Dirty reports whether the working tree has uncommitted or untracked changes.
+func (r *Repo) Dirty(ctx context.Context) (bool, error) {
+	out, err := r.git(ctx, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
 // CurrentBranch returns the checked-out branch name.
 func (r *Repo) CurrentBranch(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "rev-parse", "--abbrev-ref", "HEAD")

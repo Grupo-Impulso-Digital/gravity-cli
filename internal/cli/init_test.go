@@ -620,7 +620,7 @@ func TestInitInteractiveLoginNeverFollowsManifestAPIURL(t *testing.T) {
 	if len(h.platform.requests) != 0 {
 		t.Fatalf("no request may reach the manifest host without opt-in: %+v", h.platform.requests)
 	}
-	expectCode(t, h, h.run("init", "--yes", "--json"), 2)
+	expectCode(t, h, h.run("init", "--yes", "--json"), 4)
 	if e := h.envelope()["error"].(map[string]any); !strings.Contains(e["message"].(string), "not signed in") {
 		t.Fatalf("non-interactive error = %v", e)
 	}
@@ -875,4 +875,81 @@ func TestInitConvertsASiteLessV1WithTheDefaultSite(t *testing.T) {
 	if data := h.envelope()["data"].(map[string]any); data["conversion"].(map[string]any)["site"] != "handbook-site" {
 		t.Fatalf("GRAVITY_SITE wins: %v", data["conversion"])
 	}
+}
+
+func fakeGhWithSecret(t *testing.T, dir string) {
+	t.Helper()
+	script := "#!/bin/sh\necho \"$@\" >> \"" + filepath.Join(dir, "gh.args") + "\"\n" +
+		"if [ \"$1 $2\" = \"secret list\" ]; then printf 'GRAVITY_TOKEN\\t2026-09-01\\nOTHER\\t2026-09-01\\n'; exit 0; fi\n" +
+		"if [ \"$1\" != auth ]; then cat > \"" + filepath.Join(dir, "gh.stdin") + "\"; fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func legacyWorkflow(t *testing.T, h *harness) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(h.dir, ".github", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.write(".github/workflows/docs.yml", "on: push\njobs:\n  docs:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@main\n        with:\n          command: sync\n          token: ${{ secrets.GRAVITY_TOKEN }}\n")
+}
+
+func TestInitKeepsTheTokenOfALive0xPipeline(t *testing.T) {
+	h := newHarness(t)
+	seedRepo(t, h)
+	legacyWorkflow(t, h)
+	initPlatform(h, connectFresh)
+	bin := t.TempDir()
+	fakeGhWithSecret(t, bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	h.secrets = cisetup.ExecRunner
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	h.terminal = true
+	expectCode(t, h, h.run("init", "--yes"), 0)
+	args, _ := os.ReadFile(filepath.Join(bin, "gh.args"))
+	if strings.Contains(string(args), "secret set") || !strings.Contains(string(args), "secret list --repo acme/billing-api") {
+		t.Fatalf("a secret feeding a 0.x pipeline is never replaced by default: %s", args)
+	}
+	out := h.stdout.String() + h.stderr.String()
+	for _, want := range []string{"still feeds a gravity 0.x pipeline (.github/workflows/docs.yml)", "gr_repo_minted_secret", "Set it when this change is merged"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in\n%s", want, out)
+		}
+	}
+
+	ci := newHarness(t)
+	seedRepo(t, ci)
+	legacyWorkflow(t, ci)
+	initPlatform(ci, connectFresh)
+	ci.secrets = cisetup.ExecRunner
+	ci.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, ci, ci.run("init", "--yes", "--json"), 0)
+	if len(ci.platform.find("POST", "/api/v1/repos/cr_1/tokens")) != 0 {
+		t.Fatal("without a terminal init mints no token it can neither install nor show")
+	}
+	if tok := ci.envelope()["data"].(map[string]any)["token"].(map[string]any); !strings.Contains(tok["note"].(string), "--replace-secret") || tok["legacyPipelines"].([]any)[0] != ".github/workflows/docs.yml" {
+		t.Fatalf("token = %v", tok)
+	}
+}
+
+func TestInitReplaceSecretOverridesTheGuard(t *testing.T) {
+	h := newHarness(t)
+	seedRepo(t, h)
+	legacyWorkflow(t, h)
+	initPlatform(h, connectFresh)
+	bin := t.TempDir()
+	fakeGhWithSecret(t, bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	h.secrets = cisetup.ExecRunner
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	expectCode(t, h, h.run("init", "--yes", "--replace-secret"), 0)
+	args, _ := os.ReadFile(filepath.Join(bin, "gh.args"))
+	if !strings.Contains(string(args), "secret set GRAVITY_TOKEN --repo acme/billing-api") {
+		t.Fatalf("gh args = %s", args)
+	}
+	if !strings.Contains(h.stdout.String(), "replacing its current value") {
+		t.Fatalf("stdout = %s", h.stdout.String())
+	}
+	expectCode(t, h, h.run("init", "--yes", "--replace-secret", "--no-secret"), 2)
 }
