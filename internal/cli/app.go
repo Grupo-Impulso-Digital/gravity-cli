@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -52,6 +51,7 @@ type app struct {
 	prompts      ui.Prompter
 	secretRunner cisetup.Runner
 	clock        func() time.Time
+	lastCreds    *auth.Credentials
 }
 
 func (a *app) now() time.Time {
@@ -169,47 +169,24 @@ func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
 	if errors.As(err, &hm) {
 		return auth.Credentials{}, &ExitError{Code: CodeError, ErrCode: "token_host_mismatch", Err: err}
 	}
+	var ut *auth.UnresolvedTokenError
+	if errors.As(err, &ut) {
+		return auth.Credentials{}, &ExitError{Code: CodeCredentials, ErrCode: "token_unresolved", Err: err}
+	}
 	if err != nil {
 		return auth.Credentials{}, Fail(CodeError, err)
 	}
 	if (creds.TokenSource == auth.SourceEnv || creds.TokenSource == auth.SourceFlag) && creds.APIURLSource == auth.SourceManifest && !auth.SameAPIURL(creds.APIURL, config.DefaultAPIURL) {
-		from := config.EnvToken
-		if creds.TokenSource == auth.SourceFlag {
-			from = "--token"
-		}
-		a.ui.Warn("token_to_manifest_host", fmt.Sprintf("sending the %s token to %s, taken from %s apiUrl; set %s to pin the host (in CI, and when the repository is not yours)", from, creds.APIURL, config.ManifestFileName, config.EnvAPIURL))
+		a.ui.Warn("token_to_manifest_host", fmt.Sprintf("sending the %s token to %s, taken from %s apiUrl; set %s to pin the host (in CI, and when the repository is not yours)", creds.TokenFrom(), creds.APIURL, config.ManifestFileName, config.EnvAPIURL))
 	}
-	if creds.TokenSource == auth.SourceEnv || creds.TokenSource == auth.SourceFlag {
-		if shape := unresolvedToken(creds.Token); shape != "" {
-			from := config.EnvToken
-			if creds.TokenSource == auth.SourceFlag {
-				from = "--token"
-			}
-			return auth.Credentials{}, &ExitError{Code: CodeCredentials, ErrCode: "token_unresolved", Err: fmt.Errorf("%s holds an unexpanded variable reference (%s) instead of a token: the CI secret %s is not defined for this job, or is not passed to it", from, shape, config.EnvToken)}
+	if creds.TokenSource == auth.SourceFlag {
+		if shape := auth.UnresolvedShape(creds.Token); shape != "" {
+			return auth.Credentials{}, &ExitError{Code: CodeCredentials, ErrCode: "token_unresolved", Err: fmt.Errorf("--token holds an unexpanded variable reference (%s) instead of a token", shape)}
 		}
 	}
-	a.ui.Debugf("api %s (%s), token from %s, profile %q", creds.APIURL, creds.APIURLSource, creds.TokenSource, creds.ProfileName)
+	a.ui.Debugf("api %s (%s), token from %s, profile %q", creds.APIURL, creds.APIURLSource, creds.TokenFrom(), creds.ProfileName)
+	a.lastCreds = &creds
 	return creds, nil
-}
-
-var unresolvedShapes = []struct {
-	re    *regexp.Regexp
-	shape string
-}{
-	{regexp.MustCompile(`^\$\([^()]*\)$`), "$(NAME), an undefined Azure Pipelines variable"},
-	{regexp.MustCompile(`^\$\{\{.*\}\}$`), "${{ ... }}, an unevaluated workflow expression"},
-	{regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`), "$NAME, an unexpanded shell variable"},
-	{regexp.MustCompile(`^%[A-Za-z_][A-Za-z0-9_]*%$`), "%NAME%, an unexpanded Windows variable"},
-}
-
-func unresolvedToken(token string) string {
-	t := strings.TrimSpace(token)
-	for _, u := range unresolvedShapes {
-		if u.re.MatchString(t) {
-			return u.shape
-		}
-	}
-	return ""
 }
 
 func (a *app) client(creds auth.Credentials) *api.Client {
@@ -220,13 +197,26 @@ func (a *app) client(creds auth.Credentials) *api.Client {
 	return c
 }
 
+func (a *app) credentialHint(err error) string {
+	if !errors.Is(err, api.ErrUnauthorized) || strings.Contains(err.Error(), "gravity login") {
+		return ""
+	}
+	if c, _ := ci.Detect(context.Background(), ci.Env{Getenv: a.env}, nil); c.IsCI() {
+		return ""
+	}
+	if a.lastCreds != nil && a.lastCreds.TokenSource != auth.SourceProfile {
+		return "; the token in " + a.lastCreds.TokenFrom() + " was rejected"
+	}
+	return "; run `gravity login` to sign in again"
+}
+
 func (a *app) requireToken(creds auth.Credentials) error {
 	if creds.Token != "" {
 		return nil
 	}
-	err := fmt.Errorf("not signed in: run `gravity login`, or set %s", config.EnvToken)
+	err := fmt.Errorf("not signed in: run `gravity login`, or set %s (a repository token) or %s", config.EnvRepoToken, config.EnvToken)
 	if c, _ := ci.Detect(context.Background(), ci.Env{Getenv: a.env}, nil); c.IsCI() {
-		err = fmt.Errorf("%s is empty in this %s job: store a repository token (from `gravity init`, or the app's CLI & machines screen) as the CI secret %s and pass it to the gravity step", config.EnvToken, ciLabel(c.Provider), config.EnvToken)
+		err = fmt.Errorf("no Gravity token in this %s job: %s and %s are both empty; store the repository token (from `gravity init`, or the app's CLI & machines screen) as the CI secret %s and pass it to the gravity step", ciLabel(c.Provider), config.EnvRepoToken, config.EnvToken, config.EnvRepoToken)
 	}
 	return &ExitError{Code: CodeCredentials, ErrCode: "token_missing", Err: err}
 }

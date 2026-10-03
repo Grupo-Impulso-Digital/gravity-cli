@@ -198,7 +198,7 @@ func TestInstallersUseStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	last := calls[len(calls)-1]
-	if strings.Join(last.args, " ") != "secret set GRAVITY_TOKEN --repo acme/billing-api" || last.stdin != "gr_repo_x" {
+	if strings.Join(last.args, " ") != "secret set GRAVITY_REPO_TOKEN --repo acme/billing-api" || last.stdin != "gr_repo_x" {
 		t.Fatalf("gh call = %+v", last)
 	}
 
@@ -214,7 +214,7 @@ func TestInstallersUseStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	last = calls[len(calls)-1]
-	if last.name != "glab" || strings.Join(last.args, " ") != "variable set GRAVITY_TOKEN --masked --repo https://gitlab.acme.io/group/sub/api" || last.stdin != "gr_repo_y" {
+	if last.name != "glab" || strings.Join(last.args, " ") != "variable set GRAVITY_REPO_TOKEN --masked --repo https://gitlab.acme.io/group/sub/api" || last.stdin != "gr_repo_y" {
 		t.Fatalf("glab call = %+v", last)
 	}
 	for _, c := range calls {
@@ -327,8 +327,28 @@ func TestLegacyPipelines(t *testing.T) {
 		}
 	}
 	got := strings.Join(LegacyPipelines(root), ",")
-	want := ".github/workflows/docs.yml,.github/workflows/shared.yaml,.gitlab-ci.yml,Jenkinsfile,azure-pipelines.yml"
+	want := ".github/workflows/docs.yml,.gitlab-ci.yml,Jenkinsfile,azure-pipelines.yml"
 	if got != want {
 		t.Fatalf("legacy = %s, want %s", got, want)
+	}
+}
+
+func TestSharedWorkflowCallerKeepsTheGitHubFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".github", "workflows", "docs.yml"), []byte("jobs:\n  docs:\n    uses: Grupo-Impulso-Digital/workflows/.github/workflows/gravity-docs.yml@main\n    secrets: inherit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Build(root, GitHub, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := p.Files[0]; f.Action != ActionKeep || !strings.Contains(f.Note, ".github/workflows/docs.yml calls the shared gravity-docs.yml workflow") {
+		t.Fatalf("file = %+v", f)
+	}
+	if got := LegacyPipelines(root); len(got) != 0 {
+		t.Fatalf("a shared workflow caller is not a 0.x pipeline: %v", got)
 	}
 }

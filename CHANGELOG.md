@@ -1,5 +1,54 @@
 # Changelog
 
+## v1.0.2 — Unreleased
+
+### Changed
+
+- Repository tokens live in `GRAVITY_REPO_TOKEN`. The CLI reads `--token`,
+  then `GRAVITY_REPO_TOKEN`, then `GRAVITY_TOKEN` (user and organization
+  tokens, and the gravity 0.x name), then the profile; a variable that holds
+  an unexpanded reference is skipped. `whoami` and `status` name the variable.
+- `gravity init` stores the minted token as `GRAVITY_REPO_TOKEN` and never
+  touches `GRAVITY_TOKEN`, so a gravity 0.x pipeline keeps working until it is
+  removed; init only names such pipelines. `--replace-secret` is now a hidden
+  no-op that warns.
+- The CI templates pass `GRAVITY_REPO_TOKEN` with the `GRAVITY_TOKEN`
+  fallback (GitHub `secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN`, both
+  variables on Azure, credential `gravity-repo-token` on Jenkins); the action
+  documents the same expression.
+- The Bitbucket template adds a `gravity-manual` custom pipeline, and the
+  CircleCI snippet passes `pipeline.trigger_source`.
+
+### Fixed
+
+- The manual-run summary names the passes that were eligible, which wrote,
+  which ran without changes, which were skipped and why, and which failed,
+  instead of calling every eligible pass "ran".
+- `gravity run --pass <check pass>` no longer reports operations as
+  undocumented when an unselected reference pass documents them: coverage and
+  drift count every enabled pass that would document the unit.
+- GitHub runs started by Dependabot (no Actions secrets) are skipped with a
+  notice and exit `0`, like fork pull requests, instead of exiting `4`.
+- Manual starts are detected on Jenkins (`BUILD_CAUSE`/`ROOT_BUILD_CAUSE`
+  user and timer causes, `BUILD_USER_ID`) and CircleCI
+  (`CIRCLE_PIPELINE_TRIGGER_SOURCE` `api` or `scheduled_pipeline`);
+  `GRAVITY_TRIGGER=manual` remains the override everywhere.
+- A workflow calling the shared `gravity-docs.yml` is no longer treated as a
+  0.x pipeline: init keeps it instead of adding `gravity.yml`.
+- A `401` inside a pass stops the run without its finish call and exits `4`,
+  like every other credential failure.
+- A rejected token adds "run `gravity login` to sign in again" locally with a
+  profile token, and names the variable when the token came from one.
+- The pull request comment's "N notes." line no longer renders as a table
+  row when there are no findings.
+- Claim review takes locked verbatim pages whose file the range changes
+  first, and reviews them even when only Markdown changed.
+- A check pass's `annotate: false` keeps its findings out of the CI
+  annotations.
+- An unstamped build reports `dev+<commit>` instead of `dev`, the action's
+  source build stamps `git describe`, and `status` shows this CLI's version
+  next to the last one the platform saw.
+
 ## v1.0.1 — 2026-10-03
 
 Hardening of 1.0 after a documentation audit and the first production runs.

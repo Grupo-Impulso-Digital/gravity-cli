@@ -172,7 +172,7 @@ func TestInitFreshAsksThreeQuestions(t *testing.T) {
 		t.Fatalf("createTargets = %v", ct)
 	}
 	stderr := h.stderr.String()
-	if !strings.Contains(stderr, "gr_repo_minted_secret") || !strings.Contains(stderr, "GRAVITY_TOKEN (shown once)") || !strings.Contains(stderr, "https://github.com/acme/billing-api/settings/secrets/actions/new") {
+	if !strings.Contains(stderr, "gr_repo_minted_secret") || !strings.Contains(stderr, "GRAVITY_REPO_TOKEN (shown once)") || !strings.Contains(stderr, "https://github.com/acme/billing-api/settings/secrets/actions/new") {
 		t.Fatalf("the token is printed once on stderr:\n%s", stderr)
 	}
 	if strings.Contains(h.stdout.String(), "gr_repo_minted_secret") {
@@ -484,7 +484,7 @@ func TestInitInstallsSecretWithGhOnStdin(t *testing.T) {
 	h.stdin = "\n0\n\n"
 	expectCode(t, h, h.run("init"), 0)
 	args, _ := os.ReadFile(filepath.Join(bin, "gh.args"))
-	if !strings.Contains(string(args), "auth status --hostname github.com") || !strings.Contains(string(args), "secret set GRAVITY_TOKEN --repo acme/billing-api") {
+	if !strings.Contains(string(args), "auth status --hostname github.com") || !strings.Contains(string(args), "secret set GRAVITY_REPO_TOKEN --repo acme/billing-api") {
 		t.Fatalf("gh args = %s", args)
 	}
 	if strings.Contains(string(args), "gr_repo_minted_secret") {
@@ -509,7 +509,7 @@ func TestInitInstallsSecretWithGlab(t *testing.T) {
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
 	expectCode(t, h, h.run("init", "--yes"), 0)
 	args, _ := os.ReadFile(filepath.Join(bin, "glab.args"))
-	if !strings.Contains(string(args), "variable set GRAVITY_TOKEN --masked --repo acme/billing-api") || strings.Contains(string(args), "gr_repo_minted_secret") {
+	if !strings.Contains(string(args), "variable set GRAVITY_REPO_TOKEN --masked --repo acme/billing-api") || strings.Contains(string(args), "gr_repo_minted_secret") {
 		t.Fatalf("glab args = %s", args)
 	}
 	if stdin, _ := os.ReadFile(filepath.Join(bin, "glab.stdin")); string(stdin) != "gr_repo_minted_secret" {
@@ -895,7 +895,7 @@ func legacyWorkflow(t *testing.T, h *harness) {
 	h.write(".github/workflows/docs.yml", "on: push\njobs:\n  docs:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@main\n        with:\n          command: sync\n          token: ${{ secrets.GRAVITY_TOKEN }}\n")
 }
 
-func TestInitKeepsTheTokenOfALive0xPipeline(t *testing.T) {
+func TestInitStoresTheRepositoryTokenBesideA0xPipeline(t *testing.T) {
 	h := newHarness(t)
 	seedRepo(t, h)
 	legacyWorkflow(t, h)
@@ -905,67 +905,21 @@ func TestInitKeepsTheTokenOfALive0xPipeline(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	h.secrets = cisetup.ExecRunner
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	h.terminal = true
 	expectCode(t, h, h.run("init", "--yes"), 0)
 	args, _ := os.ReadFile(filepath.Join(bin, "gh.args"))
-	if strings.Contains(string(args), "secret set") || !strings.Contains(string(args), "secret list --repo acme/billing-api") {
-		t.Fatalf("a secret feeding a 0.x pipeline is never replaced by default: %s", args)
+	if !strings.Contains(string(args), "secret set GRAVITY_REPO_TOKEN --repo acme/billing-api") || strings.Contains(string(args), "secret set GRAVITY_TOKEN") {
+		t.Fatalf("init stores GRAVITY_REPO_TOKEN and never touches GRAVITY_TOKEN: %s", args)
 	}
 	out := h.stdout.String() + h.stderr.String()
-	for _, want := range []string{"still feeds a gravity 0.x pipeline (.github/workflows/docs.yml)", "gr_repo_minted_secret", "Set it when this change is merged"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("missing %q in\n%s", want, out)
-		}
+	if !strings.Contains(out, ".github/workflows/docs.yml still run gravity 0.x with GRAVITY_TOKEN; init leaves them and that secret alone") {
+		t.Fatalf("output:\n%s", out)
 	}
-
-	ci := newHarness(t)
-	seedRepo(t, ci)
-	legacyWorkflow(t, ci)
-	initPlatform(ci, connectFresh)
-	ci.secrets = cisetup.ExecRunner
-	ci.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	expectCode(t, ci, ci.run("init", "--yes", "--json"), 0)
-	if len(ci.platform.find("POST", "/api/v1/repos/cr_1/tokens")) != 0 {
-		t.Fatal("without a terminal init mints no token it can neither install nor show")
+	expectCode(t, h, h.run("init", "--yes", "--replace-secret", "--dry-run"), 0)
+	if !strings.Contains(h.stdout.String()+h.stderr.String(), "replace-secret has been deprecated") {
+		t.Fatalf("--replace-secret is deprecated with a notice: %s", h.stdout.String()+h.stderr.String())
 	}
-	if tok := ci.envelope()["data"].(map[string]any)["token"].(map[string]any); !strings.Contains(tok["note"].(string), "--replace-secret") || tok["legacyPipelines"].([]any)[0] != ".github/workflows/docs.yml" {
-		t.Fatalf("token = %v", tok)
-	}
-}
-
-func TestInitReplaceSecretOverridesTheGuard(t *testing.T) {
-	h := newHarness(t)
-	seedRepo(t, h)
-	legacyWorkflow(t, h)
-	initPlatform(h, connectFresh)
-	bin := t.TempDir()
-	fakeGhWithSecret(t, bin)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	h.secrets = cisetup.ExecRunner
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	expectCode(t, h, h.run("init", "--yes", "--replace-secret"), 0)
-	args, _ := os.ReadFile(filepath.Join(bin, "gh.args"))
-	if !strings.Contains(string(args), "secret set GRAVITY_TOKEN --repo acme/billing-api") {
-		t.Fatalf("gh args = %s", args)
-	}
-	if !strings.Contains(h.stdout.String(), "replacing its current value") {
-		t.Fatalf("stdout = %s", h.stdout.String())
-	}
-	expectCode(t, h, h.run("init", "--yes", "--replace-secret", "--no-secret"), 2)
-}
-
-func TestInitWarnsAboutA0xPipelineWithoutASecretTool(t *testing.T) {
-	h := newHarness(t)
-	seedRepo(t, h)
-	legacyWorkflow(t, h)
-	initPlatform(h, connectFresh)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	h.terminal = true
-	expectCode(t, h, h.run("init", "--yes"), 0)
-	out := h.stdout.String() + h.stderr.String()
-	for _, want := range []string{"GRAVITY_TOKEN still feeds a gravity 0.x pipeline (.github/workflows/docs.yml)", "Set it when this change is merged"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("missing %q in\n%s", want, out)
-		}
+	expectCode(t, h, h.run("init", "--yes", "--replace-secret", "--dry-run", "--json"), 0)
+	if h.envelope()["ok"] != true {
+		t.Fatal("the deprecation notice never breaks the JSON envelope")
 	}
 }

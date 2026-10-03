@@ -7,7 +7,7 @@ branding:
 
 inputs:
   token:
-    description: Gravity repository token, from a secret (secrets.GRAVITY_TOKEN). Empty only on fork pull requests, where the run is skipped with a notice; an empty or unresolved token anywhere else fails with exit code 4.
+    description: "Gravity token: the expression secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN (the repository token gravity init stores as GRAVITY_REPO_TOKEN, else a GRAVITY_TOKEN user or organization token). Empty only on fork and Dependabot pull requests, where the run is skipped with a notice; empty anywhere else fails with exit code 4."
     required: true
   command:
     description: "gravity command to run: run (default), check or status."
@@ -100,7 +100,10 @@ runs:
       run: |
         mkdir -p "$GRAVITY_INSTALL_DIR"
         cd "$GITHUB_ACTION_PATH/../.."
-        go build -o "$GRAVITY_INSTALL_DIR/gravity" ./cmd/gravity
+        pkg=github.com/Grupo-Impulso-Digital/gravity-cli/internal/version
+        ver="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+        rev="$(git rev-parse HEAD 2>/dev/null || true)"
+        go build -ldflags "-X $pkg.Version=$ver -X $pkg.Commit=$rev" -o "$GRAVITY_INSTALL_DIR/gravity" ./cmd/gravity
 
     - name: Put gravity on PATH
       shell: bash

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
@@ -32,6 +33,7 @@ type Inputs struct {
 type Credentials struct {
 	Token        string
 	TokenSource  string
+	TokenEnv     string
 	TokenKind    string
 	APIURL       string
 	APIURLSource string
@@ -71,11 +73,28 @@ func Resolve(in Inputs, profiles *Profiles) (Credentials, error) {
 		getenv = os.Getenv
 	}
 	var c Credentials
-	switch {
-	case in.FlagToken != "":
+	var unresolved *UnresolvedTokenError
+	if in.FlagToken != "" {
 		c.Token, c.TokenSource = in.FlagToken, SourceFlag
-	case getenv(config.EnvToken) != "":
-		c.Token, c.TokenSource = getenv(config.EnvToken), SourceEnv
+	} else {
+		for _, name := range TokenEnvs {
+			v := strings.TrimSpace(getenv(name))
+			if v == "" {
+				continue
+			}
+			if shape := UnresolvedShape(v); shape != "" {
+				if unresolved == nil {
+					unresolved = &UnresolvedTokenError{Shape: shape}
+				}
+				unresolved.Vars = append(unresolved.Vars, name)
+				continue
+			}
+			c.Token, c.TokenSource, c.TokenEnv = v, SourceEnv, name
+			break
+		}
+		if c.Token == "" && unresolved != nil {
+			return Credentials{}, unresolved
+		}
 	}
 	name := in.FlagProfile
 	if name == "" {
@@ -126,6 +145,57 @@ func Resolve(in Inputs, profiles *Profiles) (Credentials, error) {
 		}
 	}
 	return c, nil
+}
+
+// TokenEnvs are the environment variables a token is read from, in order: the repository token first.
+var TokenEnvs = []string{config.EnvRepoToken, config.EnvToken}
+
+// UnresolvedTokenError reports token variables that hold an unexpanded CI variable reference instead of a token.
+type UnresolvedTokenError struct {
+	Vars  []string
+	Shape string
+}
+
+func (e *UnresolvedTokenError) Error() string {
+	verb := "holds"
+	if len(e.Vars) > 1 {
+		verb = "hold"
+	}
+	return fmt.Sprintf("%s %s an unexpanded variable reference (%s) instead of a token: the CI secret is not defined for this job, or is not passed to it; store the repository token as %s", strings.Join(e.Vars, " and "), verb, e.Shape, config.EnvRepoToken)
+}
+
+var unresolvedShapes = []struct {
+	re    *regexp.Regexp
+	shape string
+}{
+	{regexp.MustCompile(`^\$\([^()]*\)$`), "$(NAME), an undefined Azure Pipelines variable"},
+	{regexp.MustCompile(`^\$\{\{.*\}\}$`), "${{ ... }}, an unevaluated workflow expression"},
+	{regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`), "$NAME, an unexpanded shell variable"},
+	{regexp.MustCompile(`^%[A-Za-z_][A-Za-z0-9_]*%$`), "%NAME%, an unexpanded Windows variable"},
+}
+
+// UnresolvedShape describes the unexpanded variable reference a token value is, or returns "".
+func UnresolvedShape(token string) string {
+	t := strings.TrimSpace(token)
+	for _, u := range unresolvedShapes {
+		if u.re.MatchString(t) {
+			return u.shape
+		}
+	}
+	return ""
+}
+
+// TokenFrom names where the token came from: --token, the variable, or the profile.
+func (c Credentials) TokenFrom() string {
+	switch c.TokenSource {
+	case SourceFlag:
+		return "--token"
+	case SourceEnv:
+		return c.TokenEnv
+	case SourceProfile:
+		return "profile " + c.ProfileName
+	}
+	return c.TokenSource
 }
 
 // SameAPIURL reports whether two API base URLs address the same origin and path.

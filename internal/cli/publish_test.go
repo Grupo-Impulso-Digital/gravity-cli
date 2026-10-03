@@ -9,6 +9,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/passes"
+	engine "github.com/Grupo-Impulso-Digital/gravity-cli/internal/run"
 )
 
 type fakeGitLab struct {
@@ -151,5 +155,20 @@ func TestRunOnGitHubPushWritesTheStepSummaryAndTheRunURLOutput(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.dir, reportFile)); err == nil {
 		t.Fatal("a push run on GitHub writes no report file")
+	}
+}
+
+func TestCheckAnnotateOptionTurnsAnnotationsOff(t *testing.T) {
+	gate := &passes.Report{}
+	gate.Findings = []api.Finding{{Severity: api.SeverityError, Code: passes.CodeDrift, Title: "drift"}}
+	other := &passes.Report{}
+	other.Findings = []api.Finding{{Severity: api.SeverityError, Code: passes.CodeClaimContradicted, Title: "claim"}}
+	res := &engine.Result{
+		Plan:   &api.Plan{Passes: []api.PlanPass{{Name: "gate", Options: map[string]any{"annotate": false}}, {Name: "other", Options: map[string]any{}}}},
+		Passes: []engine.PassResult{{Name: "gate", Report: gate}, {Name: "other", Report: other}},
+	}
+	got := annotatedFindings(res)
+	if len(got) != 1 || got[0].Title != "claim" {
+		t.Fatalf("annotate: false drops that pass's annotations only: %+v", got)
 	}
 }

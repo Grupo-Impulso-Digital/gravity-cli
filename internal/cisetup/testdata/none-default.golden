@@ -1,5 +1,5 @@
 provider: none (CI)
 === snippet for your CI (run this on pushes, pull requests and release tags)
 curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh
-GRAVITY_TOKEN=<secret> gravity run
-=== paste: store it in your CI's secret store as GRAVITY_TOKEN
+GRAVITY_REPO_TOKEN=<secret> gravity run
+=== paste: store it in your CI's secret store as GRAVITY_REPO_TOKEN

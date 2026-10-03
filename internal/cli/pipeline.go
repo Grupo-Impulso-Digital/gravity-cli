@@ -92,7 +92,7 @@ func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipeline
 	if m != nil {
 		apiURL = m.APIURL
 	}
-	fork := opts.Trigger == config.TriggerPR && c.IsCI() && c.Fork
+	fork := c.IsCI() && (c.Fork && opts.Trigger == config.TriggerPR || c.Bot != "")
 	creds, err := a.credentials(apiURL)
 	if err != nil {
 		var ee *ExitError
@@ -264,14 +264,17 @@ func principalRepoID(who *api.WhoAmI) string {
 }
 
 func (a *app) forkPR(s *pipelineSession) error {
-	msg := "This pull request comes from a fork, and CI does not share secrets with forks, so there is no Gravity token; skipping the doc check"
-	a.ui.Warn("fork_pr_no_token", msg)
+	code, msg := "fork_pr_no_token", "This pull request comes from a fork, and CI does not share secrets with forks, so there is no Gravity token; skipping the doc check"
+	if s.ci.Bot == ci.BotDependabot {
+		code, msg = "dependabot_no_token", "This run was started by Dependabot, which gets only Dependabot secrets, not Actions secrets, so there is no Gravity token; skipping the doc check (add "+config.EnvRepoToken+" as a Dependabot secret to check these pull requests)"
+	}
+	a.ui.Warn(code, msg)
 	if path := a.env("GITHUB_STEP_SUMMARY"); path != "" && s.ci.Provider == ci.GitHub {
 		if err := report.AppendFile(path, "### Gravity\n\n"+msg+"."); err != nil {
 			a.ui.Debugf("step summary: %v", err)
 		}
 	}
-	return a.ui.Result(map[string]any{"skipped": "fork_pr_no_token"})
+	return a.ui.Result(map[string]any{"skipped": code})
 }
 
 func validAnnotate(v string) error {
@@ -291,6 +294,8 @@ func runError(err error) error {
 		return &ExitError{Code: CodeError, ErrCode: "pass_unknown", Err: err}
 	case errors.As(err, &se):
 		return &ExitError{Code: CodeError, ErrCode: "pass_not_applicable", Err: err}
+	case errors.Is(err, api.ErrUnauthorized):
+		return &ExitError{Code: CodeCredentials, ErrCode: api.CodeUnauthorized, Err: err}
 	case errors.Is(err, engine.ErrLeaseTimeout):
 		return &ExitError{Code: CodeError, ErrCode: api.CodeLeaseHeld, Err: err}
 	case errors.Is(err, engine.ErrStopped) && errors.Is(err, api.ErrLeaseLost):
@@ -424,24 +429,56 @@ func (a *app) manualHint(res *engine.Result) {
 	if res.Trigger != ci.TriggerManual || res.Mode != api.ModeWrite || res.Plan == nil {
 		return
 	}
-	var ran, other []string
+	eligible := map[string]bool{}
+	var names, other []string
 	for _, pp := range res.Plan.Passes {
 		switch {
 		case pp.Applies:
-			ran = append(ran, pp.Name)
+			eligible[pp.Name] = true
+			names = append(names, pp.Name)
 		case pp.SkipReason == api.SkipTriggerMismatch:
 			other = append(other, pp.Name+" ("+firstNonEmpty(strings.Join(pp.Triggers, ", "), "no triggers")+")")
 		}
 	}
-	if len(other) == 0 {
-		return
-	}
 	p := a.ui
-	if len(ran) == 0 {
-		p.Println("%s Nothing ran: no pass runs on a manual run here. Not on manual runs: %s. Run one by name with `gravity run --pass <name>`.", p.Mark(ui.MarkInfo), strings.Join(other, ", "))
+	hint := ""
+	if len(other) > 0 {
+		hint = "Not on manual runs: " + strings.Join(other, ", ") + "; run one by name with `gravity run --pass <name>`."
+	}
+	if len(names) == 0 {
+		if hint != "" {
+			p.Println("%s Nothing ran: no pass runs on a manual run here. %s", p.Mark(ui.MarkInfo), hint)
+		}
 		return
 	}
-	p.Println("%s Manual run: %s ran. Not on manual runs: %s; run one by name with `gravity run --pass <name>`.", p.Mark(ui.MarkInfo), strings.Join(ran, ", "), strings.Join(other, ", "))
+	var wrote, unchanged, skipped, failed []string
+	for _, ps := range res.Passes {
+		if !eligible[ps.Name] {
+			continue
+		}
+		switch {
+		case ps.Status == api.StatusFailed:
+			failed = append(failed, ps.Name)
+		case ps.Status == api.StatusSkipped:
+			skipped = append(skipped, ps.Name+" ("+skipLabel(ps.SkipReason)+")")
+		case ps.Report != nil && ps.Report.Counts.Line() != "" && ps.Report.Counts.Line() != "no changes":
+			wrote = append(wrote, ps.Name+" ("+ps.Report.Counts.Line()+")")
+		default:
+			unchanged = append(unchanged, ps.Name)
+		}
+	}
+	p.Println("%s Manual run: %s eligible (%s).", p.Mark(ui.MarkInfo), plural(len(names), "pass", "passes"), strings.Join(names, ", "))
+	for _, line := range []struct {
+		label string
+		list  []string
+	}{{"wrote", wrote}, {"ran without changes", unchanged}, {"skipped", skipped}, {"failed", failed}} {
+		if len(line.list) > 0 {
+			p.Println("    %s: %s", line.label, strings.Join(line.list, ", "))
+		}
+	}
+	if hint != "" {
+		p.Println("    %s", hint)
+	}
 }
 
 func (a *app) runCard(res *engine.Result) {

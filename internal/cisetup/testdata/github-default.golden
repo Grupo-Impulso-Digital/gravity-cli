@@ -20,5 +20,5 @@ jobs:
           fetch-depth: 0
       - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
         with:
-          token: ${{ secrets.GRAVITY_TOKEN }}
-=== paste: add it as the repository secret GRAVITY_TOKEN at https://github.com/acme/billing-api/settings/secrets/actions/new
+          token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}
+=== paste: add it as the repository secret GRAVITY_REPO_TOKEN at https://github.com/acme/billing-api/settings/secrets/actions/new

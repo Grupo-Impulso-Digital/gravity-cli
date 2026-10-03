@@ -159,7 +159,7 @@ func HasCode(err error, code string) bool {
 	return errors.As(err, &e) && e.Code == code
 }
 
-// StopsRun reports whether err means the run must stop immediately without calling finish.
+// StopsRun reports whether err means the run must stop immediately without calling finish: a lost lease, an ended run or a rejected token.
 func StopsRun(err error) bool {
-	return errors.Is(err, ErrLeaseLost) || errors.Is(err, ErrRunNotRunning)
+	return errors.Is(err, ErrLeaseLost) || errors.Is(err, ErrRunNotRunning) || errors.Is(err, ErrUnauthorized)
 }

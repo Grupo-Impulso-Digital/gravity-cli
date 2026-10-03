@@ -10,7 +10,9 @@ jobs:
       - run:
           name: Gravity
           command: $HOME/.local/bin/gravity run
+          environment:
+            CIRCLE_PIPELINE_TRIGGER_SOURCE: << pipeline.trigger_source >>
 workflows:
   gravity:
     jobs: [gravity]
-=== paste: add it as the project environment variable GRAVITY_TOKEN (Project Settings > Environment Variables)
+=== paste: add it as the project environment variable GRAVITY_REPO_TOKEN (Project Settings > Environment Variables)

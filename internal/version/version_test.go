@@ -15,18 +15,20 @@ func TestResolve(t *testing.T) {
 		name    string
 		stamped string
 		bi      func() (string, bool)
+		commit  string
 		want    string
 	}{
-		{"stamped wins", "v1.0.0", info("v0.2.0", true), "1.0.0"},
-		{"stamped without v", "1.0.0", nil, "1.0.0"},
-		{"go install build info", "", info("v1.0.1", true), "1.0.1"},
-		{"devel build", "", info("(devel)", true), "dev"},
-		{"no build info", "", info("", false), "dev"},
-		{"nil reader", "  ", nil, "dev"},
+		{"stamped wins", "v1.0.0", info("v0.2.0", true), "abc", "1.0.0"},
+		{"stamped without v", "1.0.0", nil, "", "1.0.0"},
+		{"go install build info", "", info("v1.0.1", true), "", "1.0.1"},
+		{"devel build", "", info("(devel)", true), "", "dev"},
+		{"devel build with a commit", "", info("(devel)", true), "0cb9c9d8f2a1b3c4", "dev+0cb9c9d8f2a1"},
+		{"no build info", "", info("", false), "", "dev"},
+		{"nil reader", "  ", nil, "", "dev"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolve(tc.stamped, tc.bi); got != tc.want {
+			if got := resolve(tc.stamped, tc.bi, tc.commit); got != tc.want {
 				t.Errorf("resolve = %q, want %q", got, tc.want)
 			}
 		})

@@ -136,9 +136,10 @@ to `debug.ReadBuildInfo`.
 - **Exit-code contract** (`internal/cli/exit.go`): `0` success/no findings,
   `1` findings produced, `2` operational error (network/bad input),
   `3` license refusal, `4` no usable credentials (`token_missing`,
-  `token_unresolved`, any `401`); precedence 3 > 2 > 1 > 0, and `4` ends a
-  command before it does anything else. Only a fork pull request detected by
-  `internal/ci` (`Context.Fork`) may skip without a token. Commands return an
+  `token_unresolved`, any `401`, which `api.StopsRun` also treats as
+  run-stopping); precedence 3 > 2 > 1 > 0. Only a job `internal/ci` marks
+  `NoSecrets()` (a fork pull request, a Dependabot event) may skip without a
+  token. Commands return an
   `*ExitError` (with an `ErrCode` for the `--json` envelope); never call
   `os.Exit` inside a command.
 - **License refusals** (`internal/api/license.go`): a 403 whose envelope code is
@@ -149,11 +150,12 @@ to `debug.ReadBuildInfo`.
   flatten one into a `Failf` string. The CLI never calls `/api/mcp`, so the
   JSON-RPC `MODULE_DISABLED` shape needs no handling here.
 - **Token-security boundary** (`internal/auth`): a token comes only from
-  `--token`, `GRAVITY_TOKEN` or a profile in `~/.config/gravity/profiles.yaml`
+  `--token`, `GRAVITY_REPO_TOKEN`, `GRAVITY_TOKEN` or a profile in `~/.config/gravity/profiles.yaml`
   (mode `0600`). A `token:` anywhere in `.gravity.yaml` is a manifest error.
   CLI 1.x never writes the v0.x `config.yaml`; it copies its token into the
   profile `default` once and leaves the file untouched.
-- **Precedence**: token `--token` > `GRAVITY_TOKEN` > profile (`--profile` >
+- **Precedence**: token `--token` > `GRAVITY_REPO_TOKEN` > `GRAVITY_TOKEN` >
+  profile (`--profile` >
   `GRAVITY_PROFILE` > current). API URL `--api-url` > `GRAVITY_API_URL` >
   manifest `apiUrl` > profile `apiUrl` > default. `auth.Resolve` refuses a
   profile token whose issuing host differs from the resolved API URL
@@ -293,8 +295,8 @@ to `debug.ReadBuildInfo`.
 - **Handoffs in pull requests are predictions** from API units added or removed
   in the ChangeSet; write runs report what the platform detected on ingest.
 - **The dogfood `.github/workflows/docs.yml` builds the CLI from source**
-  (`version: source`) so pull requests exercise their own code; it needs a 1.0
-  repository token in `GRAVITY_TOKEN`.
+  (`version: source`, stamped with `git describe`) so pull requests exercise
+  their own code; it reads `GRAVITY_REPO_TOKEN`, else `GRAVITY_TOKEN`.
 - **`read_file` reads at the end of the range under review** (`--to`, else
   `HEAD`), not the working tree, so the agent stays deterministic in CI.
 - **`gravity run` never reads the working tree.** Writes cite commits and
@@ -313,9 +315,12 @@ to `debug.ReadBuildInfo`.
   base and head: a change a push-triggered reference pass will apply is a note,
   drift that predates the range is a warning, and only a change nothing will
   follow is an error.
-- **`init` and 0.x pipelines.** `cisetup.LegacyPipelines` finds CI files that
-  still run gravity 0.x; init then keeps `GRAVITY_TOKEN` (0.x refuses
-  repository tokens) unless `--replace-secret`.
+- **`init` and 0.x pipelines.** init stores the repository token as
+  `GRAVITY_REPO_TOKEN` and never touches `GRAVITY_TOKEN`, which 0.x pipelines
+  keep (0.x refuses repository tokens); `cisetup.LegacyPipelines` only names
+  them. A caller of the shared `gravity-docs.yml` is 1.x-ready
+  (`cisetup.SharedWorkflowCaller`), so init keeps it instead of writing
+  `gravity.yml`. `--replace-secret` is a hidden no-op that warns.
 - **No live integration tests**: server interactions use `httptest` mocks.
 - **`gosec` is intentionally not enabled yet**; the git `exec.Command` and
   computed-path reads are sandboxed.

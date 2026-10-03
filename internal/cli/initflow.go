@@ -27,7 +27,6 @@ type initPlan struct {
 	mintReason   string
 	secretExists bool
 	legacy       []string
-	protect      bool
 }
 
 func (a *app) prompter() ui.Prompter {
@@ -362,15 +361,8 @@ func (r *initRun) plan() error {
 		ip.secretExists = exists
 	}
 	ip.legacy = cisetup.LegacyPipelines(r.info.root)
-	if r.data.Mode == modeConvert {
-		ip.legacy = append(ip.legacy, r.data.Manifest.Path+" (version 1)")
-	}
-	ip.protect = len(ip.legacy) > 0 && !r.o.replaceSecret && !r.o.noSecret
-	switch {
-	case ip.canMint && ip.installer == nil && !r.o.noSecret && !r.a.terminal:
+	if ip.canMint && ip.installer == nil && !r.o.noSecret && !r.a.terminal {
 		ip.canMint, ip.mintReason = false, "there is no terminal to show the token on and it must not land in logs; pass --no-secret to print it anyway, or mint one in the app"
-	case ip.canMint && ip.protect && !r.a.terminal:
-		ip.canMint, ip.mintReason = false, cisetup.SecretName+" still feeds a gravity 0.x pipeline ("+strings.Join(ip.legacy, ", ")+"), which refuses repository tokens, so init leaves it alone; run init in a terminal to print the new token, or pass --replace-secret to replace it now"
 	}
 	r.ip = ip
 	if ip.parsed != nil && ip.content != string(r.existingYAML()) {
@@ -589,7 +581,7 @@ func (r *initRun) scopes(ip *initPlan) []string {
 func (r *initRun) mintable() (bool, string) {
 	switch {
 	case r.isRepoPrincipal():
-		return false, "you are using a repository token; CI can use it as GRAVITY_TOKEN"
+		return false, "you are using a repository token; CI can use it as " + cisetup.SecretName
 	case !r.canMint():
 		return false, "you can't mint repository tokens here; ask an admin to mint one in the app"
 	case !r.who.Features["machine-tokens"]:
@@ -670,8 +662,6 @@ func (r *initRun) printPreview() {
 	if ip.canMint {
 		p.Println("  + repository token with %s", strings.Join(ip.scopes, ", "))
 		switch {
-		case ip.protect:
-			p.Println("  ! %s still feeds a gravity 0.x pipeline (%s), and 0.x refuses repository tokens: init keeps it and prints the new token to set when this change is merged (--replace-secret replaces it now)", cisetup.SecretName, strings.Join(ip.legacy, ", "))
 		case ip.installer != nil && ip.secretExists:
 			p.Println("  + secret %s on %s, replacing its current value (%s)", cisetup.SecretName, ip.installer.Repo, ip.installer.Describe(cisetup.SecretName))
 		case ip.installer != nil:
@@ -681,6 +671,9 @@ func (r *initRun) printPreview() {
 		}
 	} else {
 		p.Println("  - no token minted: %s", ip.mintReason)
+	}
+	if len(ip.legacy) > 0 {
+		p.Println("  ! %s still run gravity 0.x with %s; init leaves them and that secret alone. Remove them once the gravity 1.x workflow runs", strings.Join(ip.legacy, ", "), config.EnvToken)
 	}
 	if ip.ci.CommentToken != "" {
 		p.Println("  ! by hand, for pull request comments: %s", ip.ci.CommentHint)
@@ -702,10 +695,6 @@ func (r *initRun) confirm() (string, error) {
 	ip := r.ip
 	var choices []ui.Choice
 	switch {
-	case ip.installer != nil && ip.canMint && ip.protect:
-		choices = append(choices,
-			ui.Choice{Key: answerFiles, Label: "Write files, keep " + cisetup.SecretName + " for the 0.x pipeline (print the new token to set when this is merged)"},
-			ui.Choice{Key: answerSecret, Label: "Write + replace " + cisetup.SecretName + " now (the 0.x pipeline fails until this is merged)"})
 	case ip.installer != nil && ip.canMint:
 		label := "Write + set the secret (" + ip.installer.Tool + ")"
 		if ip.secretExists {
@@ -944,13 +933,10 @@ func (r *initRun) installSecret(prog *ui.Progress, answer, token string) {
 func (r *initRun) printToken(token string) {
 	w := r.a.stderr
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "-------- GRAVITY_TOKEN (shown once) --------")
+	fmt.Fprintln(w, "-------- "+cisetup.SecretName+" (shown once) --------")
 	fmt.Fprintln(w, token)
 	fmt.Fprintln(w, "--------------------------------------------")
 	fmt.Fprintln(w, "Copy it now and "+r.ip.ci.PasteHint+".")
-	if r.ip.protect {
-		fmt.Fprintln(w, "Set it when this change is merged: until then "+cisetup.SecretName+" keeps serving the gravity 0.x pipeline ("+strings.Join(r.ip.legacy, ", ")+"), which refuses repository tokens.")
-	}
 	fmt.Fprintln(w, "")
 }
 
@@ -980,11 +966,7 @@ func (r *initRun) printSummary(conn *api.ConnectResponse) {
 		case secretInstalled:
 			lines = append(lines, "Token: "+cisetup.SecretName+" set with "+t.Via)
 		case secretPrinted:
-			if r.ip != nil && r.ip.protect {
-				lines = append(lines, "Token: printed above; set it as "+cisetup.SecretName+" when this change is merged (the 0.x pipeline keeps the current one until then)")
-			} else {
-				lines = append(lines, "Token: printed above, paste it as the CI secret "+cisetup.SecretName)
-			}
+			lines = append(lines, "Token: printed above, paste it as the CI secret "+cisetup.SecretName)
 		default:
 			if t.Note != "" {
 				lines = append(lines, "Token: "+t.Note)

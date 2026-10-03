@@ -4,7 +4,7 @@ Gravity - billing-api -> Acme Platform   ! health: blocked
   Repository  github.com/acme/billing-api - last connect 2026-10-01T09:00:00Z
   App         https://app.gravitydocs.io/app/repos/cr_1
   Manifest    .gravity.yaml - sha256:8cbfc3de17ba - local changes not yet stored (lands from main)
-  Last CLI    1.0.0
+  Last CLI    1.0.0 (this CLI dev)
 Passes
   ok  developer-api   reference  dev-portal/api  repo (locked)  main@9f8e7d6  succeeded 2026-09-30T10:00:00Z  
   !   product-guides  guides     product/guides  app            -             never ran                       awaiting approval https://app.gravitydocs.io/app/repos/cr_1/passes/rp_2#approve

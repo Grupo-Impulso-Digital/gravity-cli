@@ -179,3 +179,15 @@ func TestUpsertIgnoresAMarkerPostedBySomeoneElse(t *testing.T) {
 		t.Fatalf("url=%q err=%v posted=%d", url, err, posted)
 	}
 }
+
+func TestNotesLineIsNotATableRow(t *testing.T) {
+	d := sample()
+	for i := range d.Passes {
+		d.Passes[i].Findings = nil
+		d.Passes[i].Claims = nil
+	}
+	got := report.Markdown(d)
+	if !strings.Contains(got, "|\n\n1 note.\n") {
+		t.Fatalf("the notes line needs a blank line after the table:\n%s", got)
+	}
+}

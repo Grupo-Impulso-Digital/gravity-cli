@@ -40,6 +40,7 @@
     "token": {
       "kind": "user",
       "source": "env",
+      "variable": "GRAVITY_TOKEN",
       "keyHint": "x9Qa",
       "scopes": [],
       "expiresAt": "2026-12-30T12:00:00Z"

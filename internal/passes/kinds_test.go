@@ -527,3 +527,61 @@ func TestCheckReviewsAChangedVerbatimFileAsItWillBeImported(t *testing.T) {
 		t.Fatalf("the review reads the pull request's file, not the stale page: %s", kickoff)
 	}
 }
+
+func TestCheckRunByNameCountsPassesItDidNotSelect(t *testing.T) {
+	r := newRepo(t)
+	base := r.commit("spec v2", map[string]string{"api/openapi.yaml": specV2})
+	head := r.commit("spec v1", map[string]string{"api/openapi.yaml": specV1})
+	fake := newFakeAPI()
+	pp := planPass(config.KindCheck, "gate", map[string]any{"claims": false})
+	ref := planPass(config.KindReference, "api-ref", nil)
+	ref.Triggers, ref.Applies, ref.SkipReason = []string{"push", "pr"}, false, api.SkipNotSelected
+	in := input(t, r, fake, pp, manifest(), base, head, api.ModeWrite)
+	in.Trigger = config.TriggerManual
+	in.Plan.Passes = []api.PlanPass{pp, ref}
+	rep, err := passes.Check{}.Run(context.Background(), in, &passes.Recorder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Findings {
+		if f.Code == passes.CodeCoverage {
+			t.Fatalf("api-ref documents the new operation even when only gate was selected: %+v", f)
+		}
+	}
+	found := false
+	for _, n := range rep.Notes {
+		found = found || strings.Contains(n.Title, "pass api-ref documents api:get:/v1/refunds")
+	}
+	if !found {
+		t.Fatalf("notes = %+v", rep.Notes)
+	}
+}
+
+func TestCheckReviewsChangedVerbatimPagesFirst(t *testing.T) {
+	r := newRepo(t)
+	files := map[string]string{"src/a.ts": "export const a = 1\n"}
+	for _, n := range []string{"a", "b", "c", "d", "e", "z"} {
+		files["docs/"+n+".md"] = "# " + n + "\n\nold text " + n + "\n"
+	}
+	base := r.commit("init", files)
+	head := r.commit("docs: z", map[string]string{"src/a.ts": "export const a = 2\n", "docs/z.md": "# z\n\nnew text z\n"})
+	fake := newFakeAPI()
+	for _, n := range []string{"a", "b", "c", "d", "e", "z"} {
+		fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_" + n, Slug: n, Title: n, Lock: &api.PageLock{Pass: "handbook", Path: "docs/" + n + ".md", Repo: &api.RepoRef{RemoteKey: "github.com/acme/billing-api"}}}, Blocks: []api.PageBlock{{Key: "doc:" + n, Type: "prose", Ownership: api.OwnershipMachine, Text: "old text " + n}}})
+	}
+	fake.llm = func(api.MessagesRequest) api.MessagesResponse {
+		return submit(agent.ToolReportFindings, agent.FindingsInput{})
+	}
+	pp := planPass(config.KindCheck, "gate", nil)
+	verbatim := planPass(config.KindVerbatim, "handbook", map[string]any{"files": []any{map[string]any{"include": "docs/**/*.md"}}})
+	in := input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
+	in.Trigger = config.TriggerPR
+	in.Plan.Passes = []api.PlanPass{pp, verbatim}
+	if _, err := (passes.Check{}).Run(context.Background(), in, &passes.Recorder{}); err != nil {
+		t.Fatal(err)
+	}
+	kickoff, _ := json.Marshal(fake.requests[0].Messages)
+	if !strings.Contains(string(kickoff), "new text z") || strings.Count(string(kickoff), "## Page ") != 4 {
+		t.Fatalf("the changed page is among the 4 reviewed: %s", kickoff)
+	}
+}

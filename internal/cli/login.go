@@ -12,6 +12,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/auth"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
 )
 
@@ -59,7 +60,7 @@ func (a *app) login(ctx context.Context, o loginOptions) (*loginData, error) {
 		return nil, Fail(CodeError, err)
 	}
 	creds, err := auth.Resolve(auth.Inputs{FlagAPIURL: a.gf.apiURL, Getenv: func(k string) string {
-		if k == "GRAVITY_TOKEN" || k == "GRAVITY_PROFILE" {
+		if k == config.EnvToken || k == config.EnvRepoToken || k == config.EnvProfile {
 			return ""
 		}
 		return a.env(k)

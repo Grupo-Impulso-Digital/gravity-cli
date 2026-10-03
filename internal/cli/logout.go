@@ -32,7 +32,7 @@ func newLogoutCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logout",
 		Short: "Revoke the current user token and remove its profile",
-		Long:  "Revoke the current user token and remove its profile. With --token or GRAVITY_TOKEN holding a user token (gr_user_), that token is revoked on the host it is used against and any profile holding it is removed; repository and organization tokens are revoked in the app.",
+		Long:  "Revoke the current user token and remove its profile. With --token, GRAVITY_REPO_TOKEN or GRAVITY_TOKEN holding a user token (gr_user_), that token is revoked on the host it is used against and any profile holding it is removed; repository and organization tokens are revoked in the app.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			profiles, _, err := auth.LoadProfiles()
@@ -41,8 +41,10 @@ func newLogoutCmd(a *app) *cobra.Command {
 			}
 			data := logoutData{Removed: []string{}, Revoked: []string{}}
 			explicit, source := a.gf.token, "--token"
-			if explicit == "" {
-				explicit, source = a.env(config.EnvToken), config.EnvToken
+			for _, name := range auth.TokenEnvs {
+				if explicit == "" {
+					explicit, source = a.env(name), name
+				}
 			}
 			if explicit != "" {
 				tl, err := a.revokeExplicitToken(cmd.Context(), explicit, source)

@@ -730,3 +730,24 @@ func TestLogoutNamesTheCLIAndMachinesScreen(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectedTokenHint(t *testing.T) {
+	h := newHarness(t)
+	h.stdin = "gr_user_old\n"
+	expectCode(t, h, h.run("login", "--with-token"), 0)
+	h.platform.json("GET /api/v1/whoami", 401, `{"error":{"code":"unauthorized","message":"Invalid or missing API key."}}`)
+	expectCode(t, h, h.run("whoami"), 4)
+	if !strings.Contains(h.stderr.String(), "run `gravity login` to sign in again") {
+		t.Fatalf("profile token: %s", h.stderr.String())
+	}
+	h.env["GRAVITY_REPO_TOKEN"] = "gr_repo_old"
+	expectCode(t, h, h.run("whoami"), 4)
+	if !strings.Contains(h.stderr.String(), "the token in GRAVITY_REPO_TOKEN was rejected") {
+		t.Fatalf("env token: %s", h.stderr.String())
+	}
+	h.env["CI"] = "true"
+	expectCode(t, h, h.run("whoami"), 4)
+	if strings.Contains(h.stderr.String(), "gravity login") || strings.Contains(h.stderr.String(), "was rejected") {
+		t.Fatalf("no sign-in hint in CI: %s", h.stderr.String())
+	}
+}

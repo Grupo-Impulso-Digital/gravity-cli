@@ -76,11 +76,15 @@ func run(ctx context.Context, a *app, args []string) int {
 	code := CodeFor(err)
 	var ee *ExitError
 	silent := errors.As(err, &ee) && ee.Err == nil
+	msg := messageOf(err)
+	if !silent {
+		msg += a.credentialHint(err)
+	}
 	if a.ui.JSON() {
-		_ = a.ui.Failure(ui.ErrorInfo{Code: errorCode(err), Message: messageOf(err), ExitCode: code}, nil)
+		_ = a.ui.Failure(ui.ErrorInfo{Code: errorCode(err), Message: msg, ExitCode: code}, nil)
 	}
 	if !silent {
-		a.ui.Error(messageOf(err))
+		a.ui.Error(msg)
 	}
 	return code
 }

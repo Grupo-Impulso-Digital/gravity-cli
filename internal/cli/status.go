@@ -14,6 +14,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/auth"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
 )
 
 type statusData struct {
@@ -265,7 +266,7 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status,
 	if s.whoData.Profile != "" {
 		signed += " · profile " + s.whoData.Profile
 	} else {
-		signed += " · from " + s.whoData.Token.Source
+		signed += " · from " + s.whoData.Token.from()
 	}
 	if exp := s.whoData.Token.ExpiresAt; exp != nil && *exp != "" {
 		signed += " · expires " + strings.SplitN(*exp, "T", 2)[0]
@@ -302,7 +303,11 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status,
 		rows = append(rows, []string{"Manifest", "none (passes come from the app)"})
 	}
 	if st.Repo.CLIVersion != "" {
-		rows = append(rows, []string{"Last CLI", st.Repo.CLIVersion})
+		last := st.Repo.CLIVersion
+		if this := version.String(); this != last {
+			last += " (this CLI " + this + ")"
+		}
+		rows = append(rows, []string{"Last CLI", last})
 	}
 	p.Table("  ", rows)
 

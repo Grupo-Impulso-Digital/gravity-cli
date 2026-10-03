@@ -50,10 +50,11 @@ gravity preview    # every page your working tree would change, before you push
 ```yaml
 - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
   with:
-    token: ${{ secrets.GRAVITY_TOKEN }}
+    token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}
 ```
 
-Anywhere else it is one line, with `GRAVITY_TOKEN` from the CI secret store:
+Anywhere else it is one line, with `GRAVITY_REPO_TOKEN` from the CI secret
+store:
 
 ```bash
 curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 GRAVITY_INSTALL_DIR=.gravity-bin sh && .gravity-bin/gravity run
@@ -236,7 +237,7 @@ Gravity does not fence pages per repository.
 | Command | Purpose |
 | ------- | ------- |
 | `gravity login` | Device flow sign-in; `--org`, `--profile`, `--no-browser`, `--with-token` (stdin). |
-| `gravity logout` | Revoke the current user token and remove its profile; `--all`. With `--token`/`GRAVITY_TOKEN` holding a user token, revokes that token (repository tokens are revoked in the app). |
+| `gravity logout` | Revoke the current user token and remove its profile; `--all`. With `--token`, `GRAVITY_REPO_TOKEN` or `GRAVITY_TOKEN` holding a user token, revokes that token (repository tokens are revoked in the app). |
 | `gravity whoami` | Principal, organization, token kind, scopes, expiry, API URL, profile. |
 | `gravity init` | Connect the repository in at most three questions; `--yes`, `--product`, `--passes-as-code`, `--app-passes`, `--ci <provider>`, `--no-secret`, `--dry-run`, `--repo <id>`. Never commits or pushes. |
 | `gravity status` | Auth, connection, manifest, passes with targets and watermarks, recent runs, open bundles, tokens, health and capability warnings; `--runs N`, `--check`. |
@@ -275,7 +276,10 @@ none applies:
 - **Verbatim.** Files the merge will re-import are listed as notes.
 
 Claim review (does the documentation still say true things about the code)
-needs a declared `check` pass, which also takes `coverageMin` and `require`.
+needs a declared `check` pass, which also takes `coverageMin`, `require` and
+`annotate` (`false` keeps its findings out of the CI annotations). Locked
+verbatim pages whose file the pull request changes are reviewed first, as the
+file will be imported.
 `--fail-on` defaults to `drift, claims, verbatim`.
 
 ### `gravity init`
@@ -305,21 +309,24 @@ printed once to paste. Existing CI files are never overwritten. `--yes` accepts
 every suggestion (required without a terminal); `--dry-run` stops after the
 preview.
 
-CLI 0.x refuses repository tokens. When a CI file still runs gravity 0.x
-(`ci/github@v0` or `@main`, `GRAVITY_VERSION=0`, the shared `gravity-docs.yml`
-workflow, `gravity sync`, ...) or the manifest being converted is version 1,
-init does not touch `GRAVITY_TOKEN`: it prints the new token to set when the
-migration is merged (on a terminal), or mints nothing (without one).
-`--replace-secret` replaces it anyway.
+init stores the repository token as `GRAVITY_REPO_TOKEN` and never touches
+`GRAVITY_TOKEN`, which CI files still running gravity 0.x (`ci/github@v0` or
+`@main`, `GRAVITY_VERSION=0`, `gravity sync`, ...) keep using; init names those
+files so you can remove them once 1.x runs. A workflow that calls the shared
+`gravity-docs.yml` is not one of them: that workflow runs gravity 1.x for a
+version 2 manifest with `GRAVITY_REPO_TOKEN`, so init keeps it instead of
+adding `gravity.yml`.
 
 ### Global flags
 
 `--profile` (`GRAVITY_PROFILE`), `--api-url` (`GRAVITY_API_URL`), `--token`
-(`GRAVITY_TOKEN`), `--manifest` (`GRAVITY_MANIFEST`), `-C <dir>`, `--json`,
+(`GRAVITY_REPO_TOKEN`, `GRAVITY_TOKEN`), `--manifest` (`GRAVITY_MANIFEST`), `-C <dir>`, `--json`,
 `--no-color` (`NO_COLOR`), `-q`, `-v`.
 
-- Credentials: `--token` > `GRAVITY_TOKEN` > profile. Tokens are never read
-  from `.gravity.yaml`.
+- Credentials: `--token` > `GRAVITY_REPO_TOKEN` > `GRAVITY_TOKEN` > profile;
+  `whoami` and `status` name the source. A variable holding an unexpanded
+  reference (`$(NAME)`, `${{ … }}`, `$NAME`) is skipped. Tokens are never
+  read from `.gravity.yaml`.
 - API URL: `--api-url` > `GRAVITY_API_URL` > manifest `apiUrl` > profile
   `apiUrl` > `https://api.gravitydocs.io`. A profile token is only sent to the
   host that issued it (`token_host_mismatch` otherwise). API URLs must use
@@ -343,17 +350,21 @@ profile `default`; the old file is never modified.
 
 | Code | Meaning |
 | ---- | ------- |
-| `0` | Success, or nothing to do (no change in scope, a fork pull request without a token). |
+| `0` | Success, or nothing to do (no change in scope; a fork or Dependabot pull request without a token). |
 | `1` | Findings: `check` findings in `failOn` (`run` and `check`), or `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, removed command. |
 | `3` | Licence refusal (`module_disabled`, `seat_limit`): ask a workspace administrator. |
-| `4` | No usable credentials: no token (`token_missing`), a CI variable that was never expanded such as a literal `$(GRAVITY_TOKEN)` (`token_unresolved`), or a token the server rejects (`401`). |
+| `4` | No usable credentials: no token (`token_missing`), only CI variables that were never expanded such as a literal `$(GRAVITY_REPO_TOKEN)` (`token_unresolved`), or a token the server rejects (`401`, also in the middle of a run). |
 
-Precedence is `3` > `2` > `1` > `0`; `4` stops a command before it does
-anything else. Fork pull requests are detected per provider (GitHub event
-repositories, GitLab source and target projects, `SYSTEM_PULLREQUEST_ISFORK`
-on Azure, `CHANGE_FORK` on Jenkins, `CIRCLE_PR_*` on CircleCI); only those skip
-with a notice when the token is missing. Bitbucket runs no pipeline for a fork
+Precedence is `3` > `2` > `1` > `0`. A missing or unresolved token stops a
+command before any request; a rejected token stops it at the first `401`
+(a run ends without its finish call), and both exit `4`. Locally, with a
+profile token, the error adds "run `gravity login` to sign in again". Fork
+pull requests are detected per provider (GitHub event repositories, GitLab
+source and target projects, `SYSTEM_PULLREQUEST_ISFORK` on Azure,
+`CHANGE_FORK` on Jenkins, `CIRCLE_PR_*` on CircleCI), and GitHub runs started
+by Dependabot by their actor; only those skip with a notice when the token is
+missing. Bitbucket runs no pipeline for a fork
 in the target repository, so a missing token there is always `4`. Documentation writes never fail a deploy:
 only `check` findings exit `1`. `--strict` turns unapproved targets and missing
 scopes into `2` and missing modules into `3`.

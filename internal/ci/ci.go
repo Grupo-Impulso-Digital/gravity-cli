@@ -61,7 +61,14 @@ type Context struct {
 	WebURL   string `json:"webUrl,omitempty"`
 	Detached bool   `json:"detached,omitempty"`
 	Fork     bool   `json:"fork,omitempty"`
+	Bot      string `json:"bot,omitempty"`
 }
+
+// BotDependabot marks a GitHub event started by Dependabot, which runs without the repository's Actions secrets.
+const BotDependabot = "dependabot"
+
+// NoSecrets reports whether this job runs without the repository's CI secrets: a fork pull request or a Dependabot event.
+func (c Context) NoSecrets() bool { return c.Fork || c.Bot != "" }
 
 // IsCI reports whether the job runs on a CI provider.
 func (c Context) IsCI() bool { return c.Origin == OriginCI }
@@ -279,7 +286,10 @@ func github(env Env) (Context, error) {
 		PullRequest *struct {
 			Number  int    `json:"number"`
 			HTMLURL string `json:"html_url"`
-			Head    struct {
+			User    *struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			Head struct {
 				SHA  string      `json:"sha"`
 				Ref  string      `json:"ref"`
 				Repo *githubRepo `json:"repo"`
@@ -293,12 +303,27 @@ func github(env Env) (Context, error) {
 		Release *struct {
 			TagName string `json:"tag_name"`
 		} `json:"release"`
+		Sender *struct {
+			Login string `json:"login"`
+		} `json:"sender"`
 	}
 	if p := env.get("GITHUB_EVENT_PATH"); p != "" {
 		if data, err := env.read(p); err == nil {
 			if err := json.Unmarshal(data, &event); err != nil {
 				return Context{}, fmt.Errorf("read GitHub event %s: %w", p, err)
 			}
+		}
+	}
+	actors := []string{env.get("GITHUB_ACTOR"), env.get("GITHUB_TRIGGERING_ACTOR")}
+	if event.Sender != nil {
+		actors = append(actors, event.Sender.Login)
+	}
+	if event.PullRequest != nil && event.PullRequest.User != nil {
+		actors = append(actors, event.PullRequest.User.Login)
+	}
+	for _, a := range actors {
+		if strings.EqualFold(a, "dependabot[bot]") || strings.EqualFold(a, "dependabot-preview[bot]") {
+			c.Bot = BotDependabot
 		}
 	}
 	ref := env.get("GITHUB_REF")
@@ -481,6 +506,14 @@ func jenkins(env Env) Context {
 		c.Trigger = TriggerRelease
 		c.Tag = env.get("TAG_NAME")
 		c.Branch = ""
+	default:
+		cause := strings.ToUpper(env.get("BUILD_CAUSE") + "," + env.get("ROOT_BUILD_CAUSE"))
+		switch {
+		case strings.Contains(cause, "USERIDCAUSE"), strings.Contains(cause, "MANUALTRIGGER"), env.get("BUILD_USER_ID") != "":
+			c.Trigger = TriggerManual
+		case strings.Contains(cause, "TIMERTRIGGER"):
+			c.Trigger = TriggerSchedule
+		}
 	}
 	return c
 }
@@ -501,6 +534,13 @@ func circleci(env Env) Context {
 		c.Trigger = TriggerRelease
 		c.Tag = env.get("CIRCLE_TAG")
 		c.Branch = ""
+	default:
+		switch env.get("CIRCLE_PIPELINE_TRIGGER_SOURCE") {
+		case "api":
+			c.Trigger = TriggerManual
+		case "scheduled_pipeline":
+			c.Trigger = TriggerSchedule
+		}
 	}
 	return c
 }
