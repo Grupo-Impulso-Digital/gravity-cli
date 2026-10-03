@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.1 — Unreleased
+## v1.0.1 — 2026-10-03
 
 Hardening of 1.0 after a documentation audit and the first production runs.
 
