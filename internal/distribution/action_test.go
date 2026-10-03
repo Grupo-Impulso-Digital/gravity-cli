@@ -54,7 +54,7 @@ func TestActionInputsAndOutputs(t *testing.T) {
 	if a.Runs.Using != "composite" {
 		t.Fatalf("using = %s", a.Runs.Using)
 	}
-	want := map[string]string{"token": "", "command": "run", "args": "", "version": "1", "working-directory": ".", "api-url": ""}
+	want := map[string]string{"repo-token": "", "token": "", "command": "run", "args": "", "version": "1", "working-directory": ".", "api-url": ""}
 	for name, def := range want {
 		in, ok := a.Inputs[name]
 		if !ok || in.Default != def {
@@ -69,8 +69,8 @@ func TestActionInputsAndOutputs(t *testing.T) {
 			t.Fatalf("input %s: GitHub evaluates expressions in action metadata, so a description must not contain one", name)
 		}
 	}
-	if !a.Inputs["token"].Required {
-		t.Fatal("token is required")
+	if a.Inputs["token"].Required || a.Inputs["repo-token"].Required {
+		t.Fatal("either token may be empty: the CLI decides, and skips forks and Dependabot")
 	}
 	for _, out := range []string{"run-url", "exit-code"} {
 		if !strings.Contains(a.Outputs[out].Value, "steps.gravity.outputs."+out) {
@@ -107,7 +107,7 @@ func TestActionRunStepPassesArgumentsAndRecordsTheExitCode(t *testing.T) {
 		t.Skip("bash step")
 	}
 	step := gravityStep(t)
-	if step.Shell != "bash" || step.Env["GITHUB_TOKEN"] != "${{ github.token }}" || step.Env["GRAVITY_TOKEN"] != "${{ inputs.token }}" {
+	if step.Shell != "bash" || step.Env["GITHUB_TOKEN"] != "${{ github.token }}" || step.Env["GRAVITY_TOKEN"] != "${{ inputs.token }}" || step.Env["GRAVITY_REPO_TOKEN"] != "${{ inputs.repo-token }}" {
 		t.Fatalf("step = %+v", step)
 	}
 	if _, ok := step.Env["GRAVITY_API_URL"]; ok {

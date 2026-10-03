@@ -352,3 +352,74 @@ func TestSharedWorkflowCallerKeepsTheGitHubFile(t *testing.T) {
 		t.Fatalf("a shared workflow caller is not a 0.x pipeline: %v", got)
 	}
 }
+
+func TestOutdatedGravityCIFiles(t *testing.T) {
+	current, err := Build(t.TempDir(), GitHub, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newGitHub := current.Files[0].Content
+	azure, err := Build(t.TempDir(), Azure, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newAzure := azure.Files[0].Content
+	write := func(root, rel, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name, provider, rel, body, action string
+	}{
+		{"github 1.0.0", GitHub, ".github/workflows/gravity.yml", strings.Replace(newGitHub, githubTokenLines, "          token: ${{ secrets.GRAVITY_TOKEN }}\n", 1), ActionUpdate},
+		{"github 1.0.2", GitHub, ".github/workflows/gravity.yml", strings.Replace(newGitHub, githubTokenLines, "          token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}\n", 1), ActionUpdate},
+		{"github edited", GitHub, ".github/workflows/gravity.yml", "on: push\njobs:\n  g:\n    steps:\n      - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1\n        with:\n          token: ${{ secrets.GRAVITY_TOKEN }}\n", ActionKeep},
+		{"azure 1.0.1", Azure, "azure-pipelines.gravity.yml", strings.Replace(newAzure, azureTokenLines, "      GRAVITY_TOKEN: $(GRAVITY_TOKEN)\n", 1), ActionUpdate},
+		{"github current", GitHub, ".github/workflows/gravity.yml", newGitHub, ActionKeep},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			write(root, tc.rel, tc.body)
+			p, err := Build(root, tc.provider, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f := p.Files[0]
+			if f.Action != tc.action {
+				t.Fatalf("action = %s (%s), want %s", f.Action, f.Note, tc.action)
+			}
+			outdated := Outdated(root)
+			if tc.name == "github current" {
+				if len(outdated) != 0 {
+					t.Fatalf("current file reported outdated: %+v", outdated)
+				}
+				return
+			}
+			if len(outdated) != 1 || outdated[0].Path != tc.rel {
+				t.Fatalf("outdated = %+v", outdated)
+			}
+			if tc.action == ActionKeep && !strings.Contains(f.Note, "repo-token: ${{ secrets.GRAVITY_REPO_TOKEN }}") {
+				t.Fatalf("an edited file is kept with the fix: %s", f.Note)
+			}
+			if tc.action == ActionUpdate {
+				if _, err := Write(root, p); err != nil {
+					t.Fatal(err)
+				}
+				if got, _ := os.ReadFile(filepath.Join(root, tc.rel)); string(got) != f.Content || len(Outdated(root)) != 0 {
+					t.Fatalf("updated file = %s", got)
+				}
+			}
+		})
+	}
+	root := t.TempDir()
+	write(root, "Jenkinsfile", "stage('Gravity') {\n  environment {\n    GRAVITY_TOKEN = credentials('gravity-token')\n  }\n}\n")
+	if got := Outdated(root); len(got) != 1 || got[0].Path != "Jenkinsfile" {
+		t.Fatalf("jenkins = %+v", got)
+	}
+}

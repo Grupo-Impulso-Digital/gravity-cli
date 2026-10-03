@@ -30,6 +30,9 @@ var Providers = []string{GitHub, GitLab, Bitbucket, Azure, Jenkins, CircleCI, No
 // SecretName is the CI secret the templates read.
 const SecretName = "GRAVITY_REPO_TOKEN"
 
+// FallbackSecretName is the secret the CLI reads after SecretName: user or organization tokens, and the gravity 0.x name.
+const FallbackSecretName = "GRAVITY_TOKEN"
+
 // DefaultInstallURL is the app route that serves install.sh.
 const DefaultInstallURL = "https://app.gravitydocs.io/install.sh"
 
@@ -38,6 +41,7 @@ const (
 	ActionCreate = "create"
 	ActionAppend = "append"
 	ActionKeep   = "keep"
+	ActionUpdate = "update"
 )
 
 // Options shape the generated CI files.
@@ -189,6 +193,9 @@ func Build(root, provider string, o Options) (*Plan, error) {
 	case Jenkins:
 		p.Snippet = render("jenkins", jenkinsSnippet, d)
 		p.SnippetTarget = "Jenkinsfile (add this stage)"
+		if existing, _ := readOptional(root, "Jenkinsfile"); existing != nil && outdatedReason("Jenkinsfile", existing) != "" {
+			p.SnippetTarget = "Jenkinsfile (it binds only " + FallbackSecretName + "; replace its gravity stage with this one)"
+		}
 	case CircleCI:
 		p.Snippet = render("circleci", circleSnippet, d)
 		p.SnippetTarget = ".circleci/config.yml (add this job and workflow)"
@@ -221,7 +228,93 @@ func planFile(root, rel, content string) (File, error) {
 	case string(existing) == content:
 		return File{Path: rel, Action: ActionKeep, Content: content, Note: "already up to date"}, nil
 	}
+	for _, old := range olderRenders(content) {
+		if string(existing) == old {
+			return File{Path: rel, Action: ActionUpdate, Content: content, Note: "written by an earlier gravity; updated to pass " + SecretName}, nil
+		}
+	}
+	if reason := outdatedReason(rel, existing); reason != "" {
+		return File{Path: rel, Action: ActionKeep, Content: string(existing), Note: "left as is, but it " + reason + "; " + tokenFix(rel)}, nil
+	}
 	return File{Path: rel, Action: ActionKeep, Content: string(existing), Note: "exists; left as is (delete it and run gravity init again to regenerate it)"}, nil
+}
+
+const (
+	githubTokenLines = "          repo-token: ${{ secrets.GRAVITY_REPO_TOKEN }}\n          token: ${{ secrets.GRAVITY_TOKEN }}\n"
+	azureTokenLines  = "      GRAVITY_REPO_TOKEN: $(GRAVITY_REPO_TOKEN)\n      GRAVITY_TOKEN: $(GRAVITY_TOKEN)\n"
+)
+
+func olderRenders(content string) []string {
+	var out []string
+	if strings.Contains(content, githubTokenLines) {
+		for _, old := range []string{"          token: ${{ secrets.GRAVITY_TOKEN }}\n", "          token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}\n"} {
+			out = append(out, strings.Replace(content, githubTokenLines, old, 1))
+		}
+	}
+	if strings.Contains(content, azureTokenLines) {
+		out = append(out, strings.Replace(content, azureTokenLines, "      GRAVITY_TOKEN: $(GRAVITY_TOKEN)\n", 1))
+	}
+	return out
+}
+
+func outdatedReason(rel string, content []byte) string {
+	s := string(content)
+	switch {
+	case strings.HasPrefix(rel, ".github/workflows/") && strings.Contains(s, "gravity-cli/ci/github@") && !strings.Contains(s, "repo-token:"):
+		if strings.Contains(s, "GRAVITY_REPO_TOKEN") {
+			return "passes both secrets through the token input, so gravity cannot tell which one it got"
+		}
+		return "passes only " + FallbackSecretName
+	case strings.HasPrefix(rel, "azure-pipelines") && strings.Contains(s, "gravity") && !strings.Contains(s, "GRAVITY_REPO_TOKEN"):
+		return "maps only " + FallbackSecretName
+	case rel == "Jenkinsfile" && strings.Contains(s, "credentials('gravity-token')"):
+		return "binds only " + FallbackSecretName
+	}
+	return ""
+}
+
+func tokenFix(rel string) string {
+	switch {
+	case strings.HasPrefix(rel, ".github/workflows/"):
+		return "pass repo-token: ${{ secrets.GRAVITY_REPO_TOKEN }} and token: ${{ secrets.GRAVITY_TOKEN }} to the action"
+	case strings.HasPrefix(rel, "azure-pipelines"):
+		return "map GRAVITY_REPO_TOKEN: $(GRAVITY_REPO_TOKEN) next to GRAVITY_TOKEN in the step's env"
+	case rel == "Jenkinsfile":
+		return "bind GRAVITY_REPO_TOKEN = credentials('gravity-repo-token') in the stage's environment"
+	}
+	return "pass " + SecretName
+}
+
+// OutdatedFile is a gravity CI file an earlier CLI wrote that does not pass GRAVITY_REPO_TOKEN.
+type OutdatedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+	Fix    string `json:"fix"`
+}
+
+// Outdated lists the gravity CI files under root that predate the GRAVITY_REPO_TOKEN convention.
+func Outdated(root string) []OutdatedFile {
+	var out []OutdatedFile
+	var paths []string
+	for _, g := range []string{".github/workflows/*.yml", ".github/workflows/*.yaml", "azure-pipelines*.yml", "azure-pipelines*.yaml", "Jenkinsfile"} {
+		matches, _ := filepath.Glob(filepath.Join(root, filepath.FromSlash(g)))
+		paths = append(paths, matches...)
+	}
+	for _, path := range paths {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if reason := outdatedReason(rel, data); reason != "" {
+			out = append(out, OutdatedFile{Path: rel, Reason: reason, Fix: tokenFix(rel)})
+		}
+	}
+	return out
 }
 
 var topLevelInclude = regexp.MustCompile(`(?m)^include:`)
@@ -265,6 +358,10 @@ func Write(root string, p *Plan) ([]string, error) {
 			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 				return written, fmt.Errorf("create %s: %w", filepath.Dir(f.Path), err)
 			}
+			if err := os.WriteFile(full, []byte(f.Content), 0o644); err != nil {
+				return written, fmt.Errorf("write %s: %w", f.Path, err)
+			}
+		case ActionUpdate:
 			if err := os.WriteFile(full, []byte(f.Content), 0o644); err != nil {
 				return written, fmt.Errorf("write %s: %w", f.Path, err)
 			}
@@ -355,7 +452,8 @@ jobs:
           fetch-depth: 0
       - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
         with:
-          token: ${{"{{"}} secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN {{"}}"}}
+          repo-token: ${{"{{"}} secrets.GRAVITY_REPO_TOKEN {{"}}"}}
+          token: ${{"{{"}} secrets.GRAVITY_TOKEN {{"}}"}}
 {{- if .APIURL}}
           api-url: {{yaml .APIURL}}
 {{- end}}
@@ -384,6 +482,7 @@ const gitlabTemplate = `gravity:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
 `
 
 const bitbucketTemplate = `image: alpine:3.20

@@ -150,3 +150,21 @@ func TestGuidesPreviewFlagsPagesWithAnotherRunsOpenProposal(t *testing.T) {
 		t.Fatalf("impact = %+v", rep.Impact)
 	}
 }
+
+func TestGuidesPreviewSupersedesItsOwnPendingChange(t *testing.T) {
+	r, fake, base, head := reachFixture(t)
+	fake.trees["sp_1"].Pages[0].OpenProposal = &api.OpenProposal{ID: "prop_9", Status: "open", PipelineRunID: "prun_earlier"}
+	for i := range fake.pages["pg_1"].Blocks {
+		fake.pages["pg_1"].Blocks[i].Provenance = &api.BlockProvenance{Repo: "billing-api", Pass: "guides", RunID: "prun_earlier"}
+	}
+	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}}, agent.PageChanges{})
+	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
+	in.Trigger = config.TriggerPR
+	rep, err := passes.Guides{}.Run(context.Background(), in, &passes.Recorder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Competing) != 0 || !strings.Contains(strings.Join(rep.Warnings, "\n"), "pending change from prun_earlier, which the platform supersedes") {
+		t.Fatalf("competing=%+v warnings=%v", rep.Competing, rep.Warnings)
+	}
+}

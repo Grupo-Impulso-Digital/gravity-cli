@@ -164,6 +164,7 @@ func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
 		FlagProfile:    a.gf.profile,
 		ManifestAPIURL: manifestAPIURL,
 		Getenv:         a.env,
+		CI:             a.inCI(),
 	}, profiles)
 	var hm *auth.HostMismatchError
 	if errors.As(err, &hm) {
@@ -178,6 +179,9 @@ func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
 	}
 	if (creds.TokenSource == auth.SourceEnv || creds.TokenSource == auth.SourceFlag) && creds.APIURLSource == auth.SourceManifest && !auth.SameAPIURL(creds.APIURL, config.DefaultAPIURL) {
 		a.ui.Warn("token_to_manifest_host", fmt.Sprintf("sending the %s token to %s, taken from %s apiUrl; set %s to pin the host (in CI, and when the repository is not yours)", creds.TokenFrom(), creds.APIURL, config.ManifestFileName, config.EnvAPIURL))
+	}
+	if creds.Unresolved != nil {
+		a.ui.Warn("token_unresolved_ignored", fmt.Sprintf("%s; using the token of profile %s instead", creds.Unresolved.Error(), creds.ProfileName))
 	}
 	if creds.TokenSource == auth.SourceFlag {
 		if shape := auth.UnresolvedShape(creds.Token); shape != "" {
@@ -195,6 +199,11 @@ func (a *app) client(creds auth.Credentials) *api.Client {
 		a.configure(c)
 	}
 	return c
+}
+
+func (a *app) inCI() bool {
+	c, _ := ci.Detect(context.Background(), ci.Env{Getenv: a.env}, nil)
+	return c.IsCI()
 }
 
 func (a *app) credentialHint(err error) string {

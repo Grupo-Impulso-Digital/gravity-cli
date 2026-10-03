@@ -12,6 +12,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/auth"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/cisetup"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/version"
@@ -207,6 +208,9 @@ func capabilityWarnings(s *session, conn *api.ConnectResponse, plan *api.Plan, n
 				add("token_expiring", "", fmt.Sprintf("the token expires in %s (%s); run `gravity login` to renew it", plural(int(math.Ceil(left.Hours()/24)), "day", "days"), t.Format("2006-01-02")))
 			}
 		}
+	}
+	for _, f := range cisetup.Outdated(s.info.root) {
+		add("ci_outdated", "", f.Path+" "+f.Reason+": "+f.Fix+", or run `gravity init` to update a file it wrote")
 	}
 	passes := conn.Effective.Passes
 	if plan != nil && len(plan.Passes) > 0 {

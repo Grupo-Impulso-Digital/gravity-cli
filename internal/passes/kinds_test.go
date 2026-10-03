@@ -474,7 +474,7 @@ func TestBuiltInCoverageFollowsNewOperations(t *testing.T) {
 				}
 				return
 			}
-			if len(coverage) != 1 || coverage[0].Severity != tc.severity || coverage[0].UnitKey != "api:get:/v1/refunds" {
+			if len(coverage) != 1 || coverage[0].Severity != tc.severity || coverage[0].UnitKey != "api:get:/v1/refunds" || !strings.Contains(coverage[0].Detail, "No enabled reference pass that runs on push reads api/openapi.yaml on merge") {
 				t.Fatalf("coverage = %+v", coverage)
 			}
 		})

@@ -3,6 +3,7 @@ package passes
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -201,6 +202,21 @@ func updatingPass(in Input, spec, spaceID string) string {
 	return ""
 }
 
+func isMarkdown(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".mdx", ".markdown":
+		return true
+	}
+	return false
+}
+
+func noPassDetail(in Input, spec, where string) string {
+	if in.Trigger == config.TriggerPR {
+		return "No enabled reference pass that runs on push reads " + spec + where + " " + whenMerged(in)
+	}
+	return "No enabled reference pass that runs on this branch reads " + spec + where
+}
+
 func containsString(list []string, v string) bool {
 	for _, x := range list {
 		if x == v {
@@ -332,7 +348,7 @@ func driftOf(in Input, rep *Report, ops specOps, roles map[string]map[string]boo
 			rep.Notes = append(rep.Notes, api.Note{Title: fmt.Sprintf("%s changes in %s; pass %s updates %s %s", b.SourceBinding.Ref, inThisChange(in), pass, ref.Title, whenMerged(in)), Page: ref})
 			return
 		}
-		rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityError, Code: CodeDrift, Title: fmt.Sprintf("%s: %s changes in %s and no pass updates it", ref.Title, b.SourceBinding.Ref, inThisChange(in)), Detail: "No enabled reference pass with the push trigger reads " + op.spec + " into this space, so the page keeps describing the old operation. Add or fix a reference pass, or update the page by hand.", File: op.spec, Page: ref, BlockKey: b.Key, UnitKey: op.unit})
+		rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityError, Code: CodeDrift, Title: fmt.Sprintf("%s: %s changes in %s and no pass updates it", ref.Title, b.SourceBinding.Ref, inThisChange(in)), Detail: noPassDetail(in, op.spec, " into this space") + ", so the page keeps describing the old operation. Add or fix a reference pass, or update the page by hand.", File: op.spec, Page: ref, BlockKey: b.Key, UnitKey: op.unit})
 	case blockIsOurs(b, in, roles):
 		units := blockUnits(b)
 		if owners := otherOwners(in, units); len(owners) > 0 {
@@ -513,7 +529,7 @@ func defaultCoverage(in Input, rep *Report) {
 					covered[pass] = append(covered[pass], key)
 					continue
 				}
-				rep.Findings = append(rep.Findings, api.Finding{Severity: severity, Code: CodeCoverage, Title: fmt.Sprintf("%s is new in %s and no pass documents it", key, inThisChange(in)), Detail: "No enabled reference pass with the push trigger reads " + d.Path + "; add one, or document the operation by hand.", File: d.Path, UnitKey: key})
+				rep.Findings = append(rep.Findings, api.Finding{Severity: severity, Code: CodeCoverage, Title: fmt.Sprintf("%s is new in %s and no pass documents it", key, inThisChange(in)), Detail: noPassDetail(in, d.Path, "") + "; add one, or document the operation by hand.", File: d.Path, UnitKey: key})
 			}
 		}
 		for _, pass := range passOrder {
@@ -603,7 +619,7 @@ func claimPages(ctx context.Context, in Input) ([]claimPage, error) {
 			if f.Status != "D" {
 				changed[f.Path] = true
 			}
-			if !strings.HasSuffix(f.Path, ".md") && !strings.HasSuffix(f.Path, ".mdx") {
+			if !isMarkdown(f.Path) {
 				codeChanged = true
 			}
 		}

@@ -314,3 +314,22 @@ func TestResolveReadsTheRepositoryTokenFirst(t *testing.T) {
 		})
 	}
 }
+
+func TestUnresolvedVariablesFallBackToTheProfileOnlyOutsideCI(t *testing.T) {
+	env := map[string]string{"GRAVITY_REPO_TOKEN": "$(GRAVITY_REPO_TOKEN)", "GRAVITY_TOKEN": " ${GRAVITY_TOKEN} "}
+	profiles := &Profiles{Current: "work", Profiles: map[string]Profile{"work": {Token: "gr_user_p"}}}
+	c, err := Resolve(Inputs{Getenv: func(k string) string { return env[k] }}, profiles)
+	if err != nil || c.Token != "gr_user_p" || c.TokenFrom() != "profile work" || c.Unresolved == nil || len(c.Unresolved.Vars) != 2 {
+		t.Fatalf("local: creds %+v err %v", c, err)
+	}
+	var ue *UnresolvedTokenError
+	if _, err := Resolve(Inputs{Getenv: func(k string) string { return env[k] }, CI: true}, profiles); !errors.As(err, &ue) {
+		t.Fatalf("CI: err = %v", err)
+	}
+	if _, err := Resolve(Inputs{Getenv: func(k string) string { return env[k] }}, &Profiles{}); !errors.As(err, &ue) {
+		t.Fatalf("no profile: err = %v", err)
+	}
+	if tok, name, _ := EnvToken(func(k string) string { return map[string]string{"GRAVITY_TOKEN": "  gr_user_x \n"}[k] }); tok != "gr_user_x" || name != "GRAVITY_TOKEN" {
+		t.Fatalf("EnvToken trims: %q %q", tok, name)
+	}
+}

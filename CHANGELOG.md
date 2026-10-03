@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.0.3 — Unreleased
+
+### Changed
+
+- The GitHub action takes the repository token as `repo-token` and a user or
+  organization token as `token`, and exports them as `GRAVITY_REPO_TOKEN` and
+  `GRAVITY_TOKEN`; the template passes `secrets.GRAVITY_REPO_TOKEN` and
+  `secrets.GRAVITY_TOKEN` separately, so `whoami` and `status` name the
+  secret that was used. Both inputs are optional.
+- When every token variable holds an unexpanded reference, a local run falls
+  back to the profile with a warning; CI still fails with `token_unresolved`.
+- The GitLab template also runs on `web` and `api` pipelines of any branch.
+- This repository's `cli-guides` pass writes task-oriented guides into the
+  `guides` collection of the CLI space instead of editing the curated
+  reference pages next to it.
+
+### Fixed
+
+- `gravity status` names the token actually used: an environment variable
+  that won over a stored profile is no longer reported as the profile.
+- `gravity preview` in a Dependabot job is skipped with
+  `dependabot_no_token` and exit `0`, like `run` and `check`.
+- `gravity logout` trims token variables and skips unexpanded references, like
+  every other command.
+- The `--token` help, the `token_host_mismatch` error and the manifest
+  `token:` error name `GRAVITY_REPO_TOKEN` and `GRAVITY_TOKEN` in resolution
+  order.
+- The "no pass documents it" and drift details describe the rule the check
+  applies (a reference pass that runs on push, or on this branch).
+- A pending change from an earlier run of the same pass and repository is
+  reported as replaced (the platform supersedes it), not as competing.
+- `.markdown` files count as documentation, not code, in claim review.
+- ci/README describes manual starts per provider and how each template passes
+  the token, as the templates do.
+- `gravity status` flags gravity CI files written by 1.0.0 to 1.0.2 that pass
+  only `GRAVITY_TOKEN` (or both secrets through one input), with the lines to
+  change; re-running `gravity init` rewrites such a file when it is unedited.
+  See "Upgrading CI files from 1.0.0-1.0.2" in the README.
+
 ## v1.0.2 — 2026-10-03
 
 ### Changed

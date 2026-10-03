@@ -28,7 +28,7 @@ func newRootCommand(a *app) *cobra.Command {
 	pf := root.PersistentFlags()
 	pf.StringVar(&a.gf.profile, "profile", "", "credential profile to use (env GRAVITY_PROFILE)")
 	pf.StringVar(&a.gf.apiURL, "api-url", "", "Gravity API base URL (env GRAVITY_API_URL)")
-	pf.StringVar(&a.gf.token, "token", "", "API token (env GRAVITY_TOKEN); never read from .gravity.yaml")
+	pf.StringVar(&a.gf.token, "token", "", "API token (else env GRAVITY_REPO_TOKEN, then GRAVITY_TOKEN, then the profile); never read from .gravity.yaml")
 	pf.StringVar(&a.gf.manifest, "manifest", "", "manifest path (env GRAVITY_MANIFEST, default .gravity.yaml)")
 	pf.StringVarP(&a.gf.dir, "dir", "C", "", "run as if gravity was started in this directory")
 	pf.BoolVar(&a.gf.json, "json", false, "print exactly one JSON document on stdout; human output goes to stderr")

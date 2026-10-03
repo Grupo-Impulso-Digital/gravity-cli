@@ -30,7 +30,19 @@ Jenkins and CircleCI snippets are printed by `gravity init --ci jenkins` and
 | Push to another branch | write, not authoritative | Passes that apply to that branch run; the manifest and the inventory are not updated from it. |
 | Release tag (`v*`) | write | Changelog pages for the release; release-only passes. |
 | Schedule | write | Passes that list the `schedule` trigger. |
-| Manual (`workflow_dispatch`, GitLab web/API pipelines, Azure manual runs) | write | Passes whose triggers include `manual`, `push` or `schedule`; the log names the passes it left out. `args: --pass <name>` runs one pass whatever its triggers. |
+| Manual | write | Passes whose triggers include `manual`, `push` or `schedule`; the log names the passes it left out. `gravity run --pass <name>` (on GitHub, the action's `args: --pass <name>`) runs one pass whatever its triggers. |
+
+A run is manual when it is a GitHub `workflow_dispatch` (or `repository_dispatch`),
+a GitLab pipeline started from the web, the API, a trigger, a parent pipeline
+or chat (the GitLab template runs on `web` and `api` pipelines of any branch,
+and on the default branch for the others), an Azure run with `BUILD_REASON`
+`Manual`, a Bitbucket `gravity-manual` custom pipeline (the template sets
+`GRAVITY_TRIGGER=manual`), a Jenkins build caused by a user (`BUILD_CAUSE` or
+`ROOT_BUILD_CAUSE` from the EnvInject plugin, or `BUILD_USER_ID` from the
+build-user-vars plugin), a CircleCI pipeline triggered through the API
+(`CIRCLE_PIPELINE_TRIGGER_SOURCE`, which the snippet maps from
+`pipeline.trigger_source`), or any local run. `GRAVITY_TRIGGER=manual`
+overrides the detection anywhere.
 
 Deploys are never gated by documentation writes. Only `check` findings exit `1`.
 
@@ -41,9 +53,25 @@ init` mints with exactly the scopes of the repository's passes and stores in
 the provider's secret store. The CLI reads `GRAVITY_REPO_TOKEN` first, then
 `GRAVITY_TOKEN` (a user or organization token, and the name gravity 0.x
 pipelines use), so a 0.x pipeline keeps its `GRAVITY_TOKEN` while the
-repository moves to 1.x. The templates pass both; on Azure an undefined one
-stays a literal `$(NAME)`, which the CLI skips. Never commit a token, and never
-put it in `.gravity.yaml` (a `token:` there is a manifest error).
+repository moves to 1.x. Never commit a token, and never put it in
+`.gravity.yaml` (a `token:` there is a manifest error).
+
+How each template hands the token over:
+
+| Template | Variables |
+| -------- | --------- |
+| GitHub | The action's `repo-token` (`secrets.GRAVITY_REPO_TOKEN`) and `token` (`secrets.GRAVITY_TOKEN`) inputs, exported under the same names, so `whoami` and `status` name the one used. |
+| Azure | Maps both `GRAVITY_REPO_TOKEN` and `GRAVITY_TOKEN` in the step's `env`; an undefined one stays a literal `$(NAME)`, which the CLI skips. |
+| GitLab, Bitbucket, CircleCI | Nothing to map: CI/CD, repository and project variables reach the job as environment variables, so either name works. |
+| Jenkins | Binds `GRAVITY_REPO_TOKEN` from the credential `gravity-repo-token`. |
+| Other CI | Runs `gravity run` with `GRAVITY_REPO_TOKEN` set. |
+
+CI files written by gravity 1.0.0 to 1.0.2 pass only `GRAVITY_TOKEN` (GitHub
+before 1.0.2, Azure, Jenkins), or both secrets through the one `token` input
+(GitHub 1.0.2). They keep working while the token sits in `GRAVITY_TOKEN`.
+`gravity status` flags them, and `gravity init` rewrites a file it generated
+that you did not edit (an edited file is kept, and init prints the lines to
+change).
 
 Pull request comments need a provider token next to it:
 
@@ -89,12 +117,14 @@ Azure, fails with exit `4`, so a missing secret never passes silently. The GitHu
 ```yaml
 - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
   with:
-    token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}
+    repo-token: ${{ secrets.GRAVITY_REPO_TOKEN }}
+    token: ${{ secrets.GRAVITY_TOKEN }}
 ```
 
 | Input | Default | Notes |
 | ----- | ------- | ----- |
-| `token` | required | `${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}`. Empty on fork and Dependabot pull requests (the run is skipped); empty anywhere else fails with exit `4`. |
+| `repo-token` | `""` | The repository token, `secrets.GRAVITY_REPO_TOKEN`; exported as `GRAVITY_REPO_TOKEN`, read first. |
+| `token` | `""` | A user or organization token, `secrets.GRAVITY_TOKEN`; exported as `GRAVITY_TOKEN`. With neither, fork and Dependabot pull requests are skipped and every other run exits `4`. |
 | `command` | `run` | `run`, `check` or `status`. |
 | `args` | `""` | Extra flags, for example `--pass developer-api`. |
 | `version` | `1` | A major (`1`), a release (`v1.2.3`), `latest`, or `source` (build from the action checkout). |

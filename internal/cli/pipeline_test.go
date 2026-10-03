@@ -557,9 +557,11 @@ func TestDependabotRunWithoutATokenIsSkipped(t *testing.T) {
 	if err := os.WriteFile(h.env["GITHUB_EVENT_PATH"], []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	expectCode(t, h, h.run("check", "--json"), 0)
-	if h.envelope()["data"].(map[string]any)["skipped"] != "dependabot_no_token" || !strings.Contains(h.stderr.String(), "Dependabot secret") {
-		t.Fatalf("stderr = %s", h.stderr.String())
+	for _, cmd := range []string{"check", "run", "preview"} {
+		expectCode(t, h, h.run(cmd, "--json"), 0)
+		if h.envelope()["data"].(map[string]any)["skipped"] != "dependabot_no_token" || !strings.Contains(h.stderr.String(), "Dependabot secret") {
+			t.Fatalf("%s: stderr = %s", cmd, h.stderr.String())
+		}
 	}
 	if len(h.platform.requests) != 0 {
 		t.Fatal("no request without a token")

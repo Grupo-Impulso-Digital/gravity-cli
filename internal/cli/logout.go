@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -40,10 +41,12 @@ func newLogoutCmd(a *app) *cobra.Command {
 				return Fail(CodeError, err)
 			}
 			data := logoutData{Removed: []string{}, Revoked: []string{}}
-			explicit, source := a.gf.token, "--token"
-			for _, name := range auth.TokenEnvs {
-				if explicit == "" {
-					explicit, source = a.env(name), name
+			explicit, source := strings.TrimSpace(a.gf.token), "--token"
+			if explicit == "" {
+				var unresolved *auth.UnresolvedTokenError
+				explicit, source, unresolved = auth.EnvToken(a.env)
+				if unresolved != nil && explicit == "" {
+					a.ui.Warn("token_unresolved_ignored", unresolved.Error())
 				}
 			}
 			if explicit != "" {

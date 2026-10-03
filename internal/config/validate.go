@@ -81,7 +81,7 @@ func tokenIssues(node any, path []string) []Issue {
 			if k == "token" {
 				out = append(out, Issue{
 					Path:    formatPath(child),
-					Message: fmt.Sprintf("tokens are never read from %s; use %s in CI or `gravity login` locally", ManifestFileName, EnvToken),
+					Message: fmt.Sprintf("tokens are never read from %s; use %s (or %s) in CI, or `gravity login` locally", ManifestFileName, EnvRepoToken, EnvToken),
 				})
 				continue
 			}

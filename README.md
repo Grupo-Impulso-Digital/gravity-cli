@@ -50,7 +50,8 @@ gravity preview    # every page your working tree would change, before you push
 ```yaml
 - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
   with:
-    token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}
+    repo-token: ${{ secrets.GRAVITY_REPO_TOKEN }}
+    token: ${{ secrets.GRAVITY_TOKEN }}
 ```
 
 Anywhere else it is one line, with `GRAVITY_REPO_TOKEN` from the CI secret
@@ -248,6 +249,17 @@ Gravity does not fence pages per repository.
 | `gravity explain <page>` | Per block: last writer (repository, pass, commit, run), history, ownership and the page lock; `--block <key>`. |
 | `gravity version` | Version, commit, build date, Go version, platform. |
 
+### Upgrading CI files from 1.0.0-1.0.2
+
+Repository tokens now live in `GRAVITY_REPO_TOKEN`. CI files written by
+gravity 1.0.0 to 1.0.2 pass only `GRAVITY_TOKEN` (or, on GitHub with 1.0.2,
+both secrets through the action's single `token` input); they keep working
+while the token is stored in `GRAVITY_TOKEN`. `gravity status` names each such
+file with the lines to change, and running `gravity init` again rewrites a
+gravity CI file it generated and you did not edit. Then store the repository
+token as `GRAVITY_REPO_TOKEN` and, once no 0.x pipeline needs it, delete
+`GRAVITY_TOKEN`.
+
 ### `gravity run` outside CI
 
 Locally, and on a GitHub `workflow_dispatch` (or any manual pipeline), the
@@ -324,9 +336,12 @@ adding `gravity.yml`.
 `--no-color` (`NO_COLOR`), `-q`, `-v`.
 
 - Credentials: `--token` > `GRAVITY_REPO_TOKEN` > `GRAVITY_TOKEN` > profile;
-  `whoami` and `status` name the source. A variable holding an unexpanded
-  reference (`$(NAME)`, `${{ … }}`, `$NAME`) is skipped. Tokens are never
-  read from `.gravity.yaml`.
+  values are trimmed, and `whoami` and `status` name the source actually used.
+  A variable holding an unexpanded reference (`$(NAME)`, `${{ … }}`, `$NAME`,
+  `%NAME%`) is skipped. When every token variable is such a reference, a CI job
+  fails with `token_unresolved` (a missing secret must not pass), while a local
+  run falls back to the profile with a warning. Tokens are never read from
+  `.gravity.yaml`.
 - API URL: `--api-url` > `GRAVITY_API_URL` > manifest `apiUrl` > profile
   `apiUrl` > `https://api.gravitydocs.io`. A profile token is only sent to the
   host that issued it (`token_host_mismatch` otherwise). API URLs must use

@@ -751,3 +751,39 @@ func TestRejectedTokenHint(t *testing.T) {
 		t.Fatalf("no sign-in hint in CI: %s", h.stderr.String())
 	}
 }
+
+func TestLogoutSkipsPlaceholdersAndTrims(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_REPO_TOKEN"] = "$(GRAVITY_REPO_TOKEN)"
+	h.env["GRAVITY_TOKEN"] = "  gr_user_env\n"
+	h.platform.json("POST /api/v1/auth/logout", 204, ``)
+	expectCode(t, h, h.run("logout"), 0)
+	reqs := h.platform.find("POST", "/api/v1/auth/logout")
+	if len(reqs) != 1 || reqs[0].Token != "gr_user_env" {
+		t.Fatalf("logout requests = %+v", reqs)
+	}
+}
+
+func TestStatusAndWhoamiNameTheTokenActuallyUsed(t *testing.T) {
+	h := newHarness(t)
+	h.stdin = "gr_user_profile\n"
+	expectCode(t, h, h.run("login", "--with-token"), 0)
+	h.env["GRAVITY_REPO_TOKEN"] = "gr_repo_env"
+	expectCode(t, h, h.run("whoami", "--json"), 0)
+	data := h.envelope()["data"].(map[string]any)
+	if tok := data["token"].(map[string]any); tok["variable"] != "GRAVITY_REPO_TOKEN" || data["profile"] != nil && data["profile"] != "" {
+		t.Fatalf("whoami = %v", data)
+	}
+	expectCode(t, h, h.run("status"), 0)
+	if out := h.stdout.String(); !strings.Contains(out, "from env GRAVITY_REPO_TOKEN") || strings.Contains(out, "· profile ") {
+		t.Fatalf("status:\n%s", out)
+	}
+	delete(h.env, "GRAVITY_REPO_TOKEN")
+	h.env["GRAVITY_TOKEN"] = "$(GRAVITY_TOKEN)"
+	expectCode(t, h, h.run("whoami"), 0)
+	if !strings.Contains(h.stderr.String(), "using the token of profile") {
+		t.Fatalf("a local placeholder falls back to the profile with a warning: %s", h.stderr.String())
+	}
+	h.env["CI"] = "true"
+	expectCode(t, h, h.run("whoami"), 4)
+}

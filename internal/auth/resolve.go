@@ -27,6 +27,7 @@ type Inputs struct {
 	FlagProfile    string
 	ManifestAPIURL string
 	Getenv         func(string) string
+	CI             bool
 }
 
 // Credentials are the resolved token and API URL of an invocation.
@@ -39,6 +40,7 @@ type Credentials struct {
 	APIURLSource string
 	ProfileName  string
 	Profile      *Profile
+	Unresolved   *UnresolvedTokenError
 }
 
 // HostMismatchError refuses to send a profile token to a host other than the one that issued it.
@@ -50,8 +52,8 @@ type HostMismatchError struct {
 }
 
 func (e *HostMismatchError) Error() string {
-	return fmt.Sprintf("refusing to send the token of profile %q to %s (API URL from %s): token was issued by %s; use --token or %s for that host, or sign in to it with `gravity login --api-url %s --profile <name>`",
-		e.Profile, e.APIURL, sourceLabel(e.Source), e.Issuer, config.EnvToken, e.APIURL)
+	return fmt.Sprintf("refusing to send the token of profile %q to %s (API URL from %s): token was issued by %s; use --token, %s or %s for that host, or sign in to it with `gravity login --api-url %s --profile <name>`",
+		e.Profile, e.APIURL, sourceLabel(e.Source), e.Issuer, config.EnvRepoToken, config.EnvToken, e.APIURL)
 }
 
 func sourceLabel(source string) string {
@@ -77,23 +79,9 @@ func Resolve(in Inputs, profiles *Profiles) (Credentials, error) {
 	if in.FlagToken != "" {
 		c.Token, c.TokenSource = in.FlagToken, SourceFlag
 	} else {
-		for _, name := range TokenEnvs {
-			v := strings.TrimSpace(getenv(name))
-			if v == "" {
-				continue
-			}
-			if shape := UnresolvedShape(v); shape != "" {
-				if unresolved == nil {
-					unresolved = &UnresolvedTokenError{Shape: shape}
-				}
-				unresolved.Vars = append(unresolved.Vars, name)
-				continue
-			}
-			c.Token, c.TokenSource, c.TokenEnv = v, SourceEnv, name
-			break
-		}
-		if c.Token == "" && unresolved != nil {
-			return Credentials{}, unresolved
+		c.Token, c.TokenEnv, unresolved = EnvToken(getenv)
+		if c.Token != "" {
+			c.TokenSource = SourceEnv
 		}
 	}
 	name := in.FlagProfile
@@ -108,6 +96,12 @@ func Resolve(in Inputs, profiles *Profiles) (Credentials, error) {
 		if prof, ok := profiles.Get(name); ok {
 			c.ProfileName, c.Profile = name, &prof
 		}
+	}
+	if c.Token == "" && unresolved != nil {
+		if in.CI || c.Profile == nil || c.Profile.Token == "" {
+			return Credentials{}, unresolved
+		}
+		c.Unresolved = unresolved
 	}
 	if explicit && c.Profile == nil && c.Token == "" {
 		return Credentials{}, fmt.Errorf("profile %q does not exist (run `gravity login --profile %s`)", name, name)
@@ -145,6 +139,25 @@ func Resolve(in Inputs, profiles *Profiles) (Credentials, error) {
 		}
 	}
 	return c, nil
+}
+
+// EnvToken returns the first token variable that holds a usable value, trimmed, and the variables that hold only an unexpanded reference.
+func EnvToken(getenv func(string) string) (token, name string, unresolved *UnresolvedTokenError) {
+	for _, n := range TokenEnvs {
+		v := strings.TrimSpace(getenv(n))
+		if v == "" {
+			continue
+		}
+		if shape := UnresolvedShape(v); shape != "" {
+			if unresolved == nil {
+				unresolved = &UnresolvedTokenError{Shape: shape}
+			}
+			unresolved.Vars = append(unresolved.Vars, n)
+			continue
+		}
+		return v, n, nil
+	}
+	return "", "", unresolved
 }
 
 // TokenEnvs are the environment variables a token is read from, in order: the repository token first.

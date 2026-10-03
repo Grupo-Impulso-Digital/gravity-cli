@@ -616,6 +616,9 @@ func (r *initRun) printPreview() {
 		case cisetup.ActionAppend:
 			p.Println("  ~ %s (append)", f.Path)
 			printBlock(p, strings.TrimLeft(f.Content, "\n"))
+		case cisetup.ActionUpdate:
+			p.Println("  ~ %s (%s)", f.Path, f.Note)
+			printBlock(p, f.Content)
 		default:
 			p.Println("  = %s (%s)", f.Path, f.Note)
 		}
