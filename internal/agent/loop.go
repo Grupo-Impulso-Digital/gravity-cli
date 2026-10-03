@@ -62,7 +62,10 @@ func (r *Result) Tokens() int {
 
 func rejectsForcedToolChoice(err error) bool {
 	var ae *api.APIError
-	return errors.As(err, &ae) && ae.StatusCode == http.StatusBadRequest
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return ae.StatusCode == http.StatusBadRequest || ae.Code == api.CodeProviderError
 }
 
 func withTerminalInstruction(system, terminal string) string {
