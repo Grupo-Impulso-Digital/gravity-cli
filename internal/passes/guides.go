@@ -10,6 +10,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
@@ -64,6 +65,53 @@ func targetPages(in Input, tree *api.SpaceTree) map[string]api.TreePage {
 		out[p.ID] = p
 	}
 	return out
+}
+
+func pendingChanges(ctx context.Context, in Input, rep *Report, p api.TreePage, op *api.OpenProposal) {
+	ref := api.PageRef{ID: p.ID, Slug: p.Slug, Title: p.Title}
+	if op.Pending == nil {
+		if op.PipelineRunID == "" || op.PipelineRunID == in.RunID {
+			return
+		}
+		if ownPendingChange(ctx, in, p.ID, op.PipelineRunID) {
+			rep.warn("%s: replaces this pass's pending change from %s, which the platform supersedes", p.Slug, op.PipelineRunID)
+			return
+		}
+		rep.Competing = append(rep.Competing, Competition{Page: ref, With: []api.CompetingChange{{RunID: op.PipelineRunID}}, Pending: true})
+		return
+	}
+	var others []api.CompetingChange
+	var own []string
+	for _, pc := range *op.Pending {
+		if pc.RunID == in.RunID && in.RunID != "" {
+			continue
+		}
+		if pc.Pass == in.Pass.Name && (in.Info.ID != "" && pc.RepoID == in.Info.ID || pc.RemoteKey != "" && pc.RemoteKey == in.Info.RemoteKey) {
+			own = append(own, pc.RunID)
+			continue
+		}
+		others = append(others, api.CompetingChange{RunID: pc.RunID, Repo: firstOf(pc.RemoteKey, pc.RepoID) + " (pass " + pc.Pass + ")"})
+	}
+	if len(others) > 0 {
+		rep.Competing = append(rep.Competing, Competition{Page: ref, With: others, Pending: true})
+		return
+	}
+	if len(own) > 0 {
+		rep.warn("%s: replaces this pass's pending change from %s, which the platform supersedes", p.Slug, strings.Join(own, ", "))
+	}
+}
+
+func createPath(prefix, planned []string) []string {
+	var rest []string
+	for _, seg := range planned {
+		if strings.Trim(seg, " -_/") != "" {
+			rest = append(rest, normalize.ProductSlug(seg))
+		}
+	}
+	if hasPrefix(rest, prefix) {
+		rest = rest[len(prefix):]
+	}
+	return append(append([]string{}, prefix...), rest...)
 }
 
 func ownPendingChange(ctx context.Context, in Input, pageID, runID string) bool {
@@ -423,13 +471,9 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 				rep.warn("plan names unknown page %s; skipped", firstOf(a.PageID, a.Slug))
 				continue
 			}
-			if op := p.OpenProposal; op != nil && op.PipelineRunID != "" && op.PipelineRunID != in.RunID && !pending[p.ID] {
+			if op := p.OpenProposal; op != nil && !pending[p.ID] {
 				pending[p.ID] = true
-				if ownPendingChange(ctx, in, p.ID, op.PipelineRunID) {
-					rep.warn("%s: replaces this pass's pending change from %s, which the platform supersedes", p.Slug, op.PipelineRunID)
-				} else {
-					rep.Competing = append(rep.Competing, Competition{Page: api.PageRef{ID: p.ID, Slug: p.Slug, Title: p.Title}, With: []api.CompetingChange{{RunID: op.PipelineRunID}}, Pending: true})
-				}
+				pendingChanges(ctx, in, &rep, p, op)
 			}
 			if p.Lock != nil {
 				rep.warn("page %s is locked to %s; skipped", p.Slug, p.Lock.Path)
@@ -597,7 +641,7 @@ func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.
 	if a.Action == agent.ActionCreate {
 		req.Op = api.OpCreate
 		req.Title = firstOf(a.Title, changes.Title)
-		req.Target = api.ChangeTarget{SpaceID: in.SpaceID(), Slug: a.Slug, CollectionPath: append(in.CollectionPrefix(), a.CollectionPath...)}
+		req.Target = api.ChangeTarget{SpaceID: in.SpaceID(), Slug: a.Slug, CollectionPath: createPath(in.CollectionPrefix(), a.CollectionPath)}
 	} else {
 		req.Op = api.OpUpdate
 		req.Target = api.ChangeTarget{PageID: a.PageID}
