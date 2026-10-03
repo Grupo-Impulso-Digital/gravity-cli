@@ -40,6 +40,7 @@ type Report struct {
 	Claims     []agent.ClaimFinding `json:"claims,omitempty"`
 	Warnings   []string             `json:"warnings,omitempty"`
 	Failing    bool                 `json:"failing,omitempty"`
+	FailOn     []string             `json:"failOn,omitempty"`
 	Recorded   *Recorded            `json:"recorded,omitempty"`
 	Usage      agent.Usage          `json:"usage"`
 	Errors     []string             `json:"errors,omitempty"`

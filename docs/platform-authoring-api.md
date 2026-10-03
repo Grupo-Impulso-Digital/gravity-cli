@@ -82,7 +82,7 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | `GET` | `/api/v1/content/resolve`, `/api/v1/content/pages/{pageId}/provenance` | `explain` |
 | `POST` | `/api/v1/nucleus/recall`, `/api/v1/nucleus/memories` | `nucleus` passes, doc tools |
 | `POST` | `/api/llm/v1/messages` | every AI pass |
-| `GET` | `/api/llm/v1/prompts/{name}` | every AI pass (falls back to the baked prompt) |
+| `GET` | `/api/llm/v1/prompts/{name}` | every AI pass (hosted prompt, with a baked fallback) |
 
 ## Capabilities
 
@@ -193,8 +193,10 @@ audiences?, after?, units?, rationale? }`.
 pass kind's prompt; the gateway composes the organization, site, space,
 collection, pass and note layers. `402 no_provider_key` means the organization
 has no LLM key; the AI pass fails with that error. Hosted prompts come from
-`GET /api/llm/v1/prompts/{name}`, and any error falls back to the prompt baked
-into the binary.
+`GET /api/llm/v1/prompts/{name}` and are cached per process
+(`prompts.Resolver`). An error or an empty answer falls back to the prompt
+baked into the binary, except a licence refusal, a stopped run (`lease_lost`,
+`run_not_running`) or a cancelled context, which fail the pass.
 
 ## Nucleus
 

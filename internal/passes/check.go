@@ -99,7 +99,8 @@ func (Check) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			return rep, err
 		}
 	}
-	rep.Failing = Failing(rep.Findings, FailOn(in))
+	rep.FailOn = FailOn(in)
+	rep.Failing = Failing(rep.Findings, rep.FailOn)
 	switch n := len(rep.Findings); n {
 	case 0:
 		rep.Summary = "no findings"

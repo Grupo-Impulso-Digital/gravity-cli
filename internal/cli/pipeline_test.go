@@ -14,6 +14,8 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/passes"
+	engine "github.com/Grupo-Impulso-Digital/gravity-cli/internal/run"
 )
 
 const pipelineSpec = `openapi: 3.0.0
@@ -516,5 +518,18 @@ func TestRunWarnsAboutUncommittedChanges(t *testing.T) {
 	expectCode(t, h, h.run("run"), 0)
 	if !strings.Contains(h.stderr.String(), "uncommitted changes are not part of this run") {
 		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+}
+
+func TestFindingsMessageCountsOnlyFailingCategories(t *testing.T) {
+	rep := &passes.Report{Failing: true, FailOn: []string{"drift", "claims"}}
+	rep.Findings = []api.Finding{
+		{Severity: api.SeverityError, Code: passes.CodeCoverage},
+		{Severity: api.SeverityError, Code: passes.CodeClaimContradicted},
+		{Severity: api.SeverityWarning, Code: passes.CodeDrift},
+	}
+	res := &engine.Result{Passes: []engine.PassResult{{Name: "gate", Report: rep}}}
+	if got := findingsMessage(res); got != "1 finding fails the check" {
+		t.Fatalf("message = %q", got)
 	}
 }

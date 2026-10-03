@@ -501,7 +501,7 @@ func (a *app) finishPipeline(res *engine.Result, strict bool, extra error) error
 	msg := "one or more passes failed"
 	switch code {
 	case CodeFindings:
-		errCode, msg = "findings", findingsMessage(res.Findings())
+		errCode, msg = "findings", findingsMessage(res)
 	case CodeLicense:
 		errCode, msg = api.CodeModuleDisabled, "a pass needs a module this organization does not have"
 	default:
@@ -518,11 +518,20 @@ func (a *app) finishPipeline(res *engine.Result, strict bool, extra error) error
 	return ee
 }
 
-func findingsMessage(findings []api.Finding) string {
+func findingsMessage(res *engine.Result) string {
 	n := 0
-	for _, f := range findings {
-		if f.Severity == api.SeverityError {
-			n++
+	for _, p := range res.Passes {
+		if p.Report == nil || !p.Report.Failing {
+			continue
+		}
+		want := map[string]bool{}
+		for _, c := range p.Report.FailOn {
+			want[c] = true
+		}
+		for _, f := range p.Report.Findings {
+			if f.Severity == api.SeverityError && want[passes.Category(f.Code)] {
+				n++
+			}
 		}
 	}
 	if n == 1 {
