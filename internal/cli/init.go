@@ -379,7 +379,10 @@ func appBaseURL(apiURL string) string {
 		return "https://app.gravitydocs.io"
 	}
 	if host, ok := strings.CutPrefix(u.Host, "api."); ok {
-		u.Host = "app." + host
+		u.Host = host
+		if strings.Count(host, ".") == 1 {
+			u.Host = "app." + host
+		}
 	}
 	u.Path, u.RawQuery = "", ""
 	return strings.TrimSuffix(u.String(), "/")

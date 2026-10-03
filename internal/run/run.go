@@ -318,10 +318,10 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 		if err != nil {
 			return res, err
 		}
-		res.Plan = p
 		if err := checkSelection(p, opts); err != nil {
 			return res, err
 		}
+		res.Plan = p
 		if env.OnPlan != nil {
 			env.OnPlan(p)
 		}

@@ -360,12 +360,12 @@ func (r *initRun) plan() error {
 			r.a.ui.Debugf("list secrets: %v", err)
 		}
 		ip.secretExists = exists
-		ip.legacy = cisetup.LegacyPipelines(r.info.root)
-		if r.data.Mode == modeConvert {
-			ip.legacy = append(ip.legacy, r.data.Manifest.Path+" (version 1)")
-		}
-		ip.protect = len(ip.legacy) > 0 && !r.o.replaceSecret
 	}
+	ip.legacy = cisetup.LegacyPipelines(r.info.root)
+	if r.data.Mode == modeConvert {
+		ip.legacy = append(ip.legacy, r.data.Manifest.Path+" (version 1)")
+	}
+	ip.protect = len(ip.legacy) > 0 && !r.o.replaceSecret && !r.o.noSecret
 	switch {
 	case ip.canMint && ip.installer == nil && !r.o.noSecret && !r.a.terminal:
 		ip.canMint, ip.mintReason = false, "there is no terminal to show the token on and it must not land in logs; pass --no-secret to print it anyway, or mint one in the app"
@@ -671,7 +671,7 @@ func (r *initRun) printPreview() {
 		p.Println("  + repository token with %s", strings.Join(ip.scopes, ", "))
 		switch {
 		case ip.protect:
-			p.Println("  ! %s on %s still feeds a gravity 0.x pipeline (%s), and 0.x refuses repository tokens: init keeps it and prints the new token to set when this change is merged (--replace-secret replaces it now)", cisetup.SecretName, ip.installer.Repo, strings.Join(ip.legacy, ", "))
+			p.Println("  ! %s still feeds a gravity 0.x pipeline (%s), and 0.x refuses repository tokens: init keeps it and prints the new token to set when this change is merged (--replace-secret replaces it now)", cisetup.SecretName, strings.Join(ip.legacy, ", "))
 		case ip.installer != nil && ip.secretExists:
 			p.Println("  + secret %s on %s, replacing its current value (%s)", cisetup.SecretName, ip.installer.Repo, ip.installer.Describe(cisetup.SecretName))
 		case ip.installer != nil:

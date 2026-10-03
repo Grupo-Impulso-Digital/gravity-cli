@@ -107,7 +107,10 @@ func (a *app) loadPasses(ctx context.Context, f passesFlags) (*session, *passesD
 		}
 	}
 	q := api.PlanQuery{Repo: repoParam(s.who, s.info), Trigger: trigger, Branch: branch, Mode: api.ModeDry}
-	if s.manifest != nil {
+	if trigger == ci.TriggerManual {
+		q.Mode = api.ModeWrite
+	}
+	if s.manifest != nil && q.Mode == api.ModeDry {
 		if _, err := s.client.Connect(ctx, a.connectRequest(s.info, s.manifest, api.ContextStatus, origin(c), true)); err != nil {
 			return nil, nil, Fail(CodeError, fmt.Errorf("connect: %w", err))
 		}

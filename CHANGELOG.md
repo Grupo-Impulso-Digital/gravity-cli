@@ -36,7 +36,10 @@ Hardening of 1.0 after a documentation audit and the first production runs.
   in the plan) is used for passes without a watermark, unless a pass sets
   `surveyCommits`.
 - `gravity logout` names the right screen for repository and organization
-  tokens: Settings › CLI & machines, with its link.
+  tokens: Settings › CLI & machines, with its link; app links derived from the
+  API host now also work for hosts like `api.gravity.<domain>`.
+- `gravity passes --trigger manual` shows what a manual write run does, instead
+  of the preview rule that applies every pass.
 - `gravity passes edit` links the manifest on the repository's own host
   (GitHub, GitLab, Bitbucket, Azure DevOps, including Azure SSH remotes) and
   prints the file and branch for other hosts instead of a GitHub-style link.

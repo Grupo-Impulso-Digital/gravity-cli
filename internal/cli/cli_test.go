@@ -420,6 +420,12 @@ func TestPassesList(t *testing.T) {
 	if last := plans[len(plans)-1].Query; last["trigger"][0] != "release" {
 		t.Fatalf("plan query = %v", last)
 	}
+	h.write(".gravity.yaml", "version: 2\n")
+	expectCode(t, h, h.run("passes", "--trigger", "manual"), 0)
+	plans = h.platform.find("GET", "/api/v1/repos/self/plan")
+	if last := plans[len(plans)-1].Query; last["mode"][0] != "write" || last["manifestHash"] != nil {
+		t.Fatalf("a manual run writes, so its passes are planned in write mode: %v", last)
+	}
 }
 
 func TestPassesDetachedHeadNeedsBranch(t *testing.T) {
@@ -716,9 +722,11 @@ func TestManifestLinksFollowTheProvider(t *testing.T) {
 func TestLogoutNamesTheCLIAndMachinesScreen(t *testing.T) {
 	h := newHarness(t)
 	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
-	h.env["GRAVITY_API_URL"] = "https://api.staging.gravitydocs.io"
-	expectCode(t, h, h.run("logout"), 0)
-	if !strings.Contains(h.stderr.String(), "CLI & machines (https://app.staging.gravitydocs.io/app/settings/tokens)") {
-		t.Fatalf("stderr = %s", h.stderr.String())
+	for api, app := range map[string]string{"https://api.gravitydocs.io": "https://app.gravitydocs.io", "https://api.gravity.impulso-dev.com": "https://gravity.impulso-dev.com"} {
+		h.env["GRAVITY_API_URL"] = api
+		expectCode(t, h, h.run("logout"), 0)
+		if !strings.Contains(h.stderr.String(), "CLI & machines ("+app+"/app/settings/tokens)") {
+			t.Fatalf("stderr = %s", h.stderr.String())
+		}
 	}
 }

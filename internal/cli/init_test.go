@@ -953,3 +953,19 @@ func TestInitReplaceSecretOverridesTheGuard(t *testing.T) {
 	}
 	expectCode(t, h, h.run("init", "--yes", "--replace-secret", "--no-secret"), 2)
 }
+
+func TestInitWarnsAboutA0xPipelineWithoutASecretTool(t *testing.T) {
+	h := newHarness(t)
+	seedRepo(t, h)
+	legacyWorkflow(t, h)
+	initPlatform(h, connectFresh)
+	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
+	h.terminal = true
+	expectCode(t, h, h.run("init", "--yes"), 0)
+	out := h.stdout.String() + h.stderr.String()
+	for _, want := range []string{"GRAVITY_TOKEN still feeds a gravity 0.x pipeline (.github/workflows/docs.yml)", "Set it when this change is merged"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in\n%s", want, out)
+		}
+	}
+}

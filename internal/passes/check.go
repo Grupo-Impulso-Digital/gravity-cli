@@ -214,7 +214,7 @@ func whenMerged(in Input) string {
 	if in.Trigger == config.TriggerPR {
 		return "on merge"
 	}
-	return "in this run"
+	return "when it runs"
 }
 
 func inThisChange(in Input) string {
