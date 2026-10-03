@@ -193,11 +193,11 @@ to `debug.ReadBuildInfo`.
   dependency needs the same one-line justification here, in the same commit.
 - **Testing**: stdlib `testing` + `httptest` mocks, table-driven where it fits.
   No live-server integration tests.
-- **Capabilities, not 404s**: server features come from `/whoami` (and
-  `connect.serverFeatures` / `plan.capabilities`). CLI 1.0 refuses a server
+- **Capabilities, not 404s**: server features come from `/whoami` and
+  `plan.capabilities` (connect's `serverFeatures` is decoded, not consulted). CLI 1.0 refuses a server
   without `pipelines`. A `404` is always an error (`repo_not_connected` hints
   `gravity init`), never "feature unavailable".
-- **Retries** (`internal/api`): `429` and `5xx` are retried three times with
+- **Retries** (`internal/api`): `429` and `5xx` get up to three attempts with
   exponential backoff from 1 s, honoring `Retry-After`; network errors are
   retried for GET only. `lease_lost` and `run_not_running` stop a run without a
   finish call (`api.StopsRun`).

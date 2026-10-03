@@ -2,6 +2,7 @@ package passes_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -498,5 +499,31 @@ func TestGuidesDropsHintsNobodyCanReceive(t *testing.T) {
 	}
 	if len(w.changes) != 1 || w.changes[0].Blocks[0].Content.(map[string]any)["variant"] != "bulleted" {
 		t.Fatalf("list variants are normalized: %+v", w.changes)
+	}
+}
+
+func TestCheckReviewsAChangedVerbatimFileAsItWillBeImported(t *testing.T) {
+	r := newRepo(t)
+	base := r.commit("init", map[string]string{"src/limits.ts": "export const retries = 3\n", "docs/limits.md": "# Limits\n\nRetries: 5.\n"})
+	head := r.commit("fix: document 3 retries", map[string]string{"src/limits.ts": "export const retries = 3 // tuned\n", "docs/limits.md": "# Limits\n\nRetries: 3.\n"})
+	fake := newFakeAPI()
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_lim", Slug: "limits", Title: "Limits", Lock: &api.PageLock{Pass: "handbook", Path: "docs/limits.md", Repo: &api.RepoRef{RemoteKey: "github.com/acme/billing-api"}}}, Blocks: []api.PageBlock{{Key: "doc:limits", Type: "prose", Ownership: api.OwnershipMachine, Text: "Retries: 5."}}})
+	fake.llm = func(api.MessagesRequest) api.MessagesResponse {
+		return submit(agent.ToolReportFindings, agent.FindingsInput{})
+	}
+	pp := planPass(config.KindCheck, "gate", nil)
+	verbatim := planPass(config.KindVerbatim, "handbook", map[string]any{"files": []any{map[string]any{"include": "docs/**/*.md"}}})
+	in := input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
+	in.Trigger = config.TriggerPR
+	in.Plan.Passes = []api.PlanPass{pp, verbatim}
+	if _, err := (passes.Check{}).Run(context.Background(), in, &passes.Recorder{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.requests) == 0 {
+		t.Fatal("the locked page is reviewed")
+	}
+	kickoff, _ := json.Marshal(fake.requests[0].Messages)
+	if !strings.Contains(string(kickoff), "Retries: 3.") || strings.Contains(string(kickoff), "Retries: 5.") || !strings.Contains(string(kickoff), "docs/limits.md as changed in this pull request") {
+		t.Fatalf("the review reads the pull request's file, not the stale page: %s", kickoff)
 	}
 }

@@ -490,7 +490,7 @@ func (s *runState) mapUnits(ctx context.Context) ([]api.IngestUnit, bool, error)
 			fmt.Fprintf(&existing, "- %s (%s) %s\n", u.Key, u.Kind, u.Title)
 		}
 	}
-	kickoff := fmt.Sprintf("Repository %s. Entrypoints: %s.\n\n## Existing product units (reuse their keys)\n%s\n## Entrypoint files\n%s\n",
+	kickoff := fmt.Sprintf("Repository %s. Entrypoints: %s.\n\n## Existing product units (reuse the key of a unit whose surface still exists; leave out units this repository no longer provides, which retires them)\n%s\n## Entrypoint files\n%s\n\nCommands, routes or pages kept only to print a removal or migration notice are not units.\n",
 		s.env.Info.RemoteKey, strings.Join(m.Code.Entrypoints, ", "), firstOf(existing.String(), "(none)\n"), strings.Join(entry, "\n"))
 	if kind := unitKind(m); kind != "" {
 		kickoff += "\nDefault unit kind: " + kind + "\n"

@@ -575,6 +575,7 @@ type claimPage struct {
 	slug     string
 	title    string
 	verbatim bool
+	path     string
 }
 
 func claimPages(ctx context.Context, in Input) ([]claimPage, error) {
@@ -625,14 +626,14 @@ func claimPages(ctx context.Context, in Input) ([]claimPage, error) {
 			if seen[p.ID] {
 				for i := range out {
 					if out[i].id == p.ID {
-						out[i].verbatim = true
+						out[i].verbatim, out[i].path = true, p.Lock.Path
 					}
 				}
 				continue
 			}
 			seen[p.ID] = true
 			added++
-			out = append(out, claimPage{id: p.ID, slug: p.Slug, title: p.Title, verbatim: true})
+			out = append(out, claimPage{id: p.ID, slug: p.Slug, title: p.Title, verbatim: true, path: p.Lock.Path})
 		}
 	}
 	return out, nil
@@ -651,12 +652,15 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 	bySlug := map[string]claimPage{}
 	writers := map[string]map[string]string{}
 	for _, p := range pages {
-		text, err := agent.PageText(ctx, in.Client, p.id, "draft")
+		text, skip, err := claimText(ctx, in, p)
 		if err != nil {
 			if api.StopsRun(err) || api.IsLicenseError(err) {
 				return err
 			}
 			rep.warn("claims: read page %s: %v", p.slug, err)
+			continue
+		}
+		if skip {
 			continue
 		}
 		byID[p.id] = p
@@ -714,6 +718,28 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 		}
 	}
 	return raiseHints(ctx, in, out, rep, hints)
+}
+
+func claimText(ctx context.Context, in Input, p claimPage) (string, bool, error) {
+	if p.verbatim && p.path != "" && in.ChangeSet != nil {
+		for _, f := range in.ChangeSet.Files {
+			if f.Path != strings.TrimPrefix(p.path, "./") {
+				continue
+			}
+			if f.Status == "D" {
+				return "", true, nil
+			}
+			data, ok, err := in.ReadFile(ctx, f.Path)
+			if err != nil {
+				return "", false, err
+			}
+			if ok {
+				return "(" + f.Path + " as changed in " + inThisChange(in) + "; it replaces this page " + whenMerged(in) + ")\n" + string(data), false, nil
+			}
+		}
+	}
+	text, err := agent.PageText(ctx, in.Client, p.id, "draft")
+	return text, false, err
 }
 
 func claimHint(f agent.ClaimFinding, page *api.PageRef, recipients []string) api.HintInput {

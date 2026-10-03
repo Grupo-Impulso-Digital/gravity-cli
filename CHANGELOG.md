@@ -58,6 +58,12 @@ Hardening of 1.0 after a documentation audit and the first production runs.
   warning instead of failing the whole batch (`has no recipient repository`);
   `forRepos` is limited to the product's repositories, and a refused batch is
   retried hint by hint.
+- `gravity check` reviews a locked verbatim page whose file the pull request
+  changes against the file as it will be imported, not the stale page, so a
+  pull request that fixes a contradiction no longer fails on it.
+- The unit mapper retires units whose surface the repository no longer
+  provides (commands kept only to print a removal notice are not units).
+- `docs/platform-authoring-api.md` describes the 1.x client instead of 0.x.
 - The v0.3.0 entry below said the action's `version` input defaulted to
   `latest`; it defaults to `0`.
 
