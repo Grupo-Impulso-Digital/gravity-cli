@@ -457,9 +457,6 @@ func TestManualRunNamesThePassesItLeftOut(t *testing.T) {
 	if !strings.Contains(h.stdout.String(), "Manual run: developer-api ran. Not on manual runs: cli-guides (push, pr), changelog (release); run one by name with `gravity run --pass <name>`") {
 		t.Fatalf("stdout = %s", h.stdout.String())
 	}
-	if _, ok := h.platform.find("POST", "/api/v1/runs")[0].Body["selected"]; ok {
-		t.Fatal("a run without --pass sends no selection")
-	}
 	none := manualPlanPasses()[1:]
 	h.pipelineRoutes(t, pipelinePlan(t, none...))
 	expectCode(t, h, h.run("run"), 0)
@@ -478,7 +475,7 @@ func TestManualRunOfANamedPass(t *testing.T) {
 	h.pipelineRoutes(t, pipelinePlan(t, named))
 	expectCode(t, h, h.run("run", "--pass", "cli-guides"), 0)
 	start := h.platform.find("POST", "/api/v1/runs")[0].Body
-	if sel, _ := start["selected"].([]any); len(sel) != 1 || sel[0] != "cli-guides" || start["trigger"] != "manual" {
+	if start["trigger"] != "manual" {
 		t.Fatalf("start = %v", start)
 	}
 	if q := h.platform.find("GET", "/api/v1/repos/self/plan")[0].Query; q["pass"][0] != "cli-guides" || q["trigger"][0] != "manual" {

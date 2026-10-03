@@ -139,8 +139,8 @@ func prepare(ctx context.Context, env *Env, opts Options, p *api.Plan) (*prepare
 }
 
 func surveyDepth(p *api.Plan) int {
-	if p.Repo.Survey != nil && p.Repo.Survey.MaxCommits > 0 {
-		return p.Repo.Survey.MaxCommits
+	if n := p.Capabilities.Limits.SurveyMaxCommits; n > 0 {
+		return n
 	}
 	return changeset.DefaultSurveyCommits
 }
@@ -233,7 +233,6 @@ func startRequest(env *Env, opts Options, p *api.Plan, prep *prepared) api.Start
 		ClientKey: env.key(), Trigger: opts.Trigger, Mode: opts.Mode, Origin: firstOf(opts.Origin, api.OriginLocal),
 		Branch: opts.Branch, HeadSHA: prep.headSHA, PR: opts.PR, CI: opts.CI,
 		CLI: api.CLIInfo{Version: strings.TrimPrefix(env.Generator, "gravity-cli/")}, Note: opts.Note, PlanHash: p.PlanHash,
-		Selected: opts.Passes,
 	}
 	if opts.Trigger == config.TriggerRelease {
 		req.Branch = ""

@@ -16,7 +16,7 @@ func newRunCmd(a *app) *cobra.Command {
 		Short: "Run the documentation pipeline for this repository",
 		Long: "Plan the passes for this trigger, resolve each pass's commit range, skip passes whose scope did not change, then run the rest inside one Gravity run whose changes are reviewed as a bundle.\n\n" +
 			"A run reads committed history only (up to HEAD, or --to): uncommitted changes are never sent, because every write cites the commit it comes from. Use `gravity preview` to see what your working tree would change.\n\n" +
-			"Outside CI the trigger is manual. A manual run runs the passes whose triggers allow it; `--pass <name>` runs that pass whatever its triggers (on servers that support it), and the output names the passes a manual run left out.",
+			"Outside CI, and on workflow_dispatch or any manual pipeline, the trigger is manual: it runs the passes whose triggers include manual, push or schedule, and the output names the passes it left out. `--pass <name>` runs that pass whatever its triggers (branch rules still apply).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validAnnotate(f.annotate); err != nil {

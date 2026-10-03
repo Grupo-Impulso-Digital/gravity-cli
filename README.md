@@ -250,9 +250,10 @@ Gravity does not fence pages per repository.
 ### `gravity run` outside CI
 
 Locally, and on a GitHub `workflow_dispatch` (or any manual pipeline), the
-trigger is `manual`. A manual run runs the passes whose triggers allow it and
-names the ones it left out; `gravity run --pass <name>` runs one pass whatever
-its triggers (Gravity servers older than this behaviour refuse it with a hint).
+trigger is `manual`. A manual run runs the passes whose triggers include
+`manual`, `push` or `schedule`, and names the ones it left out;
+`gravity run --pass <name>` runs one pass whatever its triggers (its branch
+rules still apply; a server older than this rule refuses it with a hint).
 A run reads committed history only: every write cites the commit it comes
 from, so uncommitted changes are not part of it, and `gravity run` warns when
 the working tree has some. `gravity preview` is the command that reads the

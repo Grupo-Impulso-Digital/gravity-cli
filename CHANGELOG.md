@@ -7,12 +7,12 @@ Hardening of 1.0 after a documentation audit and the first production runs.
 ### Fixed
 
 - A local `gravity run` (and a GitHub `workflow_dispatch`) no longer ends
-  silently with nothing written. A manual run names the passes it left out and
-  how to run one; `gravity run --pass <name>` asks the server to run that pass
-  whatever its triggers (the plan's `pass=` and the new `selected` field of
-  `POST /runs`), and fails with `pass_not_applicable` and a hint when the
-  server still refuses it. An unknown `--pass` fails with `pass_unknown`
-  instead of skipping everything.
+  silently with nothing written. With the matching platform release a manual
+  run runs the passes triggered on `manual`, `push` or `schedule`, and
+  `gravity run --pass <name>` runs that pass whatever its triggers; the CLI
+  names the passes a manual run left out, and fails with `pass_not_applicable`
+  and a hint when an older server still refuses a named pass. An unknown
+  `--pass` fails with `pass_unknown` instead of skipping everything.
 - `gravity run` warns about uncommitted changes: a run reads committed history
   only (`gravity preview` reads the working tree), and its help now says so.
 - `gravity check` no longer fails every pull request that changes a documented
@@ -32,9 +32,9 @@ Hardening of 1.0 after a documentation audit and the first production runs.
   exit `0` and a notice.
 - `code.include` is honoured: passes without `scope.paths` react to changes
   under it (plus `code.openapi`), and symbols are read only there.
-- The survey depth set on the repository in the app (`repo.survey.maxCommits`
-  in the plan) is used for passes without a watermark, unless a pass sets
-  `surveyCommits`.
+- The survey depth set on the repository in the app
+  (`capabilities.limits.surveyMaxCommits` in the plan) is used for passes
+  without a watermark, unless a pass sets `surveyCommits`.
 - `gravity logout` names the right screen for repository and organization
   tokens: Settings › CLI & machines, with its link; app links derived from the
   API host now also work for hosts like `api.gravity.<domain>`.

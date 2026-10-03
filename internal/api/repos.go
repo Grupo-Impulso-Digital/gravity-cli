@@ -402,20 +402,14 @@ type PlanPass struct {
 
 // PlanRepo is the repository section of a plan.
 type PlanRepo struct {
-	ID                  string      `json:"id"`
-	RemoteKey           string      `json:"remoteKey"`
-	Name                string      `json:"name"`
-	DefaultBranch       string      `json:"defaultBranch"`
-	AuthoritativeBranch string      `json:"authoritativeBranch"`
-	WebURL              string      `json:"webUrl,omitempty"`
-	ManifestHash        string      `json:"manifestHash,omitempty"`
-	AppURL              string      `json:"appUrl,omitempty"`
-	Survey              *RepoSurvey `json:"survey,omitempty"`
-}
-
-// RepoSurvey is the repository's survey setting: how many commits a pass without a watermark reads.
-type RepoSurvey struct {
-	MaxCommits int `json:"maxCommits"`
+	ID                  string `json:"id"`
+	RemoteKey           string `json:"remoteKey"`
+	Name                string `json:"name"`
+	DefaultBranch       string `json:"defaultBranch"`
+	AuthoritativeBranch string `json:"authoritativeBranch"`
+	WebURL              string `json:"webUrl,omitempty"`
+	ManifestHash        string `json:"manifestHash,omitempty"`
+	AppURL              string `json:"appUrl,omitempty"`
 }
 
 // Contributor is a repository's role on a unit.
@@ -484,6 +478,7 @@ type Limits struct {
 	LeaseTTLSeconds    int     `json:"leaseTtlSeconds"`
 	HeartbeatSeconds   int     `json:"heartbeatSeconds"`
 	MaxCostUSDPerRun   float64 `json:"maxCostUsdPerRun"`
+	SurveyMaxCommits   int     `json:"surveyMaxCommits,omitempty"`
 }
 
 // Capabilities are the per-organization capabilities of a plan.

@@ -387,11 +387,11 @@ func TestSurveyDepthComesFromTheRepositorySetting(t *testing.T) {
 		r.commit(fmt.Sprintf("feat: change %d", i), map[string]string{"api/openapi.yaml": spec + fmt.Sprintf("# %d\n", i)})
 	}
 	for _, tc := range []struct {
-		setting *api.RepoSurvey
+		setting int
 		want    int
-	}{{nil, 5}, {&api.RepoSurvey{MaxCommits: 2}, 2}} {
+	}{{0, 5}, {2, 2}} {
 		p := newPlatform(t)
-		p.plan.Repo.Survey = tc.setting
+		p.plan.Capabilities.Limits.SurveyMaxCommits = tc.setting
 		p.plan.Passes = []api.PlanPass{refPass("developer-api", "")}
 		opts := pushOpts()
 		opts.Mode = api.ModeDry

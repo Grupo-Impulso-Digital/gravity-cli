@@ -270,3 +270,24 @@ func TestDecideDefaultScopeFollowsCodeInclude(t *testing.T) {
 		})
 	}
 }
+
+func TestTriggerMatchesManualRuns(t *testing.T) {
+	cases := []struct {
+		triggers []string
+		trigger  string
+		want     bool
+	}{
+		{[]string{"push", "pr"}, "manual", true},
+		{[]string{"schedule"}, "manual", true},
+		{[]string{"manual"}, "manual", true},
+		{[]string{"pr"}, "manual", false},
+		{[]string{"release"}, "manual", false},
+		{[]string{"pr"}, "push", false},
+		{[]string{"push"}, "schedule", false},
+	}
+	for _, tc := range cases {
+		if got := TriggerMatches(tc.triggers, tc.trigger); got != tc.want {
+			t.Errorf("TriggerMatches(%v, %s) = %v, want %v", tc.triggers, tc.trigger, got, tc.want)
+		}
+	}
+}

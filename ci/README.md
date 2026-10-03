@@ -30,7 +30,7 @@ Jenkins and CircleCI snippets are printed by `gravity init --ci jenkins` and
 | Push to another branch | write, not authoritative | Passes that apply to that branch run; the manifest and the inventory are not updated from it. |
 | Release tag (`v*`) | write | Changelog pages for the release; release-only passes. |
 | Schedule | write | Passes that list the `schedule` trigger. |
-| Manual (`workflow_dispatch`, GitLab web/API pipelines, Azure manual runs) | write | Passes whose triggers allow a manual run; the log names the passes it left out. `args: --pass <name>` runs one pass whatever its triggers. |
+| Manual (`workflow_dispatch`, GitLab web/API pipelines, Azure manual runs) | write | Passes whose triggers include `manual`, `push` or `schedule`; the log names the passes it left out. `args: --pass <name>` runs one pass whatever its triggers. |
 
 Deploys are never gated by documentation writes. Only `check` findings exit `1`.
 

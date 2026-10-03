@@ -301,10 +301,14 @@ to `debug.ReadBuildInfo`.
   watermarks advance to commits, so a run covers committed history only and
   warns about uncommitted changes; `gravity preview` is the working-tree view.
 - **Manual runs and `--pass`.** Trigger matching is the server's
-  (`evaluateSkip`): the CLI sends `pass=` on the plan and `selected` on
-  `POST /runs`, and fails a manual run whose named pass the plan still skips
-  for `disabled`, `trigger_mismatch` or `branch_mismatch` (`pass_not_applicable`)
-  instead of writing nothing. An unknown `--pass` is `pass_unknown`.
+  (`evaluateSkip`): a write-mode manual run runs passes triggered on `manual`,
+  `push` or `schedule`, and a pass named in the plan's `pass=` runs whatever
+  its triggers (`POST /runs` recovers the selection from the `not_selected`
+  skips the CLI sends). `plan.TriggerMatches` mirrors the rule for local
+  overlays. The CLI fails a manual run whose named pass the plan still skips
+  for `disabled`, `trigger_mismatch` or `branch_mismatch` (`pass_not_applicable`,
+  older servers) instead of writing nothing; an unknown `--pass` is
+  `pass_unknown`.
 - **Check drift has a baseline.** Drift compares api blocks with the range's
   base and head: a change a push-triggered reference pass will apply is a note,
   drift that predates the range is a warning, and only a change nothing will
