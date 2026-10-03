@@ -478,6 +478,7 @@ type Limits struct {
 	LeaseTTLSeconds    int     `json:"leaseTtlSeconds"`
 	HeartbeatSeconds   int     `json:"heartbeatSeconds"`
 	MaxCostUSDPerRun   float64 `json:"maxCostUsdPerRun"`
+	SurveyMaxCommits   int     `json:"surveyMaxCommits,omitempty"`
 }
 
 // Capabilities are the per-organization capabilities of a plan.

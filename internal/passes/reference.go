@@ -537,7 +537,7 @@ func referenceProse(ctx context.Context, in Input, out Sink, rep *Report, p *ref
 }
 
 func aiBlock(in Input, e agent.BlockEdit) api.ChangeBlock {
-	var content any = e.Content
+	content := agent.NormalizeContent(e.Type, e.Content)
 	auds := e.Audiences
 	if len(auds) == 0 {
 		auds = in.Audiences()

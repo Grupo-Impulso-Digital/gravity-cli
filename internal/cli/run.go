@@ -14,8 +14,10 @@ func newRunCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the documentation pipeline for this repository",
-		Long:  "Plan the passes for this trigger, resolve each pass's commit range, skip passes whose scope did not change, then run the rest inside one Gravity run whose changes are reviewed as a bundle.",
-		Args:  cobra.NoArgs,
+		Long: "Plan the passes for this trigger, resolve each pass's commit range, skip passes whose scope did not change, then run the rest inside one Gravity run whose changes are reviewed as a bundle.\n\n" +
+			"A run reads committed history only (up to HEAD, or --to): uncommitted changes are never sent, because every write cites the commit it comes from. Use `gravity preview` to see what your working tree would change.\n\n" +
+			"Outside CI, and on workflow_dispatch or any manual pipeline, the trigger is manual: it runs the passes whose triggers include manual, push or schedule, and the output names the passes it left out. `--pass <name>` runs that pass whatever its triggers (branch rules still apply).",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validAnnotate(f.annotate); err != nil {
 				return err
@@ -27,6 +29,11 @@ func newRunCmd(a *app) *cobra.Command {
 			}
 			if err != nil {
 				return err
+			}
+			if !s.ci.IsCI() {
+				if dirty, derr := s.info.repo.Dirty(ctx); derr == nil && dirty {
+					a.ui.Warn("uncommitted_changes", "uncommitted changes are not part of this run, which reads committed history only; commit them, or use `gravity preview` to see what they would change")
+				}
 			}
 			res, err := a.execute(ctx, s)
 			if res != nil && res.Plan != nil {
@@ -42,7 +49,7 @@ func newRunCmd(a *app) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringSliceVar(&f.passes, "pass", nil, "run only these passes")
+	fl.StringSliceVar(&f.passes, "pass", nil, "run only these passes (on a manual run, whatever their triggers)")
 	fl.StringVar(&f.trigger, "trigger", "", "override the detected trigger (pr, push, release, schedule, manual)")
 	fl.StringVar(&f.branch, "branch", "", "override the detected branch")
 	fl.StringVar(&f.from, "from", "", "start of an explicit range (manual runs)")

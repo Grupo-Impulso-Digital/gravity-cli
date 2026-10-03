@@ -60,6 +60,7 @@ type Context struct {
 	RunURL   string `json:"runUrl,omitempty"`
 	WebURL   string `json:"webUrl,omitempty"`
 	Detached bool   `json:"detached,omitempty"`
+	Fork     bool   `json:"fork,omitempty"`
 }
 
 // IsCI reports whether the job runs on a CI provider.
@@ -279,12 +280,14 @@ func github(env Env) (Context, error) {
 			Number  int    `json:"number"`
 			HTMLURL string `json:"html_url"`
 			Head    struct {
-				SHA string `json:"sha"`
-				Ref string `json:"ref"`
+				SHA  string      `json:"sha"`
+				Ref  string      `json:"ref"`
+				Repo *githubRepo `json:"repo"`
 			} `json:"head"`
 			Base struct {
-				Ref string `json:"ref"`
-				SHA string `json:"sha"`
+				Ref  string      `json:"ref"`
+				SHA  string      `json:"sha"`
+				Repo *githubRepo `json:"repo"`
 			} `json:"base"`
 		} `json:"pull_request"`
 		Release *struct {
@@ -314,6 +317,7 @@ func github(env Env) (Context, error) {
 			if pr.Head.Ref != "" {
 				c.Branch = pr.Head.Ref
 			}
+			c.Fork = githubFork(pr.Head.Repo, pr.Base.Repo)
 		}
 		if c.PR.TargetBranch == "" {
 			c.PR.TargetBranch = env.get("GITHUB_BASE_REF")
@@ -340,6 +344,20 @@ func github(env Env) (Context, error) {
 	return c, nil
 }
 
+type githubRepo struct {
+	FullName string `json:"full_name"`
+}
+
+func githubFork(head, base *githubRepo) bool {
+	if base == nil || base.FullName == "" {
+		return false
+	}
+	if head == nil {
+		return true
+	}
+	return !strings.EqualFold(head.FullName, base.FullName)
+}
+
 func gitlab(env Env) Context {
 	c := Context{
 		Provider: GitLab, Event: env.get("CI_PIPELINE_SOURCE"),
@@ -359,6 +377,8 @@ func gitlab(env Env) Context {
 		if src := env.get("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"); src != "" {
 			c.Branch = src
 		}
+		source, target := env.get("CI_MERGE_REQUEST_SOURCE_PROJECT_ID"), env.get("CI_MERGE_REQUEST_PROJECT_ID")
+		c.Fork = source != "" && target != "" && source != target
 	case "schedule":
 		c.Trigger = TriggerSchedule
 	case "web", "api", "trigger", "pipeline", "chat":
@@ -424,6 +444,7 @@ func azure(env Env) Context {
 		if src := env.get("SYSTEM_PULLREQUEST_SOURCEBRANCH"); src != "" {
 			c.Branch = strings.TrimPrefix(src, "refs/heads/")
 		}
+		c.Fork = truthy(env.get("SYSTEM_PULLREQUEST_ISFORK"))
 	case "Schedule":
 		c.Trigger = TriggerSchedule
 	case "Manual":
@@ -455,6 +476,7 @@ func jenkins(env Env) Context {
 		if src := env.get("CHANGE_BRANCH"); src != "" {
 			c.Branch = src
 		}
+		c.Fork = env.get("CHANGE_FORK") != ""
 	case env.get("TAG_NAME") != "":
 		c.Trigger = TriggerRelease
 		c.Tag = env.get("TAG_NAME")
@@ -474,6 +496,7 @@ func circleci(env Env) Context {
 		u := env.get("CIRCLE_PULL_REQUEST")
 		n, _ := strconv.Atoi(path.Base(strings.TrimRight(u, "/")))
 		c.PR = &PR{Number: n, URL: u, HeadSHA: c.HeadSHA}
+		c.Fork = env.get("CIRCLE_PR_REPONAME") != "" || env.get("CIRCLE_PR_USERNAME") != ""
 	case env.get("CIRCLE_TAG") != "":
 		c.Trigger = TriggerRelease
 		c.Tag = env.get("CIRCLE_TAG")

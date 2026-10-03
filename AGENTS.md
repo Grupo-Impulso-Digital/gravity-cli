@@ -134,8 +134,11 @@ to `debug.ReadBuildInfo`.
   wrap an underlying error (preserve the chain — `errorlint` guards it). Error
   strings are lowercase and unpunctuated. No `panic` in non-test code.
 - **Exit-code contract** (`internal/cli/exit.go`): `0` success/no findings,
-  `1` findings produced, `2` operational error (auth/network/bad input),
-  `3` license refusal; precedence 3 > 2 > 1 > 0. Commands return an
+  `1` findings produced, `2` operational error (network/bad input),
+  `3` license refusal, `4` no usable credentials (`token_missing`,
+  `token_unresolved`, any `401`); precedence 3 > 2 > 1 > 0, and `4` ends a
+  command before it does anything else. Only a fork pull request detected by
+  `internal/ci` (`Context.Fork`) may skip without a token. Commands return an
   `*ExitError` (with an `ErrCode` for the `--json` envelope); never call
   `os.Exit` inside a command.
 - **License refusals** (`internal/api/license.go`): a 403 whose envelope code is
@@ -190,11 +193,11 @@ to `debug.ReadBuildInfo`.
   dependency needs the same one-line justification here, in the same commit.
 - **Testing**: stdlib `testing` + `httptest` mocks, table-driven where it fits.
   No live-server integration tests.
-- **Capabilities, not 404s**: server features come from `/whoami` (and
-  `connect.serverFeatures` / `plan.capabilities`). CLI 1.0 refuses a server
+- **Capabilities, not 404s**: server features come from `/whoami` and
+  `plan.capabilities` (connect's `serverFeatures` is decoded, not consulted). CLI 1.0 refuses a server
   without `pipelines`. A `404` is always an error (`repo_not_connected` hints
   `gravity init`), never "feature unavailable".
-- **Retries** (`internal/api`): `429` and `5xx` are retried three times with
+- **Retries** (`internal/api`): `429` and `5xx` get up to three attempts with
   exponential backoff from 1 s, honoring `Retry-After`; network errors are
   retried for GET only. `lease_lost` and `run_not_running` stop a run without a
   finish call (`api.StopsRun`).
@@ -294,6 +297,25 @@ to `debug.ReadBuildInfo`.
   repository token in `GRAVITY_TOKEN`.
 - **`read_file` reads at the end of the range under review** (`--to`, else
   `HEAD`), not the working tree, so the agent stays deterministic in CI.
+- **`gravity run` never reads the working tree.** Writes cite commits and
+  watermarks advance to commits, so a run covers committed history only and
+  warns about uncommitted changes; `gravity preview` is the working-tree view.
+- **Manual runs and `--pass`.** Trigger matching is the server's
+  (`evaluateSkip`): a write-mode manual run runs passes triggered on `manual`,
+  `push` or `schedule`, and a pass named in the plan's `pass=` runs whatever
+  its triggers (`POST /runs` recovers the selection from the `not_selected`
+  skips the CLI sends). `plan.TriggerMatches` mirrors the rule for local
+  overlays. The CLI fails a manual run whose named pass the plan still skips
+  for `disabled`, `trigger_mismatch` or `branch_mismatch` (`pass_not_applicable`,
+  older servers) instead of writing nothing; an unknown `--pass` is
+  `pass_unknown`.
+- **Check drift has a baseline.** Drift compares api blocks with the range's
+  base and head: a change a push-triggered reference pass will apply is a note,
+  drift that predates the range is a warning, and only a change nothing will
+  follow is an error.
+- **`init` and 0.x pipelines.** `cisetup.LegacyPipelines` finds CI files that
+  still run gravity 0.x; init then keeps `GRAVITY_TOKEN` (0.x refuses
+  repository tokens) unless `--replace-secret`.
 - **No live integration tests**: server interactions use `httptest` mocks.
 - **`gosec` is intentionally not enabled yet**; the git `exec.Command` and
   computed-path reads are sandboxed.

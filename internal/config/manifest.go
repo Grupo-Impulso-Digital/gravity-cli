@@ -130,6 +130,23 @@ func (m *Manifest) CodeExclude() []string {
 	return m.Code.Exclude
 }
 
+// CodeInclude returns code.include, or nil.
+func (m *Manifest) CodeInclude() []string {
+	if m == nil || m.Code == nil {
+		return nil
+	}
+	return m.Code.Include
+}
+
+// DefaultScope returns the paths a pass without scope.paths reacts to: code.include plus code.openapi, else everything.
+func (m *Manifest) DefaultScope() []string {
+	include := m.CodeInclude()
+	if len(include) == 0 {
+		return []string{"**"}
+	}
+	return append(append([]string{}, include...), m.OpenAPIFiles()...)
+}
+
 // OpenAPIFiles returns code.openapi, or nil.
 func (m *Manifest) OpenAPIFiles() []string {
 	if m == nil || m.Code == nil {

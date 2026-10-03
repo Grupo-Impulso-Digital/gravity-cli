@@ -72,7 +72,7 @@ func prepare(ctx context.Context, env *Env, opts Options, p *api.Plan) (*prepare
 	prep := &prepared{
 		resolver: changeset.NewResolver(env.Repo),
 		builder: changeset.NewBuilder(env.Repo, changeset.Options{
-			Trigger: opts.Trigger, Branch: opts.Branch, CodeExclude: m.CodeExclude(), OpenAPI: specPatterns(p, m),
+			Trigger: opts.Trigger, Branch: opts.Branch, CodeExclude: m.CodeExclude(), CodeInclude: m.CodeInclude(), OpenAPI: specPatterns(p, m),
 			DocsInclude: docsInclude, DocsExclude: docsExclude, Inventory: p.Inventory.Units, RepoKey: env.Info.RemoteKey, RepoName: env.Info.Name,
 		}),
 	}
@@ -88,7 +88,7 @@ func prepare(ctx context.Context, env *Env, opts Options, p *api.Plan) (*prepare
 			Trigger: opts.Trigger, Head: opts.Head, PRBase: opts.PRBase, Tag: opts.Tag,
 			From: opts.From, To: opts.To, WorkingTree: opts.WorkingTree,
 			TagPattern: optionString(pp, "tagPattern", changeset.DefaultTagPattern),
-			SurveyMax:  optionInt(pp, "surveyCommits", changeset.DefaultSurveyCommits),
+			SurveyMax:  optionInt(pp, "surveyCommits", surveyDepth(p)),
 		}
 		if opts.PR != nil && opts.From == "" {
 			in.PRTarget = opts.PR.TargetBranch
@@ -136,6 +136,13 @@ func prepare(ctx context.Context, env *Env, opts Options, p *api.Plan) (*prepare
 		prep.inventory = units
 	}
 	return prep, nil
+}
+
+func surveyDepth(p *api.Plan) int {
+	if n := p.Capabilities.Limits.SurveyMaxCommits; n > 0 {
+		return n
+	}
+	return changeset.DefaultSurveyCommits
 }
 
 func optionString(pp api.PlanPass, key, def string) string {

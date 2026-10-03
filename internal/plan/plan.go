@@ -165,7 +165,7 @@ func Applies(pp api.PlanPass, trigger, branch, defaultBranch string) (bool, stri
 	if !pp.Enabled {
 		reasons[api.SkipDisabled] = true
 	}
-	if trigger != "" && !contains(pp.Triggers, trigger) {
+	if trigger != "" && !TriggerMatches(pp.Triggers, trigger) {
 		reasons[api.SkipTriggerMismatch] = true
 	}
 	if trigger != config.TriggerRelease && !BranchMatches(pp.Branches, branch, defaultBranch) {
@@ -186,6 +186,14 @@ func Applies(pp api.PlanPass, trigger, branch, defaultBranch string) (bool, stri
 		}
 	}
 	return true, ""
+}
+
+// TriggerMatches reports whether a pass with these triggers runs on trigger; a manual run also runs push and schedule passes.
+func TriggerMatches(triggers []string, trigger string) bool {
+	if contains(triggers, trigger) {
+		return true
+	}
+	return trigger == config.TriggerManual && (contains(triggers, config.TriggerPush) || contains(triggers, config.TriggerSchedule))
 }
 
 // BranchMatches applies a pass branch filter; an empty filter means the default branch only.

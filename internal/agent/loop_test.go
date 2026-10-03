@@ -569,3 +569,30 @@ func TestRunner_TokenBudgetForcesSubmitThenStops(t *testing.T) {
 		t.Fatalf("a forced turn past the budget must stop: %+v", res)
 	}
 }
+
+func TestRunner_ForcedToolChoiceRejectedUpstreamFallsBack(t *testing.T) {
+	var reqs []api.MessagesRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req api.MessagesRequest
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+		reqs = append(reqs, req)
+		w.Header().Set("Content-Type", "application/json")
+		if req.ToolChoice != nil && req.ToolChoice.Type == api.ToolChoiceTool {
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"code": "provider_error", "message": "Upstream provider rejected the request (HTTP 400)"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(findingsUse("tu_f"))
+	}))
+	defer srv.Close()
+	client := api.New(srv.URL, "test-token")
+	client.Retry = api.RetryPolicy{Attempts: 1}
+	runner := &agent.Runner{Client: client, MaxIterations: 1, System: "base", Tools: []agent.Tool{agent.ReportFindingsTool()}}
+	res, err := runner.Run(context.Background(), "go")
+	if err != nil || res.TerminalTool != agent.ToolReportFindings || len(reqs) != 2 {
+		t.Fatalf("a gateway provider_error on a forced turn falls back once: err=%v requests=%d", err, len(reqs))
+	}
+}

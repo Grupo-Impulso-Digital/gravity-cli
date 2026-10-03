@@ -602,8 +602,30 @@ func raiseHints(ctx context.Context, in Input, out Sink, rep *Report, hints []ap
 		rep.warn("%d hint(s) for other repositories not sent: this server does not accept cross-repo hints", len(hints))
 		return nil
 	}
+	hints, dropped := deliverableHints(in, hints)
+	if dropped > 0 {
+		rep.warn("%d hint(s) not sent: no other repository of this product contributes to the unit", dropped)
+	}
+	if len(hints) == 0 {
+		return nil
+	}
 	sort.SliceStable(hints, func(i, j int) bool { return hints[i].Claim < hints[j].Claim })
 	res, err := out.Hints(ctx, hints)
+	if err != nil && api.HasCode(err, api.CodeBadRequest) && len(hints) > 1 {
+		var created []string
+		for _, h := range hints {
+			one, oneErr := out.Hints(ctx, []api.HintInput{h})
+			if oneErr != nil {
+				if api.StopsRun(oneErr) || api.IsLicenseError(oneErr) {
+					return oneErr
+				}
+				rep.warn("raise hint %q: %v", h.Claim, oneErr)
+				continue
+			}
+			created = append(created, one.Created...)
+		}
+		res, err = &api.HintsResult{Created: created}, nil
+	}
 	if err != nil {
 		if api.StopsRun(err) || api.IsLicenseError(err) {
 			return err
@@ -616,4 +638,51 @@ func raiseHints(ctx context.Context, in Input, out Sink, rep *Report, hints []ap
 		rep.Counts.Hints += len(hints)
 	}
 	return nil
+}
+
+func deliverableHints(in Input, hints []api.HintInput) ([]api.HintInput, int) {
+	if in.Plan == nil {
+		return hints, 0
+	}
+	siblings := map[string]string{}
+	add := func(name, remoteKey string) {
+		if remoteKey == "" || remoteKey == in.Info.RemoteKey {
+			return
+		}
+		siblings[remoteKey] = remoteKey
+		if name != "" {
+			siblings[name] = remoteKey
+		}
+	}
+	for _, s := range in.Plan.Siblings {
+		add(s.Name, s.RemoteKey)
+	}
+	for _, u := range in.Plan.Inventory.Units {
+		for _, c := range u.Contributors {
+			add(c.Repo.Name, c.Repo.RemoteKey)
+		}
+	}
+	if len(siblings) == 0 {
+		return nil, len(hints)
+	}
+	own := NewOwnership(in.Plan, in.Info)
+	out := make([]api.HintInput, 0, len(hints))
+	dropped := 0
+	for _, h := range hints {
+		var to []string
+		for _, r := range h.ForRepos {
+			if key, ok := siblings[r]; ok {
+				to = append(to, key)
+			}
+		}
+		h.ForRepos = to
+		switch {
+		case len(to) > 0, h.PageID != "" && h.BlockKey != "",
+			h.UnitKey != "" && len(own.Others(h.UnitKey, api.RoleImplements, api.RoleDeclares, api.RoleDocuments)) > 0:
+			out = append(out, h)
+		default:
+			dropped++
+		}
+	}
+	return out, dropped
 }

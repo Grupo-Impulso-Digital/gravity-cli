@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/auth"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ci"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/passes"
@@ -93,14 +92,19 @@ func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipeline
 	if m != nil {
 		apiURL = m.APIURL
 	}
+	fork := opts.Trigger == config.TriggerPR && c.IsCI() && c.Fork
 	creds, err := a.credentials(apiURL)
 	if err != nil {
+		var ee *ExitError
+		if fork && errors.As(err, &ee) && ee.ErrCode == "token_unresolved" {
+			return s, errForkPR
+		}
 		return nil, err
 	}
-	if creds.Token == "" && opts.Trigger == config.TriggerPR && creds.TokenSource != auth.SourceFlag {
+	if fork && creds.Token == "" {
 		return s, errForkPR
 	}
-	if err := requireToken(creds); err != nil {
+	if err := a.requireToken(creds); err != nil {
 		return nil, err
 	}
 	s.client = a.client(creds)
@@ -260,7 +264,7 @@ func principalRepoID(who *api.WhoAmI) string {
 }
 
 func (a *app) forkPR(s *pipelineSession) error {
-	msg := "No Gravity token in this pull request run (secrets are not shared with forks); skipping the doc check"
+	msg := "This pull request comes from a fork, and CI does not share secrets with forks, so there is no Gravity token; skipping the doc check"
 	a.ui.Warn("fork_pr_no_token", msg)
 	if path := a.env("GITHUB_STEP_SUMMARY"); path != "" && s.ci.Provider == ci.GitHub {
 		if err := report.AppendFile(path, "### Gravity\n\n"+msg+"."); err != nil {
@@ -279,9 +283,14 @@ func validAnnotate(v string) error {
 }
 
 func runError(err error) error {
+	var se *engine.SelectionError
 	switch {
 	case err == nil:
 		return nil
+	case errors.As(err, &se) && se.Reason == engine.SelectionUnknown:
+		return &ExitError{Code: CodeError, ErrCode: "pass_unknown", Err: err}
+	case errors.As(err, &se):
+		return &ExitError{Code: CodeError, ErrCode: "pass_not_applicable", Err: err}
 	case errors.Is(err, engine.ErrLeaseTimeout):
 		return &ExitError{Code: CodeError, ErrCode: api.CodeLeaseHeld, Err: err}
 	case errors.Is(err, engine.ErrStopped) && errors.Is(err, api.ErrLeaseLost):
@@ -399,6 +408,7 @@ func (a *app) printRun(res *engine.Result, info *repoInfo) {
 		}
 		p.Println("  %s handoff: %s %s moves from %s to %s (%s)", p.Mark(ui.MarkInfo), h.UnitKey, h.Role, h.From, h.To, when)
 	}
+	a.manualHint(res)
 	if p.Interactive() {
 		a.runCard(res)
 		return
@@ -408,6 +418,30 @@ func (a *app) printRun(res *engine.Result, info *repoInfo) {
 	} else if res.Run != nil && res.Run.AppURL != "" {
 		p.Println("Run: %s", res.Run.AppURL)
 	}
+}
+
+func (a *app) manualHint(res *engine.Result) {
+	if res.Trigger != ci.TriggerManual || res.Mode != api.ModeWrite || res.Plan == nil {
+		return
+	}
+	var ran, other []string
+	for _, pp := range res.Plan.Passes {
+		switch {
+		case pp.Applies:
+			ran = append(ran, pp.Name)
+		case pp.SkipReason == api.SkipTriggerMismatch:
+			other = append(other, pp.Name+" ("+firstNonEmpty(strings.Join(pp.Triggers, ", "), "no triggers")+")")
+		}
+	}
+	if len(other) == 0 {
+		return
+	}
+	p := a.ui
+	if len(ran) == 0 {
+		p.Println("%s Nothing ran: no pass runs on a manual run here. Not on manual runs: %s. Run one by name with `gravity run --pass <name>`.", p.Mark(ui.MarkInfo), strings.Join(other, ", "))
+		return
+	}
+	p.Println("%s Manual run: %s ran. Not on manual runs: %s; run one by name with `gravity run --pass <name>`.", p.Mark(ui.MarkInfo), strings.Join(ran, ", "), strings.Join(other, ", "))
 }
 
 func (a *app) runCard(res *engine.Result) {
@@ -467,7 +501,7 @@ func (a *app) finishPipeline(res *engine.Result, strict bool, extra error) error
 	msg := "one or more passes failed"
 	switch code {
 	case CodeFindings:
-		errCode, msg = "findings", findingsMessage(res.Findings())
+		errCode, msg = "findings", findingsMessage(res)
 	case CodeLicense:
 		errCode, msg = api.CodeModuleDisabled, "a pass needs a module this organization does not have"
 	default:
@@ -484,11 +518,20 @@ func (a *app) finishPipeline(res *engine.Result, strict bool, extra error) error
 	return ee
 }
 
-func findingsMessage(findings []api.Finding) string {
+func findingsMessage(res *engine.Result) string {
 	n := 0
-	for _, f := range findings {
-		if f.Severity == api.SeverityError {
-			n++
+	for _, p := range res.Passes {
+		if p.Report == nil || !p.Report.Failing {
+			continue
+		}
+		want := map[string]bool{}
+		for _, c := range p.Report.FailOn {
+			want[c] = true
+		}
+		for _, f := range p.Report.Findings {
+			if f.Severity == api.SeverityError && want[passes.Category(f.Code)] {
+				n++
+			}
 		}
 	}
 	if n == 1 {

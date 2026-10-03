@@ -379,3 +379,52 @@ func TestParallelPassesKeepPlanOrder(t *testing.T) {
 		t.Fatalf("names = %v", names)
 	}
 }
+
+func TestSurveyDepthComesFromTheRepositorySetting(t *testing.T) {
+	r := newRepo(t)
+	r.commit("init", map[string]string{"api/openapi.yaml": spec})
+	for i := 0; i < 4; i++ {
+		r.commit(fmt.Sprintf("feat: change %d", i), map[string]string{"api/openapi.yaml": spec + fmt.Sprintf("# %d\n", i)})
+	}
+	for _, tc := range []struct {
+		setting int
+		want    int
+	}{{0, 5}, {2, 2}} {
+		p := newPlatform(t)
+		p.plan.Capabilities.Limits.SurveyMaxCommits = tc.setting
+		p.plan.Passes = []api.PlanPass{refPass("developer-api", "")}
+		opts := pushOpts()
+		opts.Mode = api.ModeDry
+		res, err := run.Execute(context.Background(), newEnv(t, p, r, manifest(t, "")).Env, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Range == nil || res.Range.Kind != api.RangeSurvey || res.Commits != tc.want {
+			t.Fatalf("setting %+v: range %+v, %d commits, want %d", tc.setting, res.Range, res.Commits, tc.want)
+		}
+	}
+}
+
+func TestNamedPassesAreChecked(t *testing.T) {
+	r := newRepo(t)
+	r.commit("init", map[string]string{"api/openapi.yaml": spec})
+	p := newPlatform(t)
+	off := refPass("developer-api", "")
+	off.Applies, off.SkipReason, off.Triggers = false, api.SkipTriggerMismatch, []string{"push", "pr"}
+	p.plan.Passes = []api.PlanPass{off}
+	opts := pushOpts()
+	opts.Trigger, opts.Passes = "manual", []string{"developer-api"}
+	_, err := run.Execute(context.Background(), newEnv(t, p, r, manifest(t, "")).Env, opts)
+	var se *run.SelectionError
+	if !errors.As(err, &se) || se.Reason != api.SkipTriggerMismatch {
+		t.Fatalf("err = %v", err)
+	}
+	opts.Trigger = "push"
+	if _, err := run.Execute(context.Background(), newEnv(t, p, r, manifest(t, "")).Env, opts); err != nil {
+		t.Fatalf("a CI trigger never fails on a named pass that does not apply: %v", err)
+	}
+	opts.Passes = []string{"nope"}
+	if _, err := run.Execute(context.Background(), newEnv(t, p, r, manifest(t, "")).Env, opts); !errors.As(err, &se) || se.Reason != run.SelectionUnknown {
+		t.Fatalf("err = %v", err)
+	}
+}

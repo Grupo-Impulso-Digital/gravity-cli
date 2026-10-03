@@ -8,6 +8,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/glob"
@@ -98,7 +99,8 @@ func (Check) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			return rep, err
 		}
 	}
-	rep.Failing = Failing(rep.Findings, FailOn(in))
+	rep.FailOn = FailOn(in)
+	rep.Failing = Failing(rep.Findings, rep.FailOn)
 	switch n := len(rep.Findings); n {
 	case 0:
 		rep.Summary = "no findings"
@@ -119,7 +121,19 @@ type ownOp struct {
 	spec string
 }
 
-func ownOperations(ctx context.Context, in Input) (map[string]ownOp, error) {
+type specOps struct {
+	head map[string]ownOp
+	base map[string]ownOp
+}
+
+func (o specOps) changed(key string) bool {
+	h, atHead := o.head[key]
+	b, atBase := o.base[key]
+	return atHead != atBase || h.hash != b.hash
+}
+
+func ownOperations(ctx context.Context, in Input) (specOps, error) {
+	out := specOps{head: map[string]ownOp{}, base: map[string]ownOp{}}
 	sources := []SpecSource{}
 	seen := map[string]bool{}
 	addSrc := func(s SpecSource) {
@@ -140,24 +154,75 @@ func ownOperations(ctx context.Context, in Input) (map[string]ownOp, error) {
 			}
 		}
 	}
-	ops := map[string]ownOp{}
 	if len(sources) == 0 {
-		return ops, nil
+		return out, nil
 	}
 	specs, _, err := ResolveSpecs(ctx, in, sources)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	for _, sf := range specs {
-		for _, op := range sf.Ops {
-			b, err := docs.APIBlock(op, "")
-			if err != nil {
-				return nil, err
+		for _, side := range []struct {
+			ops []checks.OperationDetail
+			to  map[string]ownOp
+		}{{sf.Ops, out.head}, {sf.Base, out.base}} {
+			for _, op := range side.ops {
+				b, err := docs.APIBlock(op, "")
+				if err != nil {
+					return out, err
+				}
+				side.to[b.Key] = ownOp{hash: b.SourceBinding.Hash, unit: b.Units[0], spec: sf.File}
 			}
-			ops[b.Key] = ownOp{hash: b.SourceBinding.Hash, unit: b.Units[0], spec: sf.File}
 		}
 	}
-	return ops, nil
+	return out, nil
+}
+
+func updatingPass(in Input, spec, spaceID string) string {
+	if in.Plan == nil {
+		return ""
+	}
+	for _, pp := range in.Plan.Passes {
+		if pp.Kind != config.KindReference || !pp.Enabled || pp.Target.Status != api.TargetOK || pp.Target.Space == nil || spaceID != "" && pp.Target.Space.ID != spaceID {
+			continue
+		}
+		if in.Trigger == config.TriggerPR {
+			if !containsString(pp.Triggers, config.TriggerPush) || pp.SkipReason == api.SkipBranchMismatch {
+				continue
+			}
+		} else if !pp.Applies {
+			continue
+		}
+		for _, src := range ReferenceSources(pp, in.Manifest) {
+			if specMatch(strings.TrimPrefix(src.Path, "./"), spec) {
+				return pp.Name
+			}
+		}
+	}
+	return ""
+}
+
+func containsString(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func whenMerged(in Input) string {
+	if in.Trigger == config.TriggerPR {
+		return "on merge"
+	}
+	return "when it runs"
+}
+
+func inThisChange(in Input) string {
+	if in.Trigger == config.TriggerPR {
+		return "this pull request"
+	}
+	return "this range"
 }
 
 func ownRoles(in Input) map[string]map[string]bool {
@@ -203,12 +268,14 @@ func checkDrift(ctx context.Context, in Input, rep *Report) error {
 	if err != nil {
 		return err
 	}
-	if len(ops) == 0 {
+	if len(ops.head)+len(ops.base) == 0 {
 		return nil
 	}
 	ourUnits := map[string]bool{}
-	for _, op := range ops {
-		ourUnits[op.unit] = true
+	for _, side := range []map[string]ownOp{ops.head, ops.base} {
+		for _, op := range side {
+			ourUnits[op.unit] = true
+		}
 	}
 	roles := ownRoles(in)
 	for _, spaceID := range checkSpaces(in) {
@@ -243,24 +310,47 @@ func checkDrift(ctx context.Context, in Input, rep *Report) error {
 				if b.Type != "api" || b.SourceBinding == nil || (b.SourceBinding.Kind != "endpoint" && b.SourceBinding.Kind != "cli") {
 					continue
 				}
-				op, ours := ops[b.Key]
-				switch {
-				case ours && b.SourceBinding.Kind == "endpoint" && b.SourceBinding.Hash != op.hash:
-					rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityError, Code: CodeDrift, Title: fmt.Sprintf("%s: %s is out of date", p.Title, b.SourceBinding.Ref), Detail: "The api block no longer matches " + op.spec + "; the reference pass rewrites it.", File: op.spec, Page: ref, BlockKey: b.Key, UnitKey: op.unit})
-				case ours && b.SourceBinding.Kind == "cli":
-					rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityWarning, Code: CodeDrift, Title: fmt.Sprintf("%s: %s was written by gravity v0.x", p.Title, b.Key), Detail: "The next reference run rewrites it with an endpoint binding.", Page: ref, BlockKey: b.Key, UnitKey: op.unit})
-				case !ours && blockIsOurs(b, in, roles):
-					units := blockUnits(b)
-					if owners := otherOwners(in, units); len(owners) > 0 {
-						rep.Notes = append(rep.Notes, api.Note{Title: fmt.Sprintf("%s documents %s, which this repository no longer defines; %s now owns it", p.Title, b.Key, strings.Join(owners, ", ")), Page: ref})
-						continue
-					}
-					rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityError, Code: CodeDriftRemoved, Title: fmt.Sprintf("%s documents %s, which this repository no longer defines", p.Title, b.Key), Page: ref, BlockKey: b.Key, UnitKey: firstUnit(units)})
-				}
+				driftOf(in, rep, ops, roles, spaceID, ref, b)
 			}
 		}
 	}
 	return nil
+}
+
+func driftOf(in Input, rep *Report, ops specOps, roles map[string]map[string]bool, spaceID string, ref *api.PageRef, b api.PageBlock) {
+	op, ours := ops.head[b.Key]
+	switch {
+	case ours && b.SourceBinding.Kind == "cli":
+		rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityWarning, Code: CodeDrift, Title: fmt.Sprintf("%s: %s was written by gravity v0.x", ref.Title, b.Key), Detail: "The next reference run rewrites it with an endpoint binding.", Page: ref, BlockKey: b.Key, UnitKey: op.unit})
+	case ours && b.SourceBinding.Hash == op.hash:
+	case ours:
+		before, wasThere := ops.base[b.Key]
+		if !ops.changed(b.Key) || wasThere && b.SourceBinding.Hash != before.hash {
+			rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityWarning, Code: CodeDrift, Title: fmt.Sprintf("%s: %s was already out of date before %s", ref.Title, b.SourceBinding.Ref, inThisChange(in)), Detail: "The api block does not match " + op.spec + "; the next reference run on the default branch rewrites it.", File: op.spec, Page: ref, BlockKey: b.Key, UnitKey: op.unit})
+			return
+		}
+		if pass := updatingPass(in, op.spec, spaceID); pass != "" {
+			rep.Notes = append(rep.Notes, api.Note{Title: fmt.Sprintf("%s changes in %s; pass %s updates %s %s", b.SourceBinding.Ref, inThisChange(in), pass, ref.Title, whenMerged(in)), Page: ref})
+			return
+		}
+		rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityError, Code: CodeDrift, Title: fmt.Sprintf("%s: %s changes in %s and no pass updates it", ref.Title, b.SourceBinding.Ref, inThisChange(in)), Detail: "No enabled reference pass with the push trigger reads " + op.spec + " into this space, so the page keeps describing the old operation. Add or fix a reference pass, or update the page by hand.", File: op.spec, Page: ref, BlockKey: b.Key, UnitKey: op.unit})
+	case blockIsOurs(b, in, roles):
+		units := blockUnits(b)
+		if owners := otherOwners(in, units); len(owners) > 0 {
+			rep.Notes = append(rep.Notes, api.Note{Title: fmt.Sprintf("%s documents %s, which this repository no longer defines; %s now owns it", ref.Title, b.Key, strings.Join(owners, ", ")), Page: ref})
+			return
+		}
+		before, removedHere := ops.base[b.Key]
+		if !removedHere {
+			rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityWarning, Code: CodeDriftRemoved, Title: fmt.Sprintf("%s documents %s, which this repository already did not define before %s", ref.Title, b.Key, inThisChange(in)), Page: ref, BlockKey: b.Key, UnitKey: firstUnit(units)})
+			return
+		}
+		if pass := updatingPass(in, before.spec, spaceID); pass != "" {
+			rep.Notes = append(rep.Notes, api.Note{Title: fmt.Sprintf("%s is removed in %s; pass %s removes it from %s %s", b.Key, inThisChange(in), pass, ref.Title, whenMerged(in)), Page: ref})
+			return
+		}
+		rep.Findings = append(rep.Findings, api.Finding{Severity: api.SeverityError, Code: CodeDriftRemoved, Title: fmt.Sprintf("%s documents %s, which %s removes, and no pass updates it", ref.Title, b.Key, inThisChange(in)), File: before.spec, Page: ref, BlockKey: b.Key, UnitKey: firstUnit(units)})
+	}
 }
 
 func isThisRepo(r api.RepoRef, info RepoInfo) bool {
@@ -351,6 +441,7 @@ func checkCoverage(in Input, rep *Report) {
 	minimum, hasMin := in.Pass.Options["coverageMin"].(float64)
 	require := in.StringsOption("require")
 	if !hasMin && len(require) == 0 {
+		defaultCoverage(in, rep)
 		return
 	}
 	roles := ownRoles(in)
@@ -396,6 +487,71 @@ func checkCoverage(in Input, rep *Report) {
 	}
 }
 
+func defaultCoverage(in Input, rep *Report) {
+	severity := api.SeverityWarning
+	if containsString(FailOn(in), CategoryCoverage) {
+		severity = api.SeverityError
+	}
+	if in.ChangeSet != nil {
+		bound := map[string]bool{}
+		for _, u := range in.Plan.Inventory.Units {
+			if len(u.Bindings) > 0 {
+				bound[u.Key] = true
+			}
+		}
+		covered := map[string][]string{}
+		var passOrder []string
+		for _, d := range in.ChangeSet.OpenAPI {
+			for _, op := range d.Added {
+				key := normalize.APIUnitKey(op.Method, op.Path)
+				if bound[key] {
+					continue
+				}
+				if pass := updatingPass(in, d.Path, ""); pass != "" {
+					if covered[pass] == nil {
+						passOrder = append(passOrder, pass)
+					}
+					covered[pass] = append(covered[pass], key)
+					continue
+				}
+				rep.Findings = append(rep.Findings, api.Finding{Severity: severity, Code: CodeCoverage, Title: fmt.Sprintf("%s is new in %s and no pass documents it", key, inThisChange(in)), Detail: "No enabled reference pass with the push trigger reads " + d.Path + "; add one, or document the operation by hand.", File: d.Path, UnitKey: key})
+			}
+		}
+		for _, pass := range passOrder {
+			keys := covered[pass]
+			rep.Notes = append(rep.Notes, api.Note{Title: fmt.Sprintf("%s new in %s; pass %s documents %s %s", plural(len(keys), "operation is", "operations are"), inThisChange(in), pass, listShort(keys, 5), whenMerged(in))})
+		}
+	}
+	roles := ownRoles(in)
+	implemented, documented := 0, 0
+	for _, u := range in.Plan.Inventory.Units {
+		if !roles[u.Key][api.RoleImplements] {
+			continue
+		}
+		implemented++
+		if len(u.Bindings) > 0 {
+			documented++
+		}
+	}
+	if implemented > 0 {
+		rep.Notes = append(rep.Notes, api.Note{Title: fmt.Sprintf("Documentation coverage: %d of %d units this repository implements have a page (%.0f%%)", documented, implemented, float64(documented)*100/float64(implemented))})
+	}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+func listShort(items []string, n int) string {
+	if len(items) <= n {
+		return strings.Join(items, ", ")
+	}
+	return strings.Join(items[:n], ", ") + fmt.Sprintf(" and %d more", len(items)-n)
+}
+
 func verbatimNotes(in Input, rep *Report) {
 	if in.Plan == nil || in.ChangeSet == nil {
 		return
@@ -420,6 +576,7 @@ type claimPage struct {
 	slug     string
 	title    string
 	verbatim bool
+	path     string
 }
 
 func claimPages(ctx context.Context, in Input) ([]claimPage, error) {
@@ -470,14 +627,14 @@ func claimPages(ctx context.Context, in Input) ([]claimPage, error) {
 			if seen[p.ID] {
 				for i := range out {
 					if out[i].id == p.ID {
-						out[i].verbatim = true
+						out[i].verbatim, out[i].path = true, p.Lock.Path
 					}
 				}
 				continue
 			}
 			seen[p.ID] = true
 			added++
-			out = append(out, claimPage{id: p.ID, slug: p.Slug, title: p.Title, verbatim: true})
+			out = append(out, claimPage{id: p.ID, slug: p.Slug, title: p.Title, verbatim: true, path: p.Lock.Path})
 		}
 	}
 	return out, nil
@@ -496,12 +653,15 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 	bySlug := map[string]claimPage{}
 	writers := map[string]map[string]string{}
 	for _, p := range pages {
-		text, err := agent.PageText(ctx, in.Client, p.id, "draft")
+		text, skip, err := claimText(ctx, in, p)
 		if err != nil {
 			if api.StopsRun(err) || api.IsLicenseError(err) {
 				return err
 			}
 			rep.warn("claims: read page %s: %v", p.slug, err)
+			continue
+		}
+		if skip {
 			continue
 		}
 		byID[p.id] = p
@@ -559,6 +719,28 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 		}
 	}
 	return raiseHints(ctx, in, out, rep, hints)
+}
+
+func claimText(ctx context.Context, in Input, p claimPage) (string, bool, error) {
+	if p.verbatim && p.path != "" && in.ChangeSet != nil {
+		for _, f := range in.ChangeSet.Files {
+			if f.Path != strings.TrimPrefix(p.path, "./") {
+				continue
+			}
+			if f.Status == "D" {
+				return "", true, nil
+			}
+			data, ok, err := in.ReadFile(ctx, f.Path)
+			if err != nil {
+				return "", false, err
+			}
+			if ok {
+				return "(" + f.Path + " as changed in " + inThisChange(in) + "; it replaces this page " + whenMerged(in) + ")\n" + string(data), false, nil
+			}
+		}
+	}
+	text, err := agent.PageText(ctx, in.Client, p.id, "draft")
+	return text, false, err
 }
 
 func claimHint(f agent.ClaimFinding, page *api.PageRef, recipients []string) api.HintInput {

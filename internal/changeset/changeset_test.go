@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -413,5 +414,38 @@ func TestBuildWorkingTree(t *testing.T) {
 	}
 	if cs.RangeKind != api.RangeWorkingTree || len(cs.Files) != 1 || len(cs.OpenAPI) != 1 || len(cs.OpenAPI[0].Added) != 1 || len(cs.Commits) != 0 {
 		t.Fatalf("working tree = %+v", cs)
+	}
+}
+
+func TestSymbolsFollowCodeInclude(t *testing.T) {
+	s := newScripted(t)
+	base := s.commit("init", map[string]string{
+		"src/billing.go":     "package billing\n\nfunc Refund() {}\n",
+		"scripts/release.go": "package main\n\nfunc Bump() {}\n",
+	})
+	head := s.commit("drop both", map[string]string{
+		"src/billing.go":     "package billing\n",
+		"scripts/release.go": "package main\n",
+	})
+	rng := Range{Kind: "watermark", Base: base, Head: head}
+	for _, tc := range []struct {
+		include []string
+		want    []string
+	}{{nil, []string{"Bump", "Refund"}}, {[]string{"src/**"}, []string{"Refund"}}} {
+		cs, err := Build(context.Background(), s.repo(), rng, Options{Trigger: "push", CodeInclude: tc.include})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, sym := range cs.Symbols.Removed {
+			got = append(got, sym.Name)
+		}
+		sort.Strings(got)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Fatalf("include %v: removed symbols = %v, want %v", tc.include, got, tc.want)
+		}
+		if len(cs.Files) != 2 {
+			t.Fatalf("code.include never hides files from the ChangeSet: %+v", cs.Files)
+		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -194,7 +195,7 @@ func SubmitPageChangesTool() Tool {
 	block := object([]string{"key", "type", "content", "rationale"}, map[string]any{
 		"key":       map[string]any{"type": "string", "description": "Existing key to replace a block, or a new guide:<page-slug>:<section-slug>[:n] key."},
 		"type":      enum(AuthoredBlockTypes...),
-		"content":   map[string]any{"type": "object", "description": "heading {text, level}; prose {text}; code {text, language}; list {text, variant}; callout {text, variant}; table {rows, header}; quote {text}."},
+		"content":   map[string]any{"type": "object", "description": "heading {text, level: 1|2|3}; prose {text}; code {text, language}; list {text, variant: bulleted|numbered|task} (one item per block); callout {text, variant: info|tip|warning|danger}; table {rows: [[string]], header: boolean}; quote {text}."},
 		"after":     map[string]any{"type": "string", "description": "Key of the block a new block goes after; omit for the end of the page."},
 		"units":     map[string]any{"type": "array", "items": stringItems},
 		"audiences": map[string]any{"type": "array", "items": stringItems},
@@ -250,6 +251,66 @@ func ValidatePageChanges(raw json.RawMessage) error {
 func isObject(raw json.RawMessage) bool {
 	t := bytes.TrimSpace(raw)
 	return len(t) > 0 && t[0] == '{'
+}
+
+var listVariants = map[string]string{
+	"bulleted": "bulleted", "bullet": "bulleted", "bullets": "bulleted", "unordered": "bulleted", "ul": "bulleted", "disc": "bulleted", "dash": "bulleted",
+	"numbered": "numbered", "number": "numbered", "numbers": "numbered", "ordered": "numbered", "ol": "numbered", "decimal": "numbered",
+	"task": "task", "tasks": "task", "todo": "task", "checklist": "task", "checkbox": "task", "check": "task",
+}
+
+// NormalizeContent maps common model variations of authored block content onto the shapes the platform accepts.
+func NormalizeContent(blockType string, raw json.RawMessage) any {
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil || m == nil {
+		return raw
+	}
+	switch blockType {
+	case "list":
+		v, _ := m["variant"].(string)
+		variant, ok := listVariants[strings.ToLower(strings.TrimSpace(v))]
+		if !ok {
+			variant = "bulleted"
+		}
+		m["variant"] = variant
+		if items, ok := m["items"].([]any); ok {
+			if text, _ := m["text"].(string); strings.TrimSpace(text) == "" {
+				lines := make([]string, 0, len(items))
+				for _, it := range items {
+					if s, ok := it.(string); ok {
+						lines = append(lines, s)
+					}
+				}
+				m["text"] = strings.Join(lines, "\n")
+			}
+			delete(m, "items")
+		}
+		if c, ok := m["checked"]; ok {
+			if _, isBool := c.(bool); !isBool {
+				delete(m, "checked")
+			}
+		}
+	case "heading":
+		level := 2
+		switch l := m["level"].(type) {
+		case float64:
+			level = int(l)
+		case string:
+			if n, err := strconv.Atoi(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(l)), "h")); err == nil {
+				level = n
+			}
+		}
+		m["level"] = min(max(level, 1), 3)
+	case "callout", "code":
+		for _, k := range []string{"variant", "language"} {
+			if v, ok := m[k]; ok {
+				if _, isString := v.(string); !isString {
+					delete(m, k)
+				}
+			}
+		}
+	}
+	return m
 }
 
 // ReleaseSections are the changelog sections in display order.
@@ -353,6 +414,20 @@ type AtomsInput struct {
 
 // MemoryKinds are the Nucleus atom kinds.
 var MemoryKinds = []string{"fact", "entity", "concept", "procedure", "decision", "glossary", "relationship", "preference", "other"}
+
+// MemoryKind returns kind when Nucleus knows it, fact when it is empty and other otherwise.
+func MemoryKind(kind string) string {
+	k := strings.ToLower(strings.TrimSpace(kind))
+	if k == "" {
+		return "fact"
+	}
+	for _, known := range MemoryKinds {
+		if k == known {
+			return k
+		}
+	}
+	return "other"
+}
 
 // SubmitAtomsTool ends the nucleus distill phase.
 func SubmitAtomsTool() Tool {

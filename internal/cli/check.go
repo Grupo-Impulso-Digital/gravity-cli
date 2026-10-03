@@ -13,7 +13,11 @@ func newCheckCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "The pull request gate: drift, coverage, claims and doc impact",
-		Long:  "Run the check passes (or a built-in drift and coverage check when none is declared) plus every other pass's dry impact for this pull request. Exits 1 when a finding falls in --fail-on.",
+		Long: "Run the check passes, plus every other pass's dry impact, for this pull request.\n\n" +
+			"Without a check pass a built-in check runs: drift (API reference blocks for operations this pull request changes or removes that no push-triggered reference pass will update), " +
+			"coverage (new operations no pass will document, as warnings unless --fail-on coverage, and the share of implemented units with a page, as a note) and notes on verbatim files the merge re-imports. " +
+			"Claim review needs a declared check pass. Drift that predates the pull request is a warning, never a failure.\n\n" +
+			"Exits 1 when an error finding falls in --fail-on (default drift, claims, verbatim), 4 without usable credentials; a fork pull request without a token is skipped with exit 0.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 && (args[0] == "api" || args[0] == "docs") {
 				return removedPointer("check "+args[0], "gravity check")
@@ -53,7 +57,7 @@ func newCheckCmd(a *app) *cobra.Command {
 	fl.StringSliceVar(&f.passes, "pass", nil, "check only these passes")
 	fl.StringVar(&f.from, "from", "", "compare from this commit instead of the merge base")
 	fl.StringVar(&f.to, "to", "", "compare up to this commit instead of HEAD")
-	fl.StringSliceVar(&f.failOn, "fail-on", nil, "finding categories that fail the check: drift, coverage, claims, verbatim")
+	fl.StringSliceVar(&f.failOn, "fail-on", nil, "finding categories that fail the check: drift, coverage, claims, verbatim (default drift, claims, verbatim)")
 	fl.StringVar(&f.annotate, "annotate", "auto", "auto, github, gitlab, azure or none")
 	fl.BoolVar(&f.comment, "comment", false, "post the doc-impact comment (also posted when the CI provider's comment token is set)")
 	return cmd

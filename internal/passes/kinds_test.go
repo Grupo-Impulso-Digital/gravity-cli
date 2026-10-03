@@ -2,6 +2,7 @@ package passes_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -103,10 +104,12 @@ func TestGuidesAuthorsBlockEditsAndNeverTouchesHumanBlocks(t *testing.T) {
 		agent.PageChanges{Summary: "Documents the reason", Upserts: []agent.BlockEdit{
 			{Key: "guide:refunds:reason", Type: "prose", Content: []byte(`{"text":"Pass a reason."}`), Rationale: agent.Rationale{Summary: "new field", Commits: []string{head}}},
 			{Key: "guide:refunds:human", Type: "prose", Content: []byte(`{"text":"overwrite"}`), Rationale: agent.Rationale{Summary: "x"}},
-		}, RemoveKeys: []string{"guide:refunds:human"}, Hints: []agent.HintDraft{{Kind: "contradiction", Claim: "Gateway retries 5 times", UnitKey: "feature:refunds"}}},
+		}, RemoveKeys: []string{"guide:refunds:human"}, Hints: []agent.HintDraft{{Kind: "contradiction", Claim: "Gateway retries 5 times", UnitKey: "feature:refunds", ForRepos: []string{"gateway", "github.com/acme/billing-api"}}}},
 	)
 	w := &writes{}
-	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))
+	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite)
+	in.Plan.Siblings = []api.Sibling{{Name: "gateway", RemoteKey: "github.com/acme/gateway"}}
+	rep, err := passes.Guides{}.Run(context.Background(), in, sink(w))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +127,7 @@ func TestGuidesAuthorsBlockEditsAndNeverTouchesHumanBlocks(t *testing.T) {
 	if len(c.Units) != 1 || c.Units[0] != "feature:refunds" {
 		t.Fatalf("units = %v", c.Units)
 	}
-	if len(w.hints) != 1 || w.hints[0].PageID != "pg_1" || rep.Counts.Hints != 1 {
+	if len(w.hints) != 1 || w.hints[0].PageID != "pg_1" || rep.Counts.Hints != 1 || len(w.hints[0].ForRepos) != 1 || w.hints[0].ForRepos[0] != "github.com/acme/gateway" {
 		t.Fatalf("hints = %+v", w.hints)
 	}
 	if !strings.Contains(strings.Join(rep.Warnings, "\n"), "locked") {
@@ -257,7 +260,7 @@ func TestCheckFindsDriftCoverageAndContradictions(t *testing.T) {
 	}
 	pp := planPass(config.KindCheck, "gate", map[string]any{"coverageMin": 1.0, "require": []any{"feature"}})
 	in := input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
-	in.Plan.Passes = []api.PlanPass{pp, planPass(config.KindReference, "developer-api", nil)}
+	in.Plan.Passes = []api.PlanPass{pp, disabledReference()}
 	rec := &passes.Recorder{}
 	rep, err := passes.Check{}.Run(context.Background(), in, rec)
 	if err != nil {
@@ -337,17 +340,190 @@ func TestCheckDoesNotFlagRemovedOperationsAnotherRepoOwns(t *testing.T) {
 			t.Fatalf("a unit another repository implements is still true: %+v", f)
 		}
 	}
-	if rep.Failing || len(rep.Notes) != 1 || !strings.Contains(rep.Notes[0].Title, "refunds-svc") {
+	if rep.Failing || len(rep.Notes) != 2 || !strings.Contains(rep.Notes[0].Title, "refunds-svc") || rep.Notes[1].Title != "Documentation coverage: 0 of 1 units this repository implements have a page (0%)" {
 		t.Fatalf("failing=%v notes=%+v", rep.Failing, rep.Notes)
 	}
 	fake.inventory[0].Contributors = fake.inventory[0].Contributors[:1]
 	in = input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
-	in.Plan.Passes = []api.PlanPass{pp, planPass(config.KindReference, "developer-api", nil)}
+	in.Plan.Passes = []api.PlanPass{pp, disabledReference()}
 	rep, err = passes.Check{}.Run(context.Background(), in, &passes.Recorder{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rep.Findings) != 1 || rep.Findings[0].Code != passes.CodeDriftRemoved || rep.Findings[0].UnitKey != "api:get:/v1/refunds" {
 		t.Fatalf("with no other owner the removal is drift: %+v", rep.Findings)
+	}
+}
+
+func disabledReference() api.PlanPass {
+	ref := planPass(config.KindReference, "developer-api", nil)
+	ref.Enabled, ref.Applies, ref.SkipReason = false, false, api.SkipDisabled
+	return ref
+}
+
+func TestCheckDriftComparesWithTheBaseOfThePullRequest(t *testing.T) {
+	r := newRepo(t)
+	base := r.commit("spec v1", map[string]string{"api/openapi.yaml": specV1})
+	head := r.commit("spec v2", map[string]string{"api/openapi.yaml": specV2})
+	v1 := apiBlocks(t, specV1)
+	older := apiBlocks(t, strings.Replace(specV1, "List charges", "List all charges", 1))
+	changed := pageBlock(v1["api:POST:/v1/refunds"])
+	removed := pageBlock(v1["api:GET:/v1/refunds"])
+	removed.Provenance = &api.BlockProvenance{Repo: "billing-api"}
+	stale := pageBlock(older["api:GET:/v1/charges"])
+	cases := []struct {
+		name     string
+		triggers []string
+		failing  bool
+		errors   map[string]int
+		notes    int
+	}{
+		{"a reference pass on push follows the change", []string{"push", "pr"}, false, map[string]int{}, 2},
+		{"no pass follows the change", []string{"pr"}, true, map[string]int{passes.CodeDrift: 1, passes.CodeDriftRemoved: 1}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeAPI()
+			fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_ref", Slug: "refunds", Title: "Refunds", Units: []string{"api:post:/v1/refunds"}}, Blocks: []api.PageBlock{changed, removed, stale}})
+			pp := planPass(config.KindCheck, "gate", map[string]any{"claims": false})
+			ref := planPass(config.KindReference, "developer-api", nil)
+			ref.Triggers = tc.triggers
+			in := input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
+			in.Trigger = config.TriggerPR
+			in.Plan.Passes = []api.PlanPass{pp, ref}
+			rep, err := passes.Check{}.Run(context.Background(), in, &passes.Recorder{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			errs, warnings := map[string]int{}, 0
+			for _, f := range rep.Findings {
+				switch f.Severity {
+				case api.SeverityError:
+					errs[f.Code]++
+				case api.SeverityWarning:
+					warnings++
+					if !strings.Contains(f.Title, "already out of date before this pull request") {
+						t.Fatalf("warning = %+v", f)
+					}
+				}
+			}
+			if rep.Failing != tc.failing || warnings != 1 || len(rep.Notes) != tc.notes || len(errs) != len(tc.errors) {
+				t.Fatalf("failing=%v warnings=%d notes=%+v errors=%v", rep.Failing, warnings, rep.Notes, errs)
+			}
+			for code, n := range tc.errors {
+				if errs[code] != n {
+					t.Fatalf("errors = %v, want %v", errs, tc.errors)
+				}
+			}
+			if tc.notes > 0 && !strings.Contains(rep.Notes[0].Title+rep.Notes[1].Title, "pass developer-api updates Refunds on merge") {
+				t.Fatalf("notes = %+v", rep.Notes)
+			}
+		})
+	}
+}
+
+func TestBuiltInCoverageFollowsNewOperations(t *testing.T) {
+	r := newRepo(t)
+	base := r.commit("spec v2", map[string]string{"api/openapi.yaml": specV2})
+	head := r.commit("spec v1", map[string]string{"api/openapi.yaml": specV1})
+	yes := true
+	cases := []struct {
+		name     string
+		triggers []string
+		failOn   []string
+		severity string
+		failing  bool
+	}{
+		{"a reference pass documents it on merge", []string{"push", "pr"}, nil, "", false},
+		{"nothing documents it", []string{"pr"}, nil, api.SeverityWarning, false},
+		{"nothing documents it and coverage fails", []string{"pr"}, []string{"coverage"}, api.SeverityError, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeAPI()
+			fake.inventory = []api.Unit{
+				{Key: "api:post:/v1/refunds", Kind: "api", Contributors: []api.Contributor{{Repo: api.RepoRef{RemoteKey: "github.com/acme/billing-api"}, Role: api.RoleImplements, Active: &yes}}, Bindings: []api.UnitBinding{{PageID: "pg_ref", PageSlug: "refunds"}}},
+				{Key: "api:get:/v1/charges", Kind: "api", Contributors: []api.Contributor{{Repo: api.RepoRef{RemoteKey: "github.com/acme/billing-api"}, Role: api.RoleImplements, Active: &yes}}},
+			}
+			pp := planPass(config.KindCheck, "check", map[string]any{})
+			ref := planPass(config.KindReference, "developer-api", nil)
+			ref.Triggers = tc.triggers
+			in := input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
+			in.Trigger, in.FailOn = config.TriggerPR, tc.failOn
+			in.Plan.Passes = []api.PlanPass{pp, ref}
+			rep, err := passes.Check{}.Run(context.Background(), in, &passes.Recorder{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var coverage []api.Finding
+			for _, f := range rep.Findings {
+				if f.Code == passes.CodeCoverage {
+					coverage = append(coverage, f)
+				}
+			}
+			notes := ""
+			for _, n := range rep.Notes {
+				notes += n.Title + "\n"
+			}
+			if !strings.Contains(notes, "Documentation coverage: 1 of 2 units this repository implements have a page (50%)") || rep.Failing != tc.failing {
+				t.Fatalf("failing=%v notes:\n%s", rep.Failing, notes)
+			}
+			if tc.severity == "" {
+				if len(coverage) != 0 || !strings.Contains(notes, "1 operation is new in this pull request; pass developer-api documents api:get:/v1/refunds on merge") {
+					t.Fatalf("coverage=%+v notes:\n%s", coverage, notes)
+				}
+				return
+			}
+			if len(coverage) != 1 || coverage[0].Severity != tc.severity || coverage[0].UnitKey != "api:get:/v1/refunds" {
+				t.Fatalf("coverage = %+v", coverage)
+			}
+		})
+	}
+}
+
+func TestGuidesDropsHintsNobodyCanReceive(t *testing.T) {
+	r, fake, base, head := guidesFixture(t)
+	fake.llm = guidesLLM(t,
+		agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason", Units: []string{"feature:refunds"}}}},
+		agent.PageChanges{Summary: "Documents the reason", Upserts: []agent.BlockEdit{
+			{Key: "guide:refunds:steps", Type: "list", Content: []byte(`{"text":"Pass a reason.","variant":"unordered"}`), Rationale: agent.Rationale{Summary: "new field", Commits: []string{head}}},
+		}, Hints: []agent.HintDraft{{Kind: "contradiction", Claim: "Retries 5 times", UnitKey: "feature:refunds"}}},
+	)
+	w := &writes{}
+	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.hints) != 0 || !strings.Contains(strings.Join(rep.Warnings, "\n"), "1 hint(s) not sent") {
+		t.Fatalf("hints = %+v warnings = %v", w.hints, rep.Warnings)
+	}
+	if len(w.changes) != 1 || w.changes[0].Blocks[0].Content.(map[string]any)["variant"] != "bulleted" {
+		t.Fatalf("list variants are normalized: %+v", w.changes)
+	}
+}
+
+func TestCheckReviewsAChangedVerbatimFileAsItWillBeImported(t *testing.T) {
+	r := newRepo(t)
+	base := r.commit("init", map[string]string{"src/limits.ts": "export const retries = 3\n", "docs/limits.md": "# Limits\n\nRetries: 5.\n"})
+	head := r.commit("fix: document 3 retries", map[string]string{"src/limits.ts": "export const retries = 3 // tuned\n", "docs/limits.md": "# Limits\n\nRetries: 3.\n"})
+	fake := newFakeAPI()
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_lim", Slug: "limits", Title: "Limits", Lock: &api.PageLock{Pass: "handbook", Path: "docs/limits.md", Repo: &api.RepoRef{RemoteKey: "github.com/acme/billing-api"}}}, Blocks: []api.PageBlock{{Key: "doc:limits", Type: "prose", Ownership: api.OwnershipMachine, Text: "Retries: 5."}}})
+	fake.llm = func(api.MessagesRequest) api.MessagesResponse {
+		return submit(agent.ToolReportFindings, agent.FindingsInput{})
+	}
+	pp := planPass(config.KindCheck, "gate", nil)
+	verbatim := planPass(config.KindVerbatim, "handbook", map[string]any{"files": []any{map[string]any{"include": "docs/**/*.md"}}})
+	in := input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
+	in.Trigger = config.TriggerPR
+	in.Plan.Passes = []api.PlanPass{pp, verbatim}
+	if _, err := (passes.Check{}).Run(context.Background(), in, &passes.Recorder{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.requests) == 0 {
+		t.Fatal("the locked page is reviewed")
+	}
+	kickoff, _ := json.Marshal(fake.requests[0].Messages)
+	if !strings.Contains(string(kickoff), "Retries: 3.") || strings.Contains(string(kickoff), "Retries: 5.") || !strings.Contains(string(kickoff), "docs/limits.md as changed in this pull request") {
+		t.Fatalf("the review reads the pull request's file, not the stale page: %s", kickoff)
 	}
 }

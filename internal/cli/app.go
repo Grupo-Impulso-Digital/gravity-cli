@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -177,8 +179,37 @@ func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
 		}
 		a.ui.Warn("token_to_manifest_host", fmt.Sprintf("sending the %s token to %s, taken from %s apiUrl; set %s to pin the host (in CI, and when the repository is not yours)", from, creds.APIURL, config.ManifestFileName, config.EnvAPIURL))
 	}
+	if creds.TokenSource == auth.SourceEnv || creds.TokenSource == auth.SourceFlag {
+		if shape := unresolvedToken(creds.Token); shape != "" {
+			from := config.EnvToken
+			if creds.TokenSource == auth.SourceFlag {
+				from = "--token"
+			}
+			return auth.Credentials{}, &ExitError{Code: CodeCredentials, ErrCode: "token_unresolved", Err: fmt.Errorf("%s holds an unexpanded variable reference (%s) instead of a token: the CI secret %s is not defined for this job, or is not passed to it", from, shape, config.EnvToken)}
+		}
+	}
 	a.ui.Debugf("api %s (%s), token from %s, profile %q", creds.APIURL, creds.APIURLSource, creds.TokenSource, creds.ProfileName)
 	return creds, nil
+}
+
+var unresolvedShapes = []struct {
+	re    *regexp.Regexp
+	shape string
+}{
+	{regexp.MustCompile(`^\$\([^()]*\)$`), "$(NAME), an undefined Azure Pipelines variable"},
+	{regexp.MustCompile(`^\$\{\{.*\}\}$`), "${{ ... }}, an unevaluated workflow expression"},
+	{regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`), "$NAME, an unexpanded shell variable"},
+	{regexp.MustCompile(`^%[A-Za-z_][A-Za-z0-9_]*%$`), "%NAME%, an unexpanded Windows variable"},
+}
+
+func unresolvedToken(token string) string {
+	t := strings.TrimSpace(token)
+	for _, u := range unresolvedShapes {
+		if u.re.MatchString(t) {
+			return u.shape
+		}
+	}
+	return ""
 }
 
 func (a *app) client(creds auth.Credentials) *api.Client {
@@ -189,11 +220,33 @@ func (a *app) client(creds auth.Credentials) *api.Client {
 	return c
 }
 
-func requireToken(creds auth.Credentials) error {
-	if creds.Token == "" {
-		return Failf(CodeError, "not signed in: run `gravity login`, or set %s (CI secret)", config.EnvToken)
+func (a *app) requireToken(creds auth.Credentials) error {
+	if creds.Token != "" {
+		return nil
 	}
-	return nil
+	err := fmt.Errorf("not signed in: run `gravity login`, or set %s", config.EnvToken)
+	if c, _ := ci.Detect(context.Background(), ci.Env{Getenv: a.env}, nil); c.IsCI() {
+		err = fmt.Errorf("%s is empty in this %s job: store a repository token (from `gravity init`, or the app's CLI & machines screen) as the CI secret %s and pass it to the gravity step", config.EnvToken, ciLabel(c.Provider), config.EnvToken)
+	}
+	return &ExitError{Code: CodeCredentials, ErrCode: "token_missing", Err: err}
+}
+
+func ciLabel(provider string) string {
+	switch provider {
+	case ci.GitHub:
+		return "GitHub Actions"
+	case ci.GitLab:
+		return "GitLab CI"
+	case ci.Bitbucket:
+		return "Bitbucket Pipelines"
+	case ci.Azure:
+		return "Azure Pipelines"
+	case ci.Jenkins:
+		return "Jenkins"
+	case ci.CircleCI:
+		return "CircleCI"
+	}
+	return "CI"
 }
 
 func explainAPI(err error) error {
@@ -268,7 +321,30 @@ func webURL(remoteKey string) (string, string) {
 	if remoteKey == "" || !strings.Contains(host, ".") {
 		return "", provider
 	}
+	if provider == ci.Azure {
+		if parts := strings.Split(remoteKey, "/"); len(parts) == 5 && parts[1] == "v3" {
+			return "https://dev.azure.com/" + parts[2] + "/" + parts[3] + "/_git/" + parts[4], provider
+		}
+	}
 	return "https://" + remoteKey, provider
+}
+
+func fileURL(webURL, provider, branch, path string) string {
+	if webURL == "" || branch == "" {
+		return ""
+	}
+	base := strings.TrimRight(webURL, "/")
+	switch provider {
+	case ci.GitHub:
+		return base + "/blob/" + branch + "/" + path
+	case ci.GitLab:
+		return base + "/-/blob/" + branch + "/" + path
+	case ci.Bitbucket:
+		return base + "/src/" + branch + "/" + path
+	case ci.Azure:
+		return base + "?path=" + url.QueryEscape("/"+path) + "&version=" + url.QueryEscape("GB"+branch)
+	}
+	return ""
 }
 
 func (a *app) detectCI(ctx context.Context, repo *git.Repo) (ci.Context, error) {
@@ -317,15 +393,15 @@ func repoParam(who *api.WhoAmI, info *repoInfo) string {
 	return info.remoteKey
 }
 
-func openURL(url string) error {
+func openURL(target string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", target)
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
 	default:
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", target)
 	}
 	return cmd.Start()
 }

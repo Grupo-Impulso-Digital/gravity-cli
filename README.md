@@ -111,6 +111,10 @@ against an embedded JSON Schema: an unknown key fails with a suggestion
 (`passes[0].trigers: unknown key (did you mean "triggers"?)`), a `token:`
 anywhere is refused, and paths must stay inside the repository.
 
+`code.include` says what counts as code: a pass without `scope.paths` reacts
+only to changes under it (plus `code.openapi`), and removed or renamed symbols
+are read only there. `code.exclude` drops paths from every change set.
+
 Only the authoritative branch (the default branch unless the app says
 otherwise) stores the manifest's passes in Gravity. Other branches see their
 local passes as an overlay (`gravity passes` marks them `repo (local)`).
@@ -237,11 +241,42 @@ Gravity does not fence pages per repository.
 | `gravity init` | Connect the repository in at most three questions; `--yes`, `--product`, `--passes-as-code`, `--app-passes`, `--ci <provider>`, `--no-secret`, `--dry-run`, `--repo <id>`. Never commits or pushes. |
 | `gravity status` | Auth, connection, manifest, passes with targets and watermarks, recent runs, open bundles, tokens, health and capability warnings; `--runs N`, `--check`. |
 | `gravity passes` | `list`, `show <name>`, `edit <name>`; `--trigger`, `--branch`. |
-| `gravity run` | The pipeline; `--pass`, `--trigger`, `--branch`, `--from`, `--to`, `--note`, `--dry-run`, `--lease-timeout`, `--parallel`, `--no-comment`, `--annotate`, `--strict`. |
+| `gravity run` | The pipeline over committed history (uncommitted changes are never sent; `preview` shows them); `--pass`, `--trigger`, `--branch`, `--from`, `--to`, `--note`, `--dry-run`, `--lease-timeout`, `--parallel`, `--no-comment`, `--annotate`, `--strict`. |
 | `gravity preview` | Every pass as a dry run over the working tree (or `--committed`): page diffs, composed instructions, cost; `--format text\|diff\|json`, `--open`. |
-| `gravity check` | The pull request gate: check passes (or a built-in drift and coverage check) plus every pass's doc impact; `--fail-on`, `--annotate`, `--comment`. |
+| `gravity check` | The pull request gate: check passes (or the built-in check: drift, coverage of new operations, verbatim notes) plus every pass's doc impact; `--fail-on`, `--annotate`, `--comment`. |
 | `gravity explain <page>` | Per block: last writer (repository, pass, commit, run), history, ownership and the page lock; `--block <key>`. |
 | `gravity version` | Version, commit, build date, Go version, platform. |
+
+### `gravity run` outside CI
+
+Locally, and on a GitHub `workflow_dispatch` (or any manual pipeline), the
+trigger is `manual`. A manual run runs the passes whose triggers include
+`manual`, `push` or `schedule`, and names the ones it left out;
+`gravity run --pass <name>` runs one pass whatever its triggers (its branch
+rules still apply; a server older than this rule refuses it with a hint).
+A run reads committed history only: every write cites the commit it comes
+from, so uncommitted changes are not part of it, and `gravity run` warns when
+the working tree has some. `gravity preview` is the command that reads the
+working tree.
+
+### `gravity check`
+
+`gravity check` runs the repository's check passes, or a built-in check when
+none applies:
+
+- **Drift.** API reference blocks are compared with the pull request's base
+  and head. An operation the pull request changes or removes is a finding
+  only when no enabled reference pass with the `push` trigger will update its
+  page on merge; when one will, the report carries a note instead. A block
+  that was already out of date before the pull request is a warning.
+- **Coverage.** New operations that no pass will document are reported
+  (warnings, or failures with `--fail-on coverage`), and the share of the units
+  this repository implements that have a page is reported as a note.
+- **Verbatim.** Files the merge will re-import are listed as notes.
+
+Claim review (does the documentation still say true things about the code)
+needs a declared `check` pass, which also takes `coverageMin` and `require`.
+`--fail-on` defaults to `drift, claims, verbatim`.
 
 ### `gravity init`
 
@@ -269,6 +304,13 @@ carries exactly the scopes its passes need; it is installed with
 printed once to paste. Existing CI files are never overwritten. `--yes` accepts
 every suggestion (required without a terminal); `--dry-run` stops after the
 preview.
+
+CLI 0.x refuses repository tokens. When a CI file still runs gravity 0.x
+(`ci/github@v0` or `@main`, `GRAVITY_VERSION=0`, the shared `gravity-docs.yml`
+workflow, `gravity sync`, ...) or the manifest being converted is version 1,
+init does not touch `GRAVITY_TOKEN`: it prints the new token to set when the
+migration is merged (on a terminal), or mints nothing (without one).
+`--replace-secret` replaces it anyway.
 
 ### Global flags
 
@@ -301,12 +343,18 @@ profile `default`; the old file is never modified.
 
 | Code | Meaning |
 | ---- | ------- |
-| `0` | Success, or nothing to do (no change in scope, fork pull request without a token). |
+| `0` | Success, or nothing to do (no change in scope, a fork pull request without a token). |
 | `1` | Findings: `check` findings in `failOn` (`run` and `check`), or `status --check` on an unhealthy repository. |
-| `2` | Operational error: auth, network, bad input, invalid manifest, missing target, failed pass, lease timeout, removed command. |
+| `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, removed command. |
 | `3` | Licence refusal (`module_disabled`, `seat_limit`): ask a workspace administrator. |
+| `4` | No usable credentials: no token (`token_missing`), a CI variable that was never expanded such as a literal `$(GRAVITY_TOKEN)` (`token_unresolved`), or a token the server rejects (`401`). |
 
-Precedence is `3` > `2` > `1` > `0`. Documentation writes never fail a deploy:
+Precedence is `3` > `2` > `1` > `0`; `4` stops a command before it does
+anything else. Fork pull requests are detected per provider (GitHub event
+repositories, GitLab source and target projects, `SYSTEM_PULLREQUEST_ISFORK`
+on Azure, `CHANGE_FORK` on Jenkins, `CIRCLE_PR_*` on CircleCI); only those skip
+with a notice when the token is missing. Bitbucket runs no pipeline for a fork
+in the target repository, so a missing token there is always `4`. Documentation writes never fail a deploy:
 only `check` findings exit `1`. `--strict` turns unapproved targets and missing
 scopes into `2` and missing modules into `3`.
 

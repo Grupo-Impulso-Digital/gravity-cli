@@ -14,6 +14,8 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/passes"
+	engine "github.com/Grupo-Impulso-Digital/gravity-cli/internal/run"
 )
 
 const pipelineSpec = `openapi: 3.0.0
@@ -152,12 +154,22 @@ func githubPR(t *testing.T, h *harness, number int) {
 	h.env["GITHUB_STEP_SUMMARY"] = filepath.Join(t.TempDir(), "summary.md")
 }
 
+func githubForkPR(t *testing.T, h *harness, number int) {
+	t.Helper()
+	githubPR(t, h, number)
+	head := gitCmd(t, h.dir, "rev-parse", "HEAD")
+	data := fmt.Sprintf(`{"pull_request":{"number":%d,"head":{"sha":"%s","ref":"feature","repo":{"full_name":"someone/billing-api"}},"base":{"ref":"main","repo":{"full_name":"acme/billing-api"}}}}`, number, head)
+	if err := os.WriteFile(h.env["GITHUB_EVENT_PATH"], []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestForkPullRequestWithoutATokenExitsZero(t *testing.T) {
 	h := newHarness(t)
-	githubPR(t, h, 7)
+	githubForkPR(t, h, 7)
 	for _, cmd := range []string{"run", "check"} {
 		expectCode(t, h, h.run(cmd), 0)
-		if !strings.Contains(h.stderr.String(), "secrets are not shared with forks") {
+		if !strings.Contains(h.stderr.String(), "comes from a fork") {
 			t.Fatalf("%s: %s", cmd, h.stderr.String())
 		}
 	}
@@ -168,10 +180,75 @@ func TestForkPullRequestWithoutATokenExitsZero(t *testing.T) {
 	if len(h.platform.find("GET", "/api/v1/whoami")) != 0 {
 		t.Fatal("a fork PR without a token makes no API call")
 	}
-	delete(h.env, "GITHUB_EVENT_NAME")
 	h.env["GITHUB_EVENT_NAME"] = "push"
 	h.env["GITHUB_REF_NAME"] = "main"
-	expectCode(t, h, h.run("run"), 2)
+	expectCode(t, h, h.run("run"), 4)
+}
+
+func TestMissingTokenIsACredentialsError(t *testing.T) {
+	h := newHarness(t)
+	githubPR(t, h, 7)
+	for _, cmd := range []string{"run", "check"} {
+		expectCode(t, h, h.run(cmd, "--json"), 4)
+		e := h.envelope()["error"].(map[string]any)
+		if e["code"] != "token_missing" || !strings.Contains(e["message"].(string), "GitHub Actions") {
+			t.Fatalf("%s: error = %v", cmd, e)
+		}
+	}
+	local := newHarness(t)
+	expectCode(t, local, local.run("check"), 4)
+	if !strings.Contains(local.stderr.String(), "not signed in") {
+		t.Fatalf("local check signed out: %s", local.stderr.String())
+	}
+	if len(h.platform.requests)+len(local.platform.requests) != 0 {
+		t.Fatal("no request is made without a token")
+	}
+}
+
+func TestUnresolvedTokenVariable(t *testing.T) {
+	azure := func(h *harness, fork string) {
+		h.env["TF_BUILD"] = "True"
+		h.env["BUILD_REASON"] = "PullRequest"
+		h.env["SYSTEM_PULLREQUEST_PULLREQUESTNUMBER"] = "5"
+		h.env["SYSTEM_PULLREQUEST_TARGETBRANCH"] = "refs/heads/main"
+		h.env["SYSTEM_PULLREQUEST_SOURCEBRANCH"] = "refs/heads/feature"
+		h.env["SYSTEM_PULLREQUEST_ISFORK"] = fork
+		h.env["GRAVITY_TOKEN"] = "$(GRAVITY_TOKEN)"
+	}
+	h := newHarness(t)
+	azure(h, "False")
+	expectCode(t, h, h.run("run", "--json"), 4)
+	e := h.envelope()["error"].(map[string]any)
+	if e["code"] != "token_unresolved" || !strings.Contains(e["message"].(string), "Azure Pipelines variable") {
+		t.Fatalf("error = %v", e)
+	}
+	fork := newHarness(t)
+	azure(fork, "True")
+	expectCode(t, fork, fork.run("check"), 0)
+	if !strings.Contains(fork.stderr.String(), "comes from a fork") {
+		t.Fatalf("stderr = %s", fork.stderr.String())
+	}
+	for _, v := range []string{"${{ secrets.GRAVITY_TOKEN }}", "$GRAVITY_TOKEN", "${GRAVITY_TOKEN}", "%GRAVITY_TOKEN%"} {
+		local := newHarness(t)
+		local.env["GRAVITY_TOKEN"] = v
+		expectCode(t, local, local.run("whoami"), 4)
+		if !strings.Contains(local.stderr.String(), "unexpanded") {
+			t.Fatalf("%s: %s", v, local.stderr.String())
+		}
+	}
+	if len(h.platform.requests)+len(fork.platform.requests) != 0 {
+		t.Fatal("an unresolved token is never sent")
+	}
+}
+
+func TestRejectedTokenIsACredentialsError(t *testing.T) {
+	h := newHarness(t)
+	h.platform.json("GET /api/v1/whoami", 401, `{"error":{"code":"unauthorized","message":"Invalid token"}}`)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_revoked"
+	expectCode(t, h, h.run("run", "--json"), 4)
+	if e := h.envelope()["error"].(map[string]any); e["code"] != "unauthorized" {
+		t.Fatalf("error = %v", e)
+	}
 }
 
 type fakeGitHub struct {
@@ -235,7 +312,9 @@ func TestCheckCommandIsThePullRequestGate(t *testing.T) {
 	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
 	h.commitSpec(t)
 	gitCmd(t, h.dir, "update-ref", "refs/remotes/origin/main", gitCmd(t, h.dir, "rev-parse", "HEAD~1"))
-	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
+	prOnly := referencePlanPass("reference")
+	prOnly["triggers"] = []string{"pr"}
+	h.pipelineRoutes(t, pipelinePlan(t, prOnly))
 	driftFixture(t, h)
 	githubPR(t, h, 42)
 	gh := newFakeGitHub(t, map[string]any{"id": 5, "body": "<!-- gravity:doc-impact repo=github.com/acme/billing-api -->\nold", "user": map[string]any{"login": "github-actions[bot]", "type": "Bot"}})
@@ -244,10 +323,10 @@ func TestCheckCommandIsThePullRequestGate(t *testing.T) {
 
 	expectCode(t, h, h.run("check"), 1)
 	out := h.stdout.String() + h.stderr.String()
-	if !strings.Contains(out, "::error file=api/openapi.yaml,title=Gravity%3A Refunds%3A POST /v1/refunds is out of date::") {
+	if !strings.Contains(out, "::error file=api/openapi.yaml,title=Gravity%3A Refunds%3A POST /v1/refunds changes in this pull request and no pass updates it::") {
 		t.Fatalf("annotations missing:\n%s", out)
 	}
-	if len(gh.patched) != 1 || !strings.Contains(gh.patched[0], "/issues/comments/5 ") || !strings.Contains(gh.patched[0], "### Gravity · doc impact for #42") || !strings.Contains(gh.patched[0], "**1 finding**") {
+	if len(gh.patched) != 1 || !strings.Contains(gh.patched[0], "/issues/comments/5 ") || !strings.Contains(gh.patched[0], "### Gravity · doc impact for #42") || !strings.Contains(gh.patched[0], "**2 findings**: Refunds: POST /v1/refunds changes in this pull request and no pass updates it; api:post:/v1/refunds is new in this pull request and no pass documents it.") {
 		t.Fatalf("the existing comment must be updated: %v (posted %v)", gh.patched, gh.posted)
 	}
 	summary, _ := os.ReadFile(h.env["GITHUB_STEP_SUMMARY"])
@@ -257,6 +336,13 @@ func TestCheckCommandIsThePullRequestGate(t *testing.T) {
 	start := h.platform.find("POST", "/api/v1/runs")[0].Body
 	if start["trigger"] != "pr" || start["mode"] != "dry" || len(h.platform.find("POST", "/api/v1/runs/prun_1/changes")) != 0 {
 		t.Fatalf("check runs dry: %v", start)
+	}
+
+	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
+	driftFixture(t, h)
+	expectCode(t, h, h.run("check"), 0)
+	if out := h.stdout.String(); !strings.Contains(out, "POST /v1/refunds changes in this pull request; pass developer-api updates Refunds on merge") || strings.Contains(out, "::error") {
+		t.Fatalf("a pull request whose change a reference pass follows passes the gate:\n%s", out)
 	}
 
 	h.platform.json("GET /api/v1/content/spaces/sp_1/tree", 200, `{"space":{"id":"sp_1","slug":"api"},"collections":[],"pages":[],"nextCursor":null}`)
@@ -352,5 +438,98 @@ func TestCheckFromPlansAgainstTheDefaultBranch(t *testing.T) {
 	start := starts[0].Body
 	if start["baseSha"] != base || start["pr"].(map[string]any)["targetBranch"] != "main" {
 		t.Fatalf("--from is the range base and main the target: %v", start)
+	}
+}
+
+func manualPlanPasses() []map[string]any {
+	guides := referencePlanPass("reference")
+	guides["name"], guides["id"], guides["applies"], guides["skipReason"], guides["triggers"] = "cli-guides", "rp_2", false, "trigger_mismatch", []string{"push", "pr"}
+	changelog := referencePlanPass("changelog")
+	changelog["name"], changelog["id"], changelog["applies"], changelog["skipReason"], changelog["triggers"] = "changelog", "rp_3", false, "trigger_mismatch", []string{"release"}
+	return []map[string]any{referencePlanPass("reference"), guides, changelog}
+}
+
+func TestManualRunNamesThePassesItLeftOut(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	h.commitSpec(t)
+	h.pipelineRoutes(t, pipelinePlan(t, manualPlanPasses()...))
+	expectCode(t, h, h.run("run"), 0)
+	if !strings.Contains(h.stdout.String(), "Manual run: developer-api ran. Not on manual runs: cli-guides (push, pr), changelog (release); run one by name with `gravity run --pass <name>`") {
+		t.Fatalf("stdout = %s", h.stdout.String())
+	}
+	none := manualPlanPasses()[1:]
+	h.pipelineRoutes(t, pipelinePlan(t, none...))
+	expectCode(t, h, h.run("run"), 0)
+	if !strings.Contains(h.stdout.String(), "Nothing ran: no pass runs on a manual run here") {
+		t.Fatalf("stdout = %s", h.stdout.String())
+	}
+}
+
+func TestManualRunOfANamedPass(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	h.commitSpec(t)
+	named := referencePlanPass("reference")
+	named["name"], named["triggers"] = "cli-guides", []string{"push", "pr"}
+	h.pipelineRoutes(t, pipelinePlan(t, named))
+	expectCode(t, h, h.run("run", "--pass", "cli-guides"), 0)
+	start := h.platform.find("POST", "/api/v1/runs")[0].Body
+	if start["trigger"] != "manual" {
+		t.Fatalf("start = %v", start)
+	}
+	if q := h.platform.find("GET", "/api/v1/repos/self/plan")[0].Query; q["pass"][0] != "cli-guides" || q["trigger"][0] != "manual" {
+		t.Fatalf("plan query = %v", q)
+	}
+
+	old := newHarness(t)
+	old.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	old.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	old.commitSpec(t)
+	old.pipelineRoutes(t, pipelinePlan(t, manualPlanPasses()...))
+	expectCode(t, old, old.run("run", "--pass", "cli-guides", "--json"), 2)
+	e := old.envelope()["error"].(map[string]any)
+	if e["code"] != "pass_not_applicable" || !strings.Contains(e["message"].(string), `does not run on manual runs (its triggers: push, pr)`) || !strings.Contains(e["message"].(string), "--trigger push") {
+		t.Fatalf("error = %v", e)
+	}
+	if len(old.platform.find("POST", "/api/v1/runs")) != 0 {
+		t.Fatal("no run starts for a named pass the plan refuses")
+	}
+	expectCode(t, old, old.run("run", "--pass", "nope", "--json"), 2)
+	e = old.envelope()["error"].(map[string]any)
+	if e["code"] != "pass_unknown" || !strings.Contains(e["message"].(string), `no pass named "nope" (passes: changelog, cli-guides, developer-api)`) {
+		t.Fatalf("error = %v", e)
+	}
+}
+
+func TestRunWarnsAboutUncommittedChanges(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	h.commitSpec(t)
+	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
+	expectCode(t, h, h.run("run"), 0)
+	if strings.Contains(h.stderr.String(), "uncommitted changes") {
+		t.Fatalf("clean tree: %s", h.stderr.String())
+	}
+	h.write("README.md", "# billing, edited\n")
+	expectCode(t, h, h.run("run"), 0)
+	if !strings.Contains(h.stderr.String(), "uncommitted changes are not part of this run") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+}
+
+func TestFindingsMessageCountsOnlyFailingCategories(t *testing.T) {
+	rep := &passes.Report{Failing: true, FailOn: []string{"drift", "claims"}}
+	rep.Findings = []api.Finding{
+		{Severity: api.SeverityError, Code: passes.CodeCoverage},
+		{Severity: api.SeverityError, Code: passes.CodeClaimContradicted},
+		{Severity: api.SeverityWarning, Code: passes.CodeDrift},
+	}
+	res := &engine.Result{Passes: []engine.PassResult{{Name: "gate", Report: rep}}}
+	if got := findingsMessage(res); got != "1 finding fails the check" {
+		t.Fatalf("message = %q", got)
 	}
 }

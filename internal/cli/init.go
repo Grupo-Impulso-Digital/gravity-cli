@@ -21,14 +21,15 @@ import (
 )
 
 type initOptions struct {
-	yes          bool
-	product      string
-	passesAsCode bool
-	appPasses    bool
-	ci           string
-	noSecret     bool
-	dryRun       bool
-	repoID       string
+	yes           bool
+	product       string
+	passesAsCode  bool
+	appPasses     bool
+	ci            string
+	noSecret      bool
+	dryRun        bool
+	repoID        string
+	replaceSecret bool
 }
 
 type initData struct {
@@ -74,12 +75,13 @@ type initPass struct {
 }
 
 type initToken struct {
-	Scopes    []string `json:"scopes"`
-	KeyHint   string   `json:"keyHint,omitempty"`
-	ExpiresAt *string  `json:"expiresAt"`
-	Secret    string   `json:"secret"`
-	Via       string   `json:"via,omitempty"`
-	Note      string   `json:"note,omitempty"`
+	Scopes          []string `json:"scopes"`
+	KeyHint         string   `json:"keyHint,omitempty"`
+	ExpiresAt       *string  `json:"expiresAt"`
+	Secret          string   `json:"secret"`
+	Via             string   `json:"via,omitempty"`
+	Note            string   `json:"note,omitempty"`
+	LegacyPipelines []string `json:"legacyPipelines,omitempty"`
 }
 
 const (
@@ -126,6 +128,7 @@ func newInitCmd(a *app) *cobra.Command {
 	f.BoolVar(&o.noSecret, "no-secret", false, "never install the CI secret; print the token once to paste instead")
 	f.BoolVar(&o.dryRun, "dry-run", false, "show the preview (files, passes, spaces, token) and change nothing")
 	f.StringVar(&o.repoID, "repo", "", "adopt a repository pre-registered in the app (its id)")
+	f.BoolVar(&o.replaceSecret, "replace-secret", false, "set GRAVITY_TOKEN even when a gravity 0.x pipeline still uses it (0.x refuses repository tokens)")
 	return cmd
 }
 
@@ -203,6 +206,9 @@ func (r *initRun) validateFlags() error {
 	}
 	if o.passesAsCode && o.appPasses {
 		return Failf(CodeError, "--passes-as-code and --app-passes exclude each other")
+	}
+	if o.replaceSecret && o.noSecret {
+		return Failf(CodeError, "--replace-secret and --no-secret exclude each other")
 	}
 	if !r.a.ui.Interactive() && !o.yes && !o.dryRun {
 		return &ExitError{Code: CodeError, ErrCode: "needs_terminal", Err: errors.New("init asks up to three questions and needs a terminal; pass --yes to accept the suggestions, or --dry-run to preview")}
@@ -295,7 +301,7 @@ func (r *initRun) signIn() error {
 	}
 	if creds.Token == "" {
 		if !a.ui.Interactive() {
-			return requireToken(creds)
+			return a.requireToken(creds)
 		}
 		if creds.APIURLSource == auth.SourceManifest && !auth.SameAPIURL(creds.APIURL, config.DefaultAPIURL) {
 			return &ExitError{Code: CodeError, ErrCode: "manifest_api_url", Err: fmt.Errorf("not signed in, and %s points at %s; gravity only signs you in to a host you name yourself: run `gravity login --api-url %s` if you trust it, then `gravity init` again", r.data.Manifest.Path, creds.APIURL, creds.APIURL)}
@@ -373,7 +379,10 @@ func appBaseURL(apiURL string) string {
 		return "https://app.gravitydocs.io"
 	}
 	if host, ok := strings.CutPrefix(u.Host, "api."); ok {
-		u.Host = "app." + host
+		u.Host = host
+		if strings.Count(host, ".") == 1 {
+			u.Host = "app." + host
+		}
 	}
 	u.Path, u.RawQuery = "", ""
 	return strings.TrimSuffix(u.String(), "/")

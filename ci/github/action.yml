@@ -7,7 +7,7 @@ branding:
 
 inputs:
   token:
-    description: Gravity repository token, from a secret (secrets.GRAVITY_TOKEN). Empty on fork pull requests, where the run is skipped with a warning.
+    description: Gravity repository token, from a secret (secrets.GRAVITY_TOKEN). Empty only on fork pull requests, where the run is skipped with a notice; an empty or unresolved token anywhere else fails with exit code 4.
     required: true
   command:
     description: "gravity command to run: run (default), check or status."
@@ -35,7 +35,7 @@ outputs:
     description: The Gravity run (or the bundle to review) this job produced.
     value: ${{ steps.gravity.outputs.run-url }}
   exit-code:
-    description: "gravity's exit code: 0 success, 1 findings, 2 error, 3 licence refusal."
+    description: "gravity's exit code: 0 success, 1 findings, 2 error, 3 licence refusal, 4 missing, unresolved or rejected token."
     value: ${{ steps.gravity.outputs.exit-code }}
 
 runs:
