@@ -595,3 +595,19 @@ func TestSitesAndLLMConfig(t *testing.T) {
 	}
 	expectRequest(t, s, "GET", "/api/llm/v1/config")
 }
+
+func TestOpenProposalPendingDistinguishesAbsentFromEmpty(t *testing.T) {
+	for body, want := range map[string]int{`{"id":"p"}`: -1, `{"id":"p","pending":[]}`: 0, `{"id":"p","pending":[{"repoId":"cr_1","remoteKey":"github.com/a/b","pass":"guides","runId":"prun_1"}]}`: 1} {
+		var op api.OpenProposal
+		if err := json.Unmarshal([]byte(body), &op); err != nil {
+			t.Fatal(err)
+		}
+		got := -1
+		if op.Pending != nil {
+			got = len(*op.Pending)
+		}
+		if got != want {
+			t.Fatalf("%s: pending = %d, want %d", body, got, want)
+		}
+	}
+}

@@ -195,6 +195,12 @@ audiences?, after?, units?, rationale? }`.
   variants map to `bulleted`, `numbered` or `task`, and heading levels are
   clamped to 1-3.
 - Human blocks and locked pages are never changed by AI passes.
+- Before updating a page whose open change request carries pipeline changes,
+  guides reads `openProposal.pending` (`repoId`, `remoteKey`, `pass`, `runId`)
+  from the space tree: a change from another repository or pass is reported
+  as competing, one from this repository and pass is reported as replaced
+  (the platform supersedes it on the next write). Without the list, the CLI
+  falls back to the block provenance of the open change.
 
 ## LLM gateway
 

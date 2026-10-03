@@ -20,10 +20,19 @@ type PageLock struct {
 
 // OpenProposal is the open proposal of a page.
 type OpenProposal struct {
-	ID            string `json:"id"`
-	Status        string `json:"status"`
-	PipelineRunID string `json:"pipelineRunId,omitempty"`
-	CreatedBy     string `json:"createdBy,omitempty"`
+	ID            string           `json:"id"`
+	Status        string           `json:"status"`
+	PipelineRunID string           `json:"pipelineRunId,omitempty"`
+	CreatedBy     string           `json:"createdBy,omitempty"`
+	Pending       *[]PendingChange `json:"pending,omitempty"`
+}
+
+// PendingChange is a pipeline change still waiting on an open proposal; nil Pending means the server predates the list.
+type PendingChange struct {
+	RepoID    string `json:"repoId"`
+	RemoteKey string `json:"remoteKey"`
+	Pass      string `json:"pass"`
+	RunID     string `json:"runId"`
 }
 
 // PageInfo is the page section of a content read.
