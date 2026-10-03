@@ -12,9 +12,10 @@
 - When every token variable holds an unexpanded reference, a local run falls
   back to the profile with a warning; CI still fails with `token_unresolved`.
 - The GitLab template also runs on `web` and `api` pipelines of any branch.
-- This repository's `cli-guides` pass writes task-oriented guides into the
-  `guides` collection of the CLI space instead of editing the curated
-  reference pages next to it.
+- This repository's `cli-guides` pass targets the `guides` collection of the
+  CLI space, for task-oriented guides beside the curated reference pages it
+  used to edit. It stays disabled until that collection exists and the target
+  is approved in the app.
 
 ### Fixed
 

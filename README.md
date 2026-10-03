@@ -369,7 +369,7 @@ profile `default`; the old file is never modified.
 | `1` | Findings: `check` findings in `failOn` (`run` and `check`), or `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, removed command. |
 | `3` | Licence refusal (`module_disabled`, `seat_limit`): ask a workspace administrator. |
-| `4` | No usable credentials: no token (`token_missing`), only CI variables that were never expanded such as a literal `$(GRAVITY_REPO_TOKEN)` (`token_unresolved`), or a token the server rejects (`401`, also in the middle of a run). |
+| `4` | No usable credentials: no token (`token_missing`), only CI variables that were never expanded such as a literal `$(GRAVITY_REPO_TOKEN)`, in CI or locally without a profile token (`token_unresolved`), or a token the server rejects (`401`, also in the middle of a run). |
 
 Precedence is `3` > `2` > `1` > `0`. A missing or unresolved token stops a
 command before any request; a rejected token stops it at the first `401`
