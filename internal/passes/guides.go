@@ -10,6 +10,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
@@ -98,6 +99,19 @@ func pendingChanges(ctx context.Context, in Input, rep *Report, p api.TreePage, 
 	if len(own) > 0 {
 		rep.warn("%s: replaces this pass's pending change from %s, which the platform supersedes", p.Slug, strings.Join(own, ", "))
 	}
+}
+
+func createPath(prefix, planned []string) []string {
+	var rest []string
+	for _, seg := range planned {
+		if strings.Trim(seg, " -_/") != "" {
+			rest = append(rest, normalize.ProductSlug(seg))
+		}
+	}
+	if hasPrefix(rest, prefix) {
+		rest = rest[len(prefix):]
+	}
+	return append(append([]string{}, prefix...), rest...)
 }
 
 func ownPendingChange(ctx context.Context, in Input, pageID, runID string) bool {
@@ -627,7 +641,7 @@ func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.
 	if a.Action == agent.ActionCreate {
 		req.Op = api.OpCreate
 		req.Title = firstOf(a.Title, changes.Title)
-		req.Target = api.ChangeTarget{SpaceID: in.SpaceID(), Slug: a.Slug, CollectionPath: append(in.CollectionPrefix(), a.CollectionPath...)}
+		req.Target = api.ChangeTarget{SpaceID: in.SpaceID(), Slug: a.Slug, CollectionPath: createPath(in.CollectionPrefix(), a.CollectionPath)}
 	} else {
 		req.Op = api.OpUpdate
 		req.Target = api.ChangeTarget{PageID: a.PageID}

@@ -11,6 +11,9 @@
   in the warning, this pass's own earlier change gets a quiet "replaces the
   pending change" note, and an empty list says nothing. Against servers
   without the list, the previous behaviour stays.
+- A page the guides pass creates gets a collection path of slugs: segments
+  the AI planned are slugified, and a plan that repeats the target collection
+  no longer nests it twice (`guides/guides`).
 
 ## v1.0.3 — 2026-10-03
 
