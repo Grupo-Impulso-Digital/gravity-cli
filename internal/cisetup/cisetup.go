@@ -28,7 +28,7 @@ const (
 var Providers = []string{GitHub, GitLab, Bitbucket, Azure, Jenkins, CircleCI, None}
 
 // SecretName is the CI secret the templates read.
-const SecretName = "GRAVITY_TOKEN"
+const SecretName = "GRAVITY_REPO_TOKEN"
 
 // DefaultInstallURL is the app route that serves install.sh.
 const DefaultInstallURL = "https://app.gravitydocs.io/install.sh"
@@ -159,6 +159,9 @@ func Build(root, provider string, o Options) (*Plan, error) {
 		f, err := planFile(root, ".github/workflows/gravity.yml", render("github", githubTemplate, d))
 		if err != nil {
 			return nil, err
+		}
+		if caller := SharedWorkflowCaller(root); caller != "" && f.Action != ActionKeep {
+			f = File{Path: f.Path, Action: ActionKeep, Note: caller + " calls the shared gravity-docs.yml workflow, which runs gravity 1.x for a version 2 manifest with " + SecretName}
 		}
 		p.Files = append(p.Files, f)
 	case GitLab:
@@ -303,7 +306,7 @@ func pasteHint(provider, webURL string) string {
 	case Azure:
 		return "add it as the secret pipeline variable " + SecretName + " (Pipelines > Edit > Variables, keep this value secret)"
 	case Jenkins:
-		return "add it as a Secret text credential with ID gravity-token (Manage Jenkins > Credentials)"
+		return "add it as a Secret text credential with ID gravity-repo-token (Manage Jenkins > Credentials)"
 	case CircleCI:
 		return "add it as the project environment variable " + SecretName + " (Project Settings > Environment Variables)"
 	}
@@ -352,7 +355,7 @@ jobs:
           fetch-depth: 0
       - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
         with:
-          token: ${{"{{"}} secrets.GRAVITY_TOKEN {{"}}"}}
+          token: ${{"{{"}} secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN {{"}}"}}
 {{- if .APIURL}}
           api-url: {{yaml .APIURL}}
 {{- end}}
@@ -491,6 +494,7 @@ steps:
       "$HOME/.local/bin/gravity" run
     displayName: Gravity
     env:
+      GRAVITY_REPO_TOKEN: $(GRAVITY_REPO_TOKEN)
       GRAVITY_TOKEN: $(GRAVITY_TOKEN)
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 {{- if .APIURL}}
@@ -500,7 +504,7 @@ steps:
 
 const jenkinsSnippet = `stage('Gravity') {
   environment {
-    GRAVITY_TOKEN = credentials('gravity-token')
+    GRAVITY_REPO_TOKEN = credentials('gravity-repo-token')
 {{- if .APIURL}}
     GRAVITY_API_URL = {{groovy .APIURL}}
 {{- end}}
@@ -532,5 +536,5 @@ workflows:
 `
 
 const genericSnippet = `curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
-GRAVITY_TOKEN=<secret>{{if .APIURL}} GRAVITY_API_URL={{sh .APIURL}}{{end}} gravity run
+GRAVITY_REPO_TOKEN=<secret>{{if .APIURL}} GRAVITY_API_URL={{sh .APIURL}}{{end}} gravity run
 `

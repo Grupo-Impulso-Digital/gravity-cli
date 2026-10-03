@@ -128,7 +128,8 @@ func newInitCmd(a *app) *cobra.Command {
 	f.BoolVar(&o.noSecret, "no-secret", false, "never install the CI secret; print the token once to paste instead")
 	f.BoolVar(&o.dryRun, "dry-run", false, "show the preview (files, passes, spaces, token) and change nothing")
 	f.StringVar(&o.repoID, "repo", "", "adopt a repository pre-registered in the app (its id)")
-	f.BoolVar(&o.replaceSecret, "replace-secret", false, "set GRAVITY_TOKEN even when a gravity 0.x pipeline still uses it (0.x refuses repository tokens)")
+	f.BoolVar(&o.replaceSecret, "replace-secret", false, "no effect: init stores the token as GRAVITY_REPO_TOKEN and never touches GRAVITY_TOKEN")
+	_ = f.MarkHidden("replace-secret")
 	return cmd
 }
 
@@ -204,11 +205,11 @@ func (r *initRun) validateFlags() error {
 	if o.ci != "" && !cisetup.Valid(o.ci) {
 		return Failf(CodeError, "--ci %q must be one of %s", o.ci, strings.Join(cisetup.Providers, ", "))
 	}
+	if o.replaceSecret {
+		r.a.ui.Warn("flag_deprecated", "--replace-secret has been deprecated and does nothing: init stores the repository token as "+config.EnvRepoToken+" and never touches "+config.EnvToken)
+	}
 	if o.passesAsCode && o.appPasses {
 		return Failf(CodeError, "--passes-as-code and --app-passes exclude each other")
-	}
-	if o.replaceSecret && o.noSecret {
-		return Failf(CodeError, "--replace-secret and --no-secret exclude each other")
 	}
 	if !r.a.ui.Interactive() && !o.yes && !o.dryRun {
 		return &ExitError{Code: CodeError, ErrCode: "needs_terminal", Err: errors.New("init asks up to three questions and needs a terminal; pass --yes to accept the suggestions, or --dry-run to preview")}

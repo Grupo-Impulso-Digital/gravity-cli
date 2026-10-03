@@ -33,4 +33,4 @@ pipelines:
             - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh
             - 'export GRAVITY_API_URL=https://api.acme.test'
             - GRAVITY_TRIGGER=schedule gravity run
-=== paste: add it as the secured repository variable GRAVITY_TOKEN (Repository settings > Pipelines > Repository variables)
+=== paste: add it as the secured repository variable GRAVITY_REPO_TOKEN (Repository settings > Pipelines > Repository variables)

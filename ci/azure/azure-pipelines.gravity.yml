@@ -16,5 +16,6 @@ steps:
       "$HOME/.local/bin/gravity" run
     displayName: Gravity
     env:
+      GRAVITY_REPO_TOKEN: $(GRAVITY_REPO_TOKEN)
       GRAVITY_TOKEN: $(GRAVITY_TOKEN)
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)

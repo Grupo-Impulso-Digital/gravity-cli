@@ -55,14 +55,7 @@ func UserAgent() string {
 func load() {
 	once.Do(func() {
 		bi, ok := debug.ReadBuildInfo()
-		resolved = resolve(Version, func() (string, bool) {
-			if !ok {
-				return "", false
-			}
-			return bi.Main.Version, true
-		})
 		build = Info{
-			Version:   resolved,
 			GoVersion: runtime.Version(),
 			Platform:  runtime.GOOS + "/" + runtime.GOARCH,
 		}
@@ -75,6 +68,13 @@ func load() {
 		if d := strings.TrimSpace(Date); d != "" {
 			build.BuildDate = d
 		}
+		resolved = resolve(Version, func() (string, bool) {
+			if !ok {
+				return "", false
+			}
+			return bi.Main.Version, true
+		}, build.Commit)
+		build.Version = resolved
 	})
 }
 
@@ -96,7 +96,7 @@ func vcsInfo(settings []debug.BuildSetting) (commit, date string) {
 	return commit, date
 }
 
-func resolve(stamped string, buildInfo func() (string, bool)) string {
+func resolve(stamped string, buildInfo func() (string, bool), commit string) string {
 	if v := normalize(stamped); v != "" {
 		return v
 	}
@@ -106,6 +106,12 @@ func resolve(stamped string, buildInfo func() (string, bool)) string {
 				return n
 			}
 		}
+	}
+	if c := strings.TrimSpace(commit); c != "" {
+		if len(c) > 12 {
+			c = c[:12]
+		}
+		return fallback + "+" + c
 	}
 	return fallback
 }

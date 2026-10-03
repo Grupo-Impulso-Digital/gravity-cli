@@ -24,9 +24,17 @@ type whoamiData struct {
 type whoamiToken struct {
 	Kind      string   `json:"kind"`
 	Source    string   `json:"source"`
+	Variable  string   `json:"variable,omitempty"`
 	KeyHint   string   `json:"keyHint,omitempty"`
 	Scopes    []string `json:"scopes"`
 	ExpiresAt *string  `json:"expiresAt"`
+}
+
+func (t whoamiToken) from() string {
+	if t.Variable != "" {
+		return t.Source + " " + t.Variable
+	}
+	return t.Source
 }
 
 func newWhoamiCmd(a *app) *cobra.Command {
@@ -58,7 +66,7 @@ func whoamiSummary(who *api.WhoAmI, creds auth.Credentials) whoamiData {
 	if org == nil {
 		org = &api.OrgRef{ID: who.OrganizationID, Name: who.OrganizationName}
 	}
-	tok := whoamiToken{Kind: creds.TokenKind, Source: creds.TokenSource, KeyHint: who.KeyHint, Scopes: []string{}}
+	tok := whoamiToken{Kind: creds.TokenKind, Source: creds.TokenSource, Variable: creds.TokenEnv, KeyHint: who.KeyHint, Scopes: []string{}}
 	if who.Token != nil {
 		if who.Token.Kind != "" {
 			tok.Kind = who.Token.Kind
@@ -116,7 +124,7 @@ func (a *app) printWhoami(d whoamiData) {
 	} else {
 		token += " · no expiry"
 	}
-	rows = append(rows, []string{"Token", token + " · from " + d.Token.Source})
+	rows = append(rows, []string{"Token", token + " · from " + d.Token.from()})
 	if len(d.Token.Scopes) > 0 {
 		rows = append(rows, []string{"Scopes", strings.Join(d.Token.Scopes, ", ")})
 	}

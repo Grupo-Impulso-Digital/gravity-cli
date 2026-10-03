@@ -2,11 +2,11 @@ provider: jenkins (Jenkins)
 === snippet for Jenkinsfile (add this stage)
 stage('Gravity') {
   environment {
-    GRAVITY_TOKEN = credentials('gravity-token')
+    GRAVITY_REPO_TOKEN = credentials('gravity-repo-token')
   }
   steps {
     sh 'curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 GRAVITY_INSTALL_DIR="$WORKSPACE/.gravity-bin" sh'
     sh '"$WORKSPACE/.gravity-bin/gravity" run'
   }
 }
-=== paste: add it as a Secret text credential with ID gravity-token (Manage Jenkins > Credentials)
+=== paste: add it as a Secret text credential with ID gravity-repo-token (Manage Jenkins > Credentials)

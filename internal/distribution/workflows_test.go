@@ -36,7 +36,7 @@ func TestDogfoodWorkflowIsTheSingleStepForm(t *testing.T) {
 			t.Fatalf("steps = %+v", job.Steps)
 		}
 		with := job.Steps[1].With
-		if with["token"] != "${{ secrets.GRAVITY_TOKEN }}" || with["version"] != "source" || with["command"] != "" {
+		if with["token"] != "${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}" || with["version"] != "source" || with["command"] != "" {
 			t.Fatalf("with = %v", with)
 		}
 	}

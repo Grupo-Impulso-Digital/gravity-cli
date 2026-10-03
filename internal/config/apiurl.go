@@ -13,10 +13,11 @@ const DefaultAPIURL = "https://api.gravitydocs.io"
 
 // Environment variables recognized by the CLI.
 const (
-	EnvToken    = "GRAVITY_TOKEN"
-	EnvAPIURL   = "GRAVITY_API_URL"
-	EnvProfile  = "GRAVITY_PROFILE"
-	EnvManifest = "GRAVITY_MANIFEST"
+	EnvRepoToken = "GRAVITY_REPO_TOKEN"
+	EnvToken     = "GRAVITY_TOKEN"
+	EnvAPIURL    = "GRAVITY_API_URL"
+	EnvProfile   = "GRAVITY_PROFILE"
+	EnvManifest  = "GRAVITY_MANIFEST"
 )
 
 // ManifestFileName is the default manifest path, relative to the repository root.

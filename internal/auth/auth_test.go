@@ -284,3 +284,33 @@ func TestDeviceLoginExpiresLocally(t *testing.T) {
 		t.Fatalf("err=%v polls=%d", err, script.calls)
 	}
 }
+
+func TestResolveReadsTheRepositoryTokenFirst(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     map[string]string
+		token   string
+		from    string
+		unknown []string
+	}{
+		{"repository token wins", map[string]string{"GRAVITY_REPO_TOKEN": "gr_repo_a", "GRAVITY_TOKEN": "sk_live_b"}, "gr_repo_a", "GRAVITY_REPO_TOKEN", nil},
+		{"GRAVITY_TOKEN as fallback", map[string]string{"GRAVITY_TOKEN": "sk_live_b"}, "sk_live_b", "GRAVITY_TOKEN", nil},
+		{"an unexpanded repository token falls through", map[string]string{"GRAVITY_REPO_TOKEN": "$(GRAVITY_REPO_TOKEN)", "GRAVITY_TOKEN": "sk_live_b"}, "sk_live_b", "GRAVITY_TOKEN", nil},
+		{"both unexpanded", map[string]string{"GRAVITY_REPO_TOKEN": "$(GRAVITY_REPO_TOKEN)", "GRAVITY_TOKEN": "$(GRAVITY_TOKEN)"}, "", "", []string{"GRAVITY_REPO_TOKEN", "GRAVITY_TOKEN"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Resolve(Inputs{Getenv: func(k string) string { return tc.env[k] }}, &Profiles{})
+			if tc.unknown != nil {
+				var ue *UnresolvedTokenError
+				if !errors.As(err, &ue) || strings.Join(ue.Vars, ",") != strings.Join(tc.unknown, ",") {
+					t.Fatalf("err = %v", err)
+				}
+				return
+			}
+			if err != nil || c.Token != tc.token || c.TokenFrom() != tc.from {
+				t.Fatalf("token from %q (err %v), want %q", c.TokenFrom(), err, tc.from)
+			}
+		})
+	}
+}
