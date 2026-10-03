@@ -157,7 +157,11 @@ type UnresolvedTokenError struct {
 }
 
 func (e *UnresolvedTokenError) Error() string {
-	return fmt.Sprintf("%s holds an unexpanded variable reference (%s) instead of a token: the CI secret is not defined for this job, or is not passed to it; store the repository token as %s", strings.Join(e.Vars, " and "), e.Shape, config.EnvRepoToken)
+	verb := "holds"
+	if len(e.Vars) > 1 {
+		verb = "hold"
+	}
+	return fmt.Sprintf("%s %s an unexpanded variable reference (%s) instead of a token: the CI secret is not defined for this job, or is not passed to it; store the repository token as %s", strings.Join(e.Vars, " and "), verb, e.Shape, config.EnvRepoToken)
 }
 
 var unresolvedShapes = []struct {
