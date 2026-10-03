@@ -66,6 +66,25 @@ func targetPages(in Input, tree *api.SpaceTree) map[string]api.TreePage {
 	return out
 }
 
+func ownPendingChange(ctx context.Context, in Input, pageID, runID string) bool {
+	page, err := in.Client.Page(ctx, pageID, api.PageQuery{State: "draft", Format: "json"})
+	if err != nil {
+		return false
+	}
+	found := false
+	for _, b := range page.Blocks {
+		pv := b.Provenance
+		if pv == nil || pv.RunID != runID {
+			continue
+		}
+		if pv.Pass != in.Pass.Name || pv.Repo != in.Info.Name && pv.Repo != in.Info.RemoteKey {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 func hasPrefix(path, prefix []string) bool {
 	if len(prefix) > len(path) {
 		return false
@@ -406,7 +425,11 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			}
 			if op := p.OpenProposal; op != nil && op.PipelineRunID != "" && op.PipelineRunID != in.RunID && !pending[p.ID] {
 				pending[p.ID] = true
-				rep.Competing = append(rep.Competing, Competition{Page: api.PageRef{ID: p.ID, Slug: p.Slug, Title: p.Title}, With: []api.CompetingChange{{RunID: op.PipelineRunID}}, Pending: true})
+				if ownPendingChange(ctx, in, p.ID, op.PipelineRunID) {
+					rep.warn("%s: replaces this pass's pending change from %s, which the platform supersedes", p.Slug, op.PipelineRunID)
+				} else {
+					rep.Competing = append(rep.Competing, Competition{Page: api.PageRef{ID: p.ID, Slug: p.Slug, Title: p.Title}, With: []api.CompetingChange{{RunID: op.PipelineRunID}}, Pending: true})
+				}
 			}
 			if p.Lock != nil {
 				rep.warn("page %s is locked to %s; skipped", p.Slug, p.Lock.Path)

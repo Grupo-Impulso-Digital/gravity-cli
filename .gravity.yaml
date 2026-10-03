@@ -12,13 +12,18 @@ passes:
   - name: cli-guides
     kind: guides
     template: developer-guide
-    target: gravity/cli
+    target: gravity/cli/guides
+    enabled: false
     triggers: [push, pr]
     audiences: [developers]
     instructions: |
-      Document the gravity CLI for engineers who connect a repository and run
-      it in CI: commands, flags, exit codes, the .gravity.yaml manifest and the
-      CI templates. Every example must run as written.
+      Write task-oriented guides for engineers who connect a repository and
+      run gravity in CI: setting up a repository, migrating from 0.x, wiring
+      each CI provider, reading a pull request report, recovering from common
+      errors. The command, flag, exit-code and manifest reference is curated
+      by hand in the pages of this space outside this collection: link to it
+      instead of restating it, and never contradict it. Every example must run
+      as written.
     options:
       languages: [fr]
   - name: handbook

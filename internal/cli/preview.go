@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -45,6 +46,9 @@ func newPreviewCmd(a *app) *cobra.Command {
 			}
 			ctx := cmd.Context()
 			s, err := a.pipelineSession(ctx, modePreview, f, committed)
+			if errors.Is(err, errForkPR) {
+				return a.forkPR(s)
+			}
 			if err != nil {
 				return err
 			}

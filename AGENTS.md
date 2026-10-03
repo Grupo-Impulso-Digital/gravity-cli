@@ -155,8 +155,10 @@ to `debug.ReadBuildInfo`.
   CLI 1.x never writes the v0.x `config.yaml`; it copies its token into the
   profile `default` once and leaves the file untouched.
 - **Precedence**: token `--token` > `GRAVITY_REPO_TOKEN` > `GRAVITY_TOKEN` >
-  profile (`--profile` >
-  `GRAVITY_PROFILE` > current). API URL `--api-url` > `GRAVITY_API_URL` >
+  profile (`--profile` > `GRAVITY_PROFILE` > current). `auth.EnvToken` trims
+  values and skips unexpanded references; when only references are set, CI
+  fails with `token_unresolved` and a local run falls back to the profile with
+  a warning. API URL `--api-url` > `GRAVITY_API_URL` >
   manifest `apiUrl` > profile `apiUrl` > default. `auth.Resolve` refuses a
   profile token whose issuing host differs from the resolved API URL
   (`HostMismatchError`), so a cloned repository's `apiUrl` never receives a

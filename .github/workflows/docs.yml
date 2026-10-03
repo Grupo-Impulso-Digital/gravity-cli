@@ -20,5 +20,6 @@ jobs:
           fetch-depth: 0
       - uses: ./ci/github
         with:
-          token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}
+          repo-token: ${{ secrets.GRAVITY_REPO_TOKEN }}
+          token: ${{ secrets.GRAVITY_TOKEN }}
           version: source

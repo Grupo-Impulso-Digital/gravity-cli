@@ -19,7 +19,12 @@ endpoint, print their replacement and exit `2` with `command_removed`.
   to `<apiUrl>/api/llm/v1/...`) with `Authorization: Bearer <token>`. A token is
   a repository token (`gr_repo_…`), a user token (`gr_user_…`) or an
   organization key (`sk_live_…`), read from `--token`, `GRAVITY_REPO_TOKEN`,
-  `GRAVITY_TOKEN` or a profile, in that order. A repository token names its
+  `GRAVITY_TOKEN` or a profile, in that order (`auth.Resolve`). Variable
+  values are trimmed, and a value that is an unexpanded reference such as
+  `$(GRAVITY_REPO_TOKEN)` is skipped for the next source. When only such
+  references are set, CI fails with `token_unresolved`; a local run uses the
+  profile token, if there is one, with the warning `token_unresolved_ignored`.
+  `whoami` and `status` name the source actually used. A repository token names its
   repository; a
   user or organization principal names it with `?repo=<remoteKey>` on the
   `repos/self` and `runs` routes (`repoParam` in `internal/cli/app.go`), and
@@ -52,7 +57,7 @@ endpoint, print their replacement and exit `2` with `command_removed`.
 | `1` | Findings in `failOn` (`run`, `check`), or `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, removed command. |
 | `3` | Licence refusal (`module_disabled`, `seat_limit`). |
-| `4` | No usable credentials: no token (`token_missing`), only unexpanded CI variables such as a literal `$(GRAVITY_REPO_TOKEN)` (`token_unresolved`), or any `401` (`unauthorized`), which also stops a run without its finish call. |
+| `4` | No usable credentials: no token (`token_missing`), only unexpanded CI variables such as a literal `$(GRAVITY_REPO_TOKEN)` in CI, or locally with no profile token (`token_unresolved`), or any `401` (`unauthorized`), which also stops a run without its finish call. |
 
 `CodeFor` in `internal/cli/exit.go` applies them: a licence refusal anywhere in
 the error chain wins, then a `401`, then the command's own `*ExitError`.

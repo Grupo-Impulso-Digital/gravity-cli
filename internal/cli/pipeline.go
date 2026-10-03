@@ -92,7 +92,7 @@ func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipeline
 	if m != nil {
 		apiURL = m.APIURL
 	}
-	fork := c.IsCI() && (c.Fork && opts.Trigger == config.TriggerPR || c.Bot != "")
+	fork := c.IsCI() && c.NoSecrets()
 	creds, err := a.credentials(apiURL)
 	if err != nil {
 		var ee *ExitError

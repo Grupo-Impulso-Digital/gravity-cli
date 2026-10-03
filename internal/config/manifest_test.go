@@ -85,7 +85,7 @@ func TestExactMessages(t *testing.T) {
 		"invalid/target-site-only.yaml":       `passes[0].target: guides targets need <site>/<space>[/<collection>...]`,
 		"invalid/verbatim-without-files.yaml": `passes[0]: verbatim passes require options.files`,
 		"invalid/parent-path.yaml":            `code.openapi[0]: paths must stay inside the repository (no .. segments)`,
-		"invalid/token-in-manifest.yaml":      `token: tokens are never read from .gravity.yaml; use GRAVITY_TOKEN in CI or ` + "`gravity login`" + ` locally`,
+		"invalid/token-in-manifest.yaml":      `token: tokens are never read from .gravity.yaml; use GRAVITY_REPO_TOKEN (or GRAVITY_TOKEN) in CI, or ` + "`gravity login`" + ` locally`,
 		"invalid/bad-pass-name.yaml":          `passes[0].name: pass names are lowercase slugs (a-z, 0-9, dashes; at most 63 characters)`,
 		"invalid/template-without-kind.yaml":  `passes[0]: kind is required even when template is given (template api-reference is a reference pass)`,
 		"invalid/override-on-glob.yaml":       `passes[0].options.files[0].include: slug/title overrides need a literal include (one file), not a glob`,

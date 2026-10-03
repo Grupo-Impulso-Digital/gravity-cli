@@ -6,9 +6,14 @@ branding:
   color: purple
 
 inputs:
+  repo-token:
+    description: "The repository token, from the secret GRAVITY_REPO_TOKEN that gravity init stores. Exported as GRAVITY_REPO_TOKEN, which the CLI reads first."
+    required: false
+    default: ""
   token:
-    description: "Gravity token: the expression secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN (the repository token gravity init stores as GRAVITY_REPO_TOKEN, else a GRAVITY_TOKEN user or organization token). Empty only on fork and Dependabot pull requests, where the run is skipped with a notice; empty anywhere else fails with exit code 4."
-    required: true
+    description: "A user or organization token, from the secret GRAVITY_TOKEN (the gravity 0.x name). Exported as GRAVITY_TOKEN, read when repo-token is empty. With neither, fork and Dependabot pull requests are skipped with a notice and every other run fails with exit code 4."
+    required: false
+    default: ""
   command:
     description: "gravity command to run: run (default), check or status."
     required: false
@@ -116,6 +121,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
+        GRAVITY_REPO_TOKEN: ${{ inputs.repo-token }}
         GRAVITY_TOKEN: ${{ inputs.token }}
         GITHUB_TOKEN: ${{ github.token }}
         INPUT_COMMAND: ${{ inputs.command }}

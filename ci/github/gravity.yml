@@ -18,4 +18,5 @@ jobs:
           fetch-depth: 0
       - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
         with:
-          token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}
+          repo-token: ${{ secrets.GRAVITY_REPO_TOKEN }}
+          token: ${{ secrets.GRAVITY_TOKEN }}

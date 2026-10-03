@@ -37,6 +37,13 @@ func (t whoamiToken) from() string {
 	return t.Source
 }
 
+func profileOf(creds auth.Credentials) string {
+	if creds.TokenSource == auth.SourceProfile {
+		return creds.ProfileName
+	}
+	return ""
+}
+
 func newWhoamiCmd(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "whoami",
@@ -86,7 +93,7 @@ func whoamiSummary(who *api.WhoAmI, creds auth.Credentials) whoamiData {
 	}
 	return whoamiData{
 		Principal: who.Principal, Organization: org, Organizations: orgs, Token: tok,
-		APIURL: creds.APIURL, Profile: creds.ProfileName, Features: features, Modules: who.Modules,
+		APIURL: creds.APIURL, Profile: profileOf(creds), Features: features, Modules: who.Modules,
 	}
 }
 
