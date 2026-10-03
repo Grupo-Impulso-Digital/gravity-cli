@@ -104,7 +104,7 @@ func (a *app) publishReport(ctx context.Context, s *pipelineSession, res *engine
 	}
 	doc := reportDoc(res, s.info, prNumber)
 	body := report.Markdown(doc)
-	findings := doc.Findings()
+	findings := annotatedFindings(res)
 	switch annotationTarget(annotate, s.ci) {
 	case ci.GitHub:
 		for _, line := range report.GitHubAnnotations(findings) {
@@ -134,6 +134,24 @@ func (a *app) publishReport(ctx context.Context, s *pipelineSession, res *engine
 			a.ui.Println("Report written to %s", reportFile)
 		}
 	}
+}
+
+func annotatedFindings(res *engine.Result) []api.Finding {
+	off := map[string]bool{}
+	if res.Plan != nil {
+		for _, pp := range res.Plan.Passes {
+			if v, ok := pp.Options["annotate"].(bool); ok && !v {
+				off[pp.Name] = true
+			}
+		}
+	}
+	var out []api.Finding
+	for _, p := range res.Passes {
+		if p.Report != nil && (!off[p.Name] || p.Implicit) {
+			out = append(out, p.Report.Findings...)
+		}
+	}
+	return out
 }
 
 func (a *app) writeCodeQuality(s *pipelineSession, findings []api.Finding) {

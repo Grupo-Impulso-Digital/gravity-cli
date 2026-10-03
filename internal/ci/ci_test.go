@@ -351,3 +351,40 @@ func TestForkDetection(t *testing.T) {
 		})
 	}
 }
+
+func TestDependabotAndManualStarts(t *testing.T) {
+	dep := detect(t, map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_EVENT_PATH": "/ev.json"},
+		map[string]string{"/ev.json": `{"pull_request":{"number":3,"user":{"login":"dependabot[bot]"},"head":{"sha":"a","repo":{"full_name":"acme/x"}},"base":{"ref":"main","repo":{"full_name":"acme/x"}}}}`}, nil)
+	if dep.Bot != BotDependabot || dep.Fork || !dep.NoSecrets() {
+		t.Fatalf("dependabot pull request = %+v", dep)
+	}
+	push := detect(t, map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push", "GITHUB_ACTOR": "dependabot[bot]"}, nil, nil)
+	if push.Bot != BotDependabot {
+		t.Fatalf("dependabot push = %+v", push)
+	}
+	human := detect(t, map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push", "GITHUB_ACTOR": "dave"}, nil, nil)
+	if human.NoSecrets() {
+		t.Fatalf("a human push has secrets: %+v", human)
+	}
+	cases := []struct {
+		name string
+		vars map[string]string
+		want string
+	}{
+		{"jenkins user cause", map[string]string{"JENKINS_URL": "https://ci", "BUILD_CAUSE": "USERIDCAUSE"}, TriggerManual},
+		{"jenkins root cause", map[string]string{"JENKINS_URL": "https://ci", "ROOT_BUILD_CAUSE": "MANUALTRIGGER"}, TriggerManual},
+		{"jenkins build user", map[string]string{"JENKINS_URL": "https://ci", "BUILD_USER_ID": "dave"}, TriggerManual},
+		{"jenkins timer", map[string]string{"JENKINS_URL": "https://ci", "BUILD_CAUSE": "TIMERTRIGGER"}, TriggerSchedule},
+		{"jenkins scm", map[string]string{"JENKINS_URL": "https://ci", "BUILD_CAUSE": "SCMTRIGGER"}, TriggerPush},
+		{"jenkins pull request stays pr", map[string]string{"JENKINS_URL": "https://ci", "CHANGE_ID": "4", "BUILD_USER_ID": "dave"}, TriggerPR},
+		{"circleci api", map[string]string{"CIRCLECI": "true", "CIRCLE_PIPELINE_TRIGGER_SOURCE": "api"}, TriggerManual},
+		{"circleci schedule", map[string]string{"CIRCLECI": "true", "CIRCLE_PIPELINE_TRIGGER_SOURCE": "scheduled_pipeline"}, TriggerSchedule},
+		{"circleci webhook", map[string]string{"CIRCLECI": "true", "CIRCLE_PIPELINE_TRIGGER_SOURCE": "webhook"}, TriggerPush},
+		{"bitbucket override", map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "GRAVITY_TRIGGER": "manual"}, TriggerManual},
+	}
+	for _, tc := range cases {
+		if got := detect(t, tc.vars, nil, nil).Trigger; got != tc.want {
+			t.Errorf("%s: trigger = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

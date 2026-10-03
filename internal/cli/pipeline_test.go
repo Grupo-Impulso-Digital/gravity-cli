@@ -456,8 +456,23 @@ func TestManualRunNamesThePassesItLeftOut(t *testing.T) {
 	h.commitSpec(t)
 	h.pipelineRoutes(t, pipelinePlan(t, manualPlanPasses()...))
 	expectCode(t, h, h.run("run"), 0)
-	if !strings.Contains(h.stdout.String(), "Manual run: developer-api ran. Not on manual runs: cli-guides (push, pr), changelog (release); run one by name with `gravity run --pass <name>`") {
-		t.Fatalf("stdout = %s", h.stdout.String())
+	for _, want := range []string{"Manual run: 1 pass eligible (developer-api).", "wrote: developer-api (1 new)", "Not on manual runs: cli-guides (push, pr), changelog (release); run one by name with `gravity run --pass <name>`"} {
+		if !strings.Contains(h.stdout.String(), want) {
+			t.Fatalf("missing %q in\n%s", want, h.stdout.String())
+		}
+	}
+	scoped := referencePlanPass("guides")
+	scoped["name"], scoped["id"], scoped["scope"] = "ui-guides", "rp_4", map[string]any{"paths": []string{"ui/**"}}
+	scoped["watermark"] = map[string]any{"branch": "main", "commitSha": gitCmd(t, h.dir, "rev-parse", "HEAD~1")}
+	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference"), scoped))
+	expectCode(t, h, h.run("run"), 0)
+	for _, want := range []string{"Manual run: 2 passes eligible (developer-api, ui-guides).", "skipped: ui-guides (scope unchanged)"} {
+		if !strings.Contains(h.stdout.String(), want) {
+			t.Fatalf("missing %q in\n%s", want, h.stdout.String())
+		}
+	}
+	if strings.Contains(h.stdout.String(), "ui-guides ran") {
+		t.Fatal("a skipped pass is never reported as ran")
 	}
 	none := manualPlanPasses()[1:]
 	h.pipelineRoutes(t, pipelinePlan(t, none...))
@@ -531,5 +546,38 @@ func TestFindingsMessageCountsOnlyFailingCategories(t *testing.T) {
 	res := &engine.Result{Passes: []engine.PassResult{{Name: "gate", Report: rep}}}
 	if got := findingsMessage(res); got != "1 finding fails the check" {
 		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestDependabotRunWithoutATokenIsSkipped(t *testing.T) {
+	h := newHarness(t)
+	githubPR(t, h, 9)
+	head := gitCmd(t, h.dir, "rev-parse", "HEAD")
+	data := fmt.Sprintf(`{"pull_request":{"number":9,"user":{"login":"dependabot[bot]"},"head":{"sha":"%s","ref":"dependabot/go_modules/x","repo":{"full_name":"acme/billing-api"}},"base":{"ref":"main","repo":{"full_name":"acme/billing-api"}}}}`, head)
+	if err := os.WriteFile(h.env["GITHUB_EVENT_PATH"], []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expectCode(t, h, h.run("check", "--json"), 0)
+	if h.envelope()["data"].(map[string]any)["skipped"] != "dependabot_no_token" || !strings.Contains(h.stderr.String(), "Dependabot secret") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+	if len(h.platform.requests) != 0 {
+		t.Fatal("no request without a token")
+	}
+}
+
+func TestA401InsideAPassExitsFour(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	h.commitSpec(t)
+	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
+	h.platform.json("POST /api/v1/runs/prun_1/changes", 401, `{"error":{"code":"unauthorized","message":"Token revoked"}}`)
+	expectCode(t, h, h.run("run", "--json"), 4)
+	if e := h.envelope()["error"].(map[string]any); e["code"] != "unauthorized" {
+		t.Fatalf("error = %v", e)
+	}
+	if len(h.platform.find("POST", "/api/v1/runs/prun_1/finish")) != 0 {
+		t.Fatal("a rejected token stops the run without a finish call")
 	}
 }

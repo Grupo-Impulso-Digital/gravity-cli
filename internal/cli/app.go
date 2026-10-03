@@ -51,6 +51,7 @@ type app struct {
 	prompts      ui.Prompter
 	secretRunner cisetup.Runner
 	clock        func() time.Time
+	lastCreds    *auth.Credentials
 }
 
 func (a *app) now() time.Time {
@@ -184,6 +185,7 @@ func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
 		}
 	}
 	a.ui.Debugf("api %s (%s), token from %s, profile %q", creds.APIURL, creds.APIURLSource, creds.TokenFrom(), creds.ProfileName)
+	a.lastCreds = &creds
 	return creds, nil
 }
 
@@ -193,6 +195,19 @@ func (a *app) client(creds auth.Credentials) *api.Client {
 		a.configure(c)
 	}
 	return c
+}
+
+func (a *app) credentialHint(err error) string {
+	if !errors.Is(err, api.ErrUnauthorized) || strings.Contains(err.Error(), "gravity login") {
+		return ""
+	}
+	if c, _ := ci.Detect(context.Background(), ci.Env{Getenv: a.env}, nil); c.IsCI() {
+		return ""
+	}
+	if a.lastCreds != nil && a.lastCreds.TokenSource != auth.SourceProfile {
+		return "; the token in " + a.lastCreds.TokenFrom() + " was rejected"
+	}
+	return "; run `gravity login` to sign in again"
 }
 
 func (a *app) requireToken(creds auth.Credentials) error {

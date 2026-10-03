@@ -212,6 +212,9 @@ func Markdown(d Doc) string {
 		extra = append(extra, plural(nNotes, "note", "notes"))
 	}
 	if len(extra) > 0 {
+		if len(findings) == 0 {
+			b.WriteString("\n")
+		}
 		b.WriteString(strings.Join(extra, " · ") + ".\n")
 	}
 	writeCompeting(&b, d.Competing)

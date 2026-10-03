@@ -423,6 +423,16 @@ pipelines:
             - {{yaml (print "export GRAVITY_API_URL=" (sh .APIURL))}}
 {{- end}}
             - GRAVITY_TRIGGER=schedule gravity run
+    gravity-manual:
+      - step:
+          name: Gravity (manual)
+          script:
+            - apk add --no-cache git curl
+            - curl -fsSL {{.InstallURL}} | GRAVITY_VERSION=1 sh
+{{- if .APIURL}}
+            - {{yaml (print "export GRAVITY_API_URL=" (sh .APIURL))}}
+{{- end}}
+            - GRAVITY_TRIGGER=manual gravity run
 `
 
 const bitbucketSnippet = `clone:
@@ -526,8 +536,9 @@ const circleSnippet = `jobs:
       - run:
           name: Gravity
           command: $HOME/.local/bin/gravity run
-{{- if .APIURL}}
           environment:
+            CIRCLE_PIPELINE_TRIGGER_SOURCE: << pipeline.trigger_source >>
+{{- if .APIURL}}
             GRAVITY_API_URL: {{yaml .APIURL}}
 {{- end}}
 workflows:

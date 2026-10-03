@@ -31,4 +31,11 @@ pipelines:
             - apk add --no-cache git curl
             - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh
             - GRAVITY_TRIGGER=schedule gravity run
+    gravity-manual:
+      - step:
+          name: Gravity (manual)
+          script:
+            - apk add --no-cache git curl
+            - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh
+            - GRAVITY_TRIGGER=manual gravity run
 === paste: add it as the secured repository variable GRAVITY_REPO_TOKEN (Repository settings > Pipelines > Repository variables)

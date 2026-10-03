@@ -361,8 +361,7 @@ func (r *initRun) plan() error {
 		ip.secretExists = exists
 	}
 	ip.legacy = cisetup.LegacyPipelines(r.info.root)
-	switch {
-	case ip.canMint && ip.installer == nil && !r.o.noSecret && !r.a.terminal:
+	if ip.canMint && ip.installer == nil && !r.o.noSecret && !r.a.terminal {
 		ip.canMint, ip.mintReason = false, "there is no terminal to show the token on and it must not land in logs; pass --no-secret to print it anyway, or mint one in the app"
 	}
 	r.ip = ip

@@ -36,10 +36,14 @@ Deploys are never gated by documentation writes. Only `check` findings exit `1`.
 
 ## Secrets and tokens
 
-`GRAVITY_TOKEN` is a repository token (`gr_repo_…`) minted by `gravity init`
-with exactly the scopes of the repository's passes. Store it in the provider's
-secret store; never commit it, and never put it in `.gravity.yaml` (a `token:`
-there is a manifest error).
+`GRAVITY_REPO_TOKEN` holds the repository token (`gr_repo_…`) that `gravity
+init` mints with exactly the scopes of the repository's passes and stores in
+the provider's secret store. The CLI reads `GRAVITY_REPO_TOKEN` first, then
+`GRAVITY_TOKEN` (a user or organization token, and the name gravity 0.x
+pipelines use), so a 0.x pipeline keeps its `GRAVITY_TOKEN` while the
+repository moves to 1.x. The templates pass both; on Azure an undefined one
+stays a literal `$(NAME)`, which the CLI skips. Never commit a token, and never
+put it in `.gravity.yaml` (a `token:` there is a manifest error).
 
 Pull request comments need a provider token next to it:
 
@@ -58,10 +62,12 @@ create and where to store it.
 Fork pull requests run without secrets. The CLI detects them per provider
 (the GitHub event's head and base repositories, GitLab's source and target
 projects, `SYSTEM_PULLREQUEST_ISFORK` on Azure, `CHANGE_FORK` on Jenkins,
-`CIRCLE_PR_*` on CircleCI) and then skips with a notice and exit `0`. Anywhere
-else an empty `GRAVITY_TOKEN`, or one that is still a literal variable
-reference such as `$(GRAVITY_TOKEN)` on Azure when the variable is not defined,
-fails with exit `4`, so a missing secret never passes silently. The GitHub template uses `pull_request`, never
+`CIRCLE_PR_*` on CircleCI) and then skips with a notice and exit `0`. GitHub
+runs started by Dependabot (the event's actor, sender or pull request author)
+get only Dependabot secrets and are skipped the same way; add
+`GRAVITY_REPO_TOKEN` as a Dependabot secret to check them. Anywhere else no
+token, or only literal variable references such as `$(GRAVITY_REPO_TOKEN)` on
+Azure, fails with exit `4`, so a missing secret never passes silently. The GitHub template uses `pull_request`, never
 `pull_request_target`, which would run fork code with your secrets.
 
 ## Reports
@@ -83,12 +89,12 @@ fails with exit `4`, so a missing secret never passes silently. The GitHub templ
 ```yaml
 - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1
   with:
-    token: ${{ secrets.GRAVITY_TOKEN }}
+    token: ${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}
 ```
 
 | Input | Default | Notes |
 | ----- | ------- | ----- |
-| `token` | required | The repository token. Empty on fork pull requests (the run is skipped); empty anywhere else fails with exit `4`. |
+| `token` | required | `${{ secrets.GRAVITY_REPO_TOKEN || secrets.GRAVITY_TOKEN }}`. Empty on fork and Dependabot pull requests (the run is skipped); empty anywhere else fails with exit `4`. |
 | `command` | `run` | `run`, `check` or `status`. |
 | `args` | `""` | Extra flags, for example `--pass developer-api`. |
 | `version` | `1` | A major (`1`), a release (`v1.2.3`), `latest`, or `source` (build from the action checkout). |

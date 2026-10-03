@@ -10,6 +10,8 @@ jobs:
       - run:
           name: Gravity
           command: $HOME/.local/bin/gravity run
+          environment:
+            CIRCLE_PIPELINE_TRIGGER_SOURCE: << pipeline.trigger_source >>
 workflows:
   gravity:
     jobs: [gravity]

@@ -186,11 +186,10 @@ func updatingPass(in Input, spec, spaceID string) string {
 		if pp.Kind != config.KindReference || !pp.Enabled || pp.Target.Status != api.TargetOK || pp.Target.Space == nil || spaceID != "" && pp.Target.Space.ID != spaceID {
 			continue
 		}
-		if in.Trigger == config.TriggerPR {
-			if !containsString(pp.Triggers, config.TriggerPush) || pp.SkipReason == api.SkipBranchMismatch {
-				continue
-			}
-		} else if !pp.Applies {
+		if pp.SkipReason == api.SkipBranchMismatch || !pp.Applies && !containsString(pp.Triggers, config.TriggerPush) {
+			continue
+		}
+		if in.Trigger == config.TriggerPR && !containsString(pp.Triggers, config.TriggerPush) {
 			continue
 		}
 		for _, src := range ReferenceSources(pp, in.Manifest) {
@@ -598,14 +597,18 @@ func claimPages(ctx context.Context, in Input) ([]claimPage, error) {
 		}
 	}
 	codeChanged := false
+	changed := map[string]bool{}
 	if in.ChangeSet != nil {
 		for _, f := range in.ChangeSet.Files {
+			if f.Status != "D" {
+				changed[f.Path] = true
+			}
 			if !strings.HasSuffix(f.Path, ".md") && !strings.HasSuffix(f.Path, ".mdx") {
 				codeChanged = true
 			}
 		}
 	}
-	if !codeChanged {
+	if !codeChanged && len(changed) == 0 {
 		return out, nil
 	}
 	for _, pp := range in.Plan.Passes {
@@ -619,10 +622,22 @@ func claimPages(ctx context.Context, in Input) ([]claimPage, error) {
 			}
 			continue
 		}
-		added := 0
+		locked := make([]api.TreePage, 0, len(tree.Pages))
 		for _, p := range tree.Pages {
-			if !lockedToPass(p.Lock, pp.Name, in.Info) || added == 4 {
+			if !lockedToPass(p.Lock, pp.Name, in.Info) {
 				continue
+			}
+			if codeChanged || changed[strings.TrimPrefix(p.Lock.Path, "./")] {
+				locked = append(locked, p)
+			}
+		}
+		sort.SliceStable(locked, func(i, j int) bool {
+			return changed[strings.TrimPrefix(locked[i].Lock.Path, "./")] && !changed[strings.TrimPrefix(locked[j].Lock.Path, "./")]
+		})
+		added := 0
+		for _, p := range locked {
+			if added == 4 {
+				break
 			}
 			if seen[p.ID] {
 				for i := range out {
