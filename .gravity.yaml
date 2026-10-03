@@ -13,7 +13,6 @@ passes:
     kind: guides
     template: developer-guide
     target: gravity/cli/guides
-    enabled: false
     triggers: [push, pr]
     audiences: [developers]
     instructions: |
