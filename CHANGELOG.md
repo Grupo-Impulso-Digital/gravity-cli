@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.4 — Unreleased
+
+### Fixed
+
+- The guides pass no longer warns that a page "already has an open change"
+  when the only pending change on it comes from this repository and pass,
+  which the platform supersedes. It reads the open change request's
+  `pending` list (repository, pass, run): another repository or pass is named
+  in the warning, this pass's own earlier change gets a quiet "replaces the
+  pending change" note, and an empty list says nothing. Against servers
+  without the list, the previous behaviour stays.
+
 ## v1.0.3 — 2026-10-03
 
 ### Changed

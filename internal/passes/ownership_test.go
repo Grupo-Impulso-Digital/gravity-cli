@@ -168,3 +168,42 @@ func TestGuidesPreviewSupersedesItsOwnPendingChange(t *testing.T) {
 		t.Fatalf("competing=%+v warnings=%v", rep.Competing, rep.Warnings)
 	}
 }
+
+func TestGuidesPreviewReadsThePendingList(t *testing.T) {
+	cases := []struct {
+		name      string
+		pending   *[]api.PendingChange
+		competing string
+		warning   string
+	}{
+		{"another repository's pending change", &[]api.PendingChange{{RepoID: "cr_gw", RemoteKey: "github.com/acme/gateway", Pass: "gateway-guides", RunID: "prun_gw"}, {RepoID: "cr_1", Pass: "guides", RunID: "prun_old"}}, "github.com/acme/gateway (pass gateway-guides)", ""},
+		{"another pass of this repository", &[]api.PendingChange{{RepoID: "cr_1", RemoteKey: "github.com/acme/billing-api", Pass: "reference", RunID: "prun_ref"}}, "github.com/acme/billing-api (pass reference)", ""},
+		{"only this repository and pass", &[]api.PendingChange{{RepoID: "cr_1", RemoteKey: "github.com/acme/billing-api", Pass: "guides", RunID: "prun_old"}}, "", "replaces this pass's pending change from prun_old"},
+		{"nothing pending", &[]api.PendingChange{}, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, fake, base, head := reachFixture(t)
+			fake.trees["sp_1"].Pages[0].OpenProposal = &api.OpenProposal{ID: "prop_9", Status: "open", PipelineRunID: "prun_old", Pending: tc.pending}
+			fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}}, agent.PageChanges{})
+			in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
+			in.Trigger = config.TriggerPR
+			rep, err := passes.Guides{}.Run(context.Background(), in, &passes.Recorder{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			warnings := strings.Join(rep.Warnings, "\n")
+			switch {
+			case tc.competing != "":
+				if len(rep.Competing) != 1 || rep.Competing[0].With[0].Repo != tc.competing || !rep.Competing[0].Pending {
+					t.Fatalf("competing = %+v", rep.Competing)
+				}
+			case len(rep.Competing) != 0:
+				t.Fatalf("competing = %+v", rep.Competing)
+			}
+			if tc.warning != "" && !strings.Contains(warnings, tc.warning) || tc.warning == "" && strings.Contains(warnings, "pending change") {
+				t.Fatalf("warnings = %s", warnings)
+			}
+		})
+	}
+}
