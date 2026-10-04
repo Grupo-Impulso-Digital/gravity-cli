@@ -369,6 +369,7 @@ const (
 	SkipNoChanges        = "no_changes"
 	SkipStaleHead        = "stale_head"
 	SkipBudgetExceeded   = "budget_exceeded"
+	SkipFirstRunManual   = "first_run_manual"
 )
 
 // PlanPass is one pass of a plan (also the effective pass shape of connect and pass upsert).
@@ -398,6 +399,7 @@ type PlanPass struct {
 	Watermark     *Watermark     `json:"watermark,omitempty"`
 	Hints         []PlanHint     `json:"hints,omitempty"`
 	DetachedPaths []string       `json:"detachedPaths,omitempty"`
+	Estimate      *Estimate      `json:"estimate,omitempty"`
 }
 
 // PlanRepo is the repository section of a plan.

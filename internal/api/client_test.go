@@ -120,8 +120,8 @@ func TestNotFoundIsAnError(t *testing.T) {
 	if !errors.Is(err, api.ErrNotConnected) {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "gravity init") {
-		t.Errorf("missing init hint: %v", err)
+	if !strings.Contains(err.Error(), "gravity setup") {
+		t.Errorf("missing setup hint: %v", err)
 	}
 }
 
