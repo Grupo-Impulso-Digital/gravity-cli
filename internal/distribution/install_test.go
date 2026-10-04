@@ -36,9 +36,10 @@ if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
 const releasesAPI = "https://api.github.com/repos/Grupo-Impulso-Digital/gravity-cli/releases"
 
 type fakeNet struct {
-	t      *testing.T
-	dir    string
-	routes map[string]string
+	t        *testing.T
+	dir      string
+	routes   map[string]string
+	noAssets map[string]bool
 }
 
 func newFakeNet(t *testing.T) *fakeNet {
@@ -53,7 +54,7 @@ func newFakeNet(t *testing.T) *fakeNet {
 	if err := os.WriteFile(filepath.Join(dir, "bin", "curl"), []byte(fakeCurl), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &fakeNet{t: t, dir: dir, routes: map[string]string{}}
+	return &fakeNet{t: t, dir: dir, routes: map[string]string{}, noAssets: map[string]bool{}}
 }
 
 func (f *fakeNet) serve(url string, body []byte) {
@@ -73,12 +74,26 @@ func (f *fakeNet) releases(pages ...[]string) {
 		}
 		list := make([]map[string]any, 0, len(tags))
 		for _, tag := range tags {
-			list = append(list, map[string]any{"tag_name": tag, "prerelease": strings.Contains(tag, "-")})
+			list = append(list, map[string]any{"tag_name": tag, "prerelease": strings.Contains(tag, "-"), "assets": f.assets(tag)})
 		}
 		data, _ := json.MarshalIndent(list, "", "  ")
 		f.serve(fmt.Sprintf("%s?per_page=100&page=%d", releasesAPI, i+1), data)
 	}
 	f.serve(fmt.Sprintf("%s?per_page=100&page=%d", releasesAPI, len(pages)+1), []byte("[]"))
+}
+
+func (f *fakeNet) assets(tag string) []map[string]any {
+	out := []map[string]any{}
+	if f.noAssets[tag] {
+		return out
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			name := fmt.Sprintf("gravity_%s_%s_%s.tar.gz", strings.TrimPrefix(tag, "v"), goos, arch)
+			out = append(out, map[string]any{"name": name, "browser_download_url": "https://github.com/Grupo-Impulso-Digital/gravity-cli/releases/download/" + tag + "/" + name})
+		}
+	}
+	return out
 }
 
 func (f *fakeNet) run(env ...string) (string, string, error) {
@@ -108,7 +123,8 @@ func TestInstallResolvesTheNewestReleaseOfAMajor(t *testing.T) {
 		[]string{"v2.0.0", "v1.10.0-rc.1", "v1.9.3", "v0.3.1", "docs-synced"},
 		[]string{"v1.10.0", "v1.2.9", "v0.3.0", "v0.2.2"},
 	)
-	f.serve(releasesAPI+"/latest", []byte(`{"tag_name": "v2.0.0"}`))
+	latest, _ := json.Marshal(map[string]any{"tag_name": "v2.0.0", "assets": f.assets("v2.0.0")})
+	f.serve(releasesAPI+"/latest", latest)
 	cases := map[string]string{"": "v1.10.0", "1": "v1.10.0", "v1": "v1.10.0", "0": "v0.3.1", "2": "v2.0.0", "latest": "v2.0.0", "v1.2.9": "v1.2.9", "1.2.9": "v1.2.9"}
 	for version, want := range cases {
 		env := []string{"GRAVITY_RESOLVE_ONLY=1"}
@@ -177,5 +193,35 @@ func TestInstallDownloadsVerifiesAndInstallsTheMajorRelease(t *testing.T) {
 	f.serve(base+"checksums.txt", []byte(strings.Repeat("0", 64)+"  "+name+"\n"))
 	if _, stderr, err := f.run("GRAVITY_INSTALL_DIR=" + dir); err == nil || !strings.Contains(stderr, "checksum mismatch") {
 		t.Fatalf("a checksum mismatch must fail: %v\n%s", err, stderr)
+	}
+}
+
+func TestInstallSkipsAReleaseWithoutArchives(t *testing.T) {
+	f := newFakeNet(t)
+	f.noAssets["v1.5.0"] = true
+	f.noAssets["v2.1.0"] = true
+	f.releases([]string{"v2.1.0", "v2.0.0", "v1.5.0", "v1.4.2", "v1.4.1"})
+	latest, _ := json.Marshal(map[string]any{"tag_name": "v2.1.0", "assets": f.assets("v2.1.0")})
+	f.serve(releasesAPI+"/latest", latest)
+	for version, want := range map[string]string{"1": "v1.4.2", "latest": "v2.0.0"} {
+		got, stderr, err := f.run("GRAVITY_RESOLVE_ONLY=1", "GRAVITY_VERSION="+version)
+		if err != nil || got != want {
+			t.Fatalf("GRAVITY_VERSION=%q resolved %q, want %q (err %v)\n%s", version, got, want, err, stderr)
+		}
+	}
+	goos, arch := targetPlatform(t)
+	name := fmt.Sprintf("gravity_1.4.2_%s_%s.tar.gz", goos, arch)
+	data := archive(t, "#!/bin/sh\necho gravity 1.4.2\n")
+	sum := sha256.Sum256(data)
+	base := "https://github.com/Grupo-Impulso-Digital/gravity-cli/releases/download/v1.4.2/"
+	f.serve(base+name, data)
+	f.serve(base+"checksums.txt", []byte(hex.EncodeToString(sum[:])+"  "+name+"\n"))
+	dir := filepath.Join(t.TempDir(), "bin")
+	if _, stderr, err := f.run("GRAVITY_INSTALL_DIR=" + dir); err != nil {
+		t.Fatalf("install: %v\n%s", err, stderr)
+	}
+	out, err := exec.Command(filepath.Join(dir, "gravity")).Output()
+	if err != nil || strings.TrimSpace(string(out)) != "gravity 1.4.2" {
+		t.Fatalf("installed binary: %q %v", out, err)
 	}
 }
