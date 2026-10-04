@@ -67,6 +67,8 @@ type Page struct {
 	Slug           string        `json:"slug"`
 	Title          string        `json:"title"`
 	TitleFromH1    bool          `json:"-"`
+	PackageName    string        `json:"packageName,omitempty"`
+	Empty          bool          `json:"empty,omitempty"`
 	Description    string        `json:"description,omitempty"`
 	Position       int           `json:"position"`
 	CollectionPath []string      `json:"collectionPath"`
@@ -88,6 +90,7 @@ type Translation struct {
 	Lang        string      `json:"lang"`
 	Title       string      `json:"title"`
 	TitleFromH1 bool        `json:"-"`
+	PackageName string      `json:"packageName,omitempty"`
 	Description string      `json:"description,omitempty"`
 	Hash        string      `json:"hash"`
 	MDX         bool        `json:"-"`
@@ -278,7 +281,7 @@ func (m *Mapping) add(src Source, file string, spec FileSpec, root string, liter
 	p := Page{
 		Path: file, Hash: docs.HashBytes(data), FrontMatter: fm, Body: body, MDX: strings.EqualFold(path.Ext(file), ".mdx"),
 		CollectionPath: append([]string{}, segs...), Description: fm.Description, explicitOrder: fm.Position,
-		sourceDir: dir, collectionDirs: dirs,
+		sourceDir: dir, collectionDirs: dirs, Empty: emptyBody(body),
 	}
 	if p.CollectionPath == nil {
 		p.CollectionPath = []string{}
@@ -294,6 +297,9 @@ func (m *Mapping) add(src Source, file string, spec FileSpec, root string, liter
 	case literal && spec.Slug != "":
 		p.Slug = spec.Slug
 		p.pinned = true
+	case fm.Slug != "" && isScopedPackage(fm.Slug):
+		h, _ := HumanizeTitle(fm.Slug)
+		p.Slug = docs.Slug(h)
 	case fm.Slug != "":
 		p.Slug = docs.Slug(fm.Slug)
 	case isIndex:
@@ -307,13 +313,24 @@ func (m *Mapping) add(src Source, file string, spec FileSpec, root string, liter
 	switch {
 	case literal && spec.Title != "":
 		p.Title = spec.Title
+	case fm.Title != "" && isScopedPackage(fm.Title):
+		p.Title, _ = HumanizeTitle(fm.Title)
+		p.PackageName = fm.Title
 	case fm.Title != "":
 		p.Title = fm.Title
 	default:
 		if h1 := firstH1(body); h1 != "" {
 			p.Title, p.TitleFromH1 = h1, true
+			if h, ok := HumanizeTitle(h1); ok {
+				p.Title, p.PackageName = h, h1
+			}
 		} else {
-			p.Title = humanize(strings.TrimSuffix(base, path.Ext(base)))
+			stem := strings.TrimSuffix(base, path.Ext(base))
+			if h, ok := HumanizeTitle(stem); ok {
+				p.Title = h
+			} else {
+				p.Title = humanize(stem)
+			}
 		}
 	}
 	m.byPath[file] = len(m.Pages)
@@ -463,7 +480,7 @@ func (m *Mapping) attachDeclared() {
 		}
 		p := old[i]
 		t := Translation{
-			Path: p.Path, Lang: p.FrontMatter.Lang, Title: p.Title, TitleFromH1: p.TitleFromH1, Description: p.Description,
+			Path: p.Path, Lang: p.FrontMatter.Lang, Title: p.Title, TitleFromH1: p.TitleFromH1, PackageName: p.PackageName, Description: p.Description,
 			Hash: p.Hash, MDX: p.MDX, FrontMatter: p.FrontMatter, Body: p.Body,
 		}
 		if !p.TitleFromH1 && p.FrontMatter.Title == "" {
@@ -524,15 +541,38 @@ func (m *Mapping) addTranslation(src Source, t pendingTranslation) error {
 	}
 	tr := Translation{Path: t.file, Lang: lang, Description: fm.Description, Hash: docs.HashBytes(data), MDX: strings.EqualFold(path.Ext(t.file), ".mdx"), FrontMatter: fm, Body: body}
 	switch {
+	case fm.Title != "" && isScopedPackage(fm.Title):
+		tr.Title, _ = HumanizeTitle(fm.Title)
+		tr.PackageName = fm.Title
 	case fm.Title != "":
 		tr.Title = fm.Title
 	default:
 		if h1 := firstH1(body); h1 != "" {
 			tr.Title, tr.TitleFromH1 = h1, true
+			if h, ok := HumanizeTitle(h1); ok {
+				tr.Title, tr.PackageName = h, h1
+			}
 		}
 	}
 	m.attach(i, tr)
 	return nil
+}
+
+var htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+
+func emptyBody(body []byte) bool {
+	h1 := 0
+	for _, line := range strings.Split(htmlComment.ReplaceAllString(string(body), ""), "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case t == "":
+		case strings.HasPrefix(t, "# ") && h1 == 0:
+			h1++
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func firstH1(body []byte) string {

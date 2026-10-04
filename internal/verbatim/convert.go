@@ -29,6 +29,7 @@ type Options struct {
 	Generator   string
 	MDX         bool
 	DropTitleH1 bool
+	Title       string
 	Audiences   []string
 	Link        LinkFunc
 	Image       ImageFunc
@@ -262,7 +263,7 @@ func (c *converter) heading(h *ast.Heading, src []byte) {
 	}
 	c.used[uniq] = true
 	c.section, c.intra = uniq, 0
-	if c.opts.DropTitleH1 && !c.titleDropped && h.Level == 1 {
+	if !c.titleDropped && h.Level == 1 && (c.opts.DropTitleH1 || (len(c.blocks) == 0 && sameTitle(plainText(h, src), c.opts.Title))) {
 		c.titleDropped = true
 		return
 	}

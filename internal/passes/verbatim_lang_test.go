@@ -27,7 +27,7 @@ func TestVerbatimUploadsTranslationsAfterEverySourcePage(t *testing.T) {
 		"docs/handbook/fr/schema.png":  "PNG",
 		"docs/handbook/legacy.pt.md":   "---\nlang: pt\n---\n# Legado\n",
 		"docs/handbook/guide.fr.md":    "---\ntitle: Le guide\n---\nLisez [installation](fr/setup.md).\n",
-		"docs/handbook/notes.ab.md":    "# Not a translation without notes.md\n",
+		"docs/handbook/notes.ab.md":    "# Not a translation without notes.md\n\nNotes.\n",
 		"docs/handbook/unrelated.txt":  "x",
 		"docs/handbook/guide.pt-BR.md": "---\ndraft: true\n---\n# Rascunho\n",
 	})
@@ -91,9 +91,9 @@ func TestVerbatimUploadsTranslationsAfterEverySourcePage(t *testing.T) {
 func TestVerbatimSkipsTranslationsOfAFailedSourceAndRefusedTranslations(t *testing.T) {
 	r := newRepo(t)
 	head := r.commit("docs", map[string]string{
-		"docs/handbook/a.md":    "# A\n",
+		"docs/handbook/a.md":    "# A\n\nText.\n",
 		"docs/handbook/a.fr.md": "# A fr\n",
-		"docs/handbook/b.md":    "# B\n",
+		"docs/handbook/b.md":    "# B\n\nText.\n",
 		"docs/handbook/b.fr.md": "# B fr\n",
 	})
 	fake := newFakeAPI()
@@ -118,7 +118,7 @@ func TestVerbatimSkipsTranslationsOfAFailedSourceAndRefusedTranslations(t *testi
 func TestVerbatimDryRunRecordsTranslations(t *testing.T) {
 	r := newRepo(t)
 	head := r.commit("docs", map[string]string{
-		"docs/handbook/a.md":    "# A\n",
+		"docs/handbook/a.md":    "# A\n\nText.\n",
 		"docs/handbook/a.fr.md": "# A en français\n",
 	})
 	rec := &passes.Recorder{}
