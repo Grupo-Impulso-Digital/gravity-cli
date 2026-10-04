@@ -115,7 +115,7 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | P6 CI first runs | a `first_run_manual` skip is labelled "first run is local: gravity run --dry-run" | — |
 | P7 structure | `GET /structure?site=` (pages included) marks what exists; `POST /structure/apply {structure, dryRun}` renders created / updated / deferred / extra / conflicts | `structure show` and `plan` read `/sites/{site}` (no pages); `structure apply` exits `2` |
 
-Dry runs are recorded in `.gravity/runs/<runId>.json` (the directory carries
+Dry runs are recorded in `.gravity/runs/<runId>.json` (`.gravity/` carries
 its own `.gitignore`): the recorded requests of each pass with its range, the
 head SHA and the manifest hash. `gravity run --send <runId>` refuses when
 either changed, then starts a write run with the recorded passes and ranges,

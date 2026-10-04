@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"strconv"
 )
 
 // Product identifies a product.
@@ -533,6 +534,15 @@ type PlanQuery struct {
 	Passes       []string
 	Mode         string
 	ManifestHash string
+	Stats        []PassStats
+}
+
+// PassStats is the size of one pass's change set, sent so the plan can estimate its cost.
+type PassStats struct {
+	Pass    string
+	Commits int
+	Files   int
+	Bytes   int64
 }
 
 func (q PlanQuery) values() url.Values {
@@ -552,6 +562,13 @@ func (q PlanQuery) values() url.Values {
 	}
 	if q.ManifestHash != "" {
 		v.Set("manifestHash", q.ManifestHash)
+	}
+	for _, st := range q.Stats {
+		if st.Bytes > 0 {
+			v.Add("stats", st.Pass+":"+strconv.Itoa(st.Commits)+":"+strconv.Itoa(st.Files)+":"+strconv.FormatInt(st.Bytes, 10))
+		} else {
+			v.Add("stats", st.Pass+":"+strconv.Itoa(st.Commits)+":"+strconv.Itoa(st.Files))
+		}
 	}
 	return v
 }

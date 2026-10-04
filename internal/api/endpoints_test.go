@@ -190,6 +190,16 @@ const planResponse = `{"planHash":"sha256:9a0e","overlay":false,
 "capabilities":{"features":{"pipelines":true},"modules":{"cli":true,"memory":true,"agent":false},"llm":{"configured":true,"provider":"anthropic","model":"claude-sonnet-4-5"},"limits":{"maxChangesPerRun":500,"maxBlocksPerChange":500,"maxAssetBytes":10485760,"leaseTtlSeconds":600,"heartbeatSeconds":60,"maxCostUsdPerRun":5.0}},
 "siblings":[{"name":"gateway","remoteKey":"github.com/acme/gateway","health":"live"}],"warnings":[]}`
 
+func TestPlanStats(t *testing.T) {
+	c, s := fixtureServer(t, 200, planResponse)
+	if _, err := c.Plan(context.Background(), api.PlanQuery{Trigger: "manual", Mode: api.ModeWrite, Stats: []api.PassStats{{Pass: "guides", Commits: 3, Files: 7, Bytes: 4200}, {Pass: "changelog", Commits: 2, Files: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.query["stats"]; !reflect.DeepEqual(got, []string{"guides:3:7:4200", "changelog:2:1"}) {
+		t.Fatalf("stats = %v", got)
+	}
+}
+
 func TestPlan(t *testing.T) {
 	c, s := fixtureServer(t, 200, planResponse)
 	plan, err := c.Plan(context.Background(), api.PlanQuery{Repo: "github.com/acme/billing-api", Trigger: "push", Branch: "main", Passes: []string{"a", "b"}, Mode: api.ModeDry, ManifestHash: "sha256:x"})

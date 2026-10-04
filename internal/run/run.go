@@ -47,6 +47,7 @@ type Logger interface {
 
 // Options select what a run does.
 type Options struct {
+	Stats          []api.PassStats
 	Trigger        string
 	Branch         string
 	Head           string
@@ -396,6 +397,7 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 		}
 		if !confirmed {
 			confirmed = true
+			estimate(ctx, env, opts, snapshot, prep)
 			if err := env.Confirm(planView(opts, prep, snapshot)); err != nil {
 				return res, err
 			}
@@ -454,6 +456,42 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 	}
 }
 
+const bytesPerChangedLine = 40
+
+func estimate(ctx context.Context, env *Env, opts Options, snapshot bool, prep *prepared) {
+	var stats []api.PassStats
+	for _, pp := range prep.passes {
+		if pp.cs == nil || !pp.decision.Run {
+			continue
+		}
+		var bytes int64
+		for _, c := range pp.cs.Commits {
+			bytes += int64(len(c.Subject) + len(c.Body))
+		}
+		for _, f := range pp.cs.Files {
+			if !f.Binary {
+				bytes += int64(f.Additions+f.Deletions) * bytesPerChangedLine
+			}
+		}
+		stats = append(stats, api.PassStats{Pass: pp.pass.Name, Commits: len(pp.cs.Commits), Files: len(pp.cs.Files), Bytes: bytes})
+	}
+	if len(stats) == 0 {
+		return
+	}
+	o := opts
+	o.Stats = stats
+	p, err := fetchPlan(ctx, env, o, snapshot)
+	if err != nil {
+		env.Log.Debugf("estimate: %v", err)
+		return
+	}
+	for i := range prep.passes {
+		if pp, ok := p.PassByName(prep.passes[i].pass.Name); ok && pp.Estimate != nil {
+			prep.passes[i].pass.Estimate = pp.Estimate
+		}
+	}
+}
+
 func planView(opts Options, prep *prepared, snapshot bool) PlanView {
 	v := PlanView{Mode: opts.Mode, Trigger: opts.Trigger, Branch: opts.Branch, HeadSHA: prep.headSHA, Snapshot: snapshot}
 	for _, pp := range prep.passes {
@@ -495,7 +533,7 @@ func leaseHolder(err error) *api.LeaseHolder {
 }
 
 func fetchPlan(ctx context.Context, env *Env, opts Options, snapshot bool) (*api.Plan, error) {
-	q := api.PlanQuery{Repo: opts.RepoParam, Trigger: opts.Trigger, Branch: opts.Branch, Passes: opts.Passes, Mode: opts.Mode}
+	q := api.PlanQuery{Repo: opts.RepoParam, Trigger: opts.Trigger, Branch: opts.Branch, Passes: opts.Passes, Mode: opts.Mode, Stats: opts.Stats}
 	switch opts.Trigger {
 	case config.TriggerPR:
 		if opts.PR != nil && opts.PR.TargetBranch != "" {
