@@ -60,5 +60,13 @@
         "valid": false,
         "path": "passes[0].options.files[0].include",
         "reason": "slug/title overrides need a literal include"
+    },
+    "valid/structure.yaml": {
+        "valid": true
+    },
+    "invalid/structure-page-key.yaml": {
+        "valid": false,
+        "path": "structure.spaces[0].pages[0]",
+        "reason": "unknown key body"
     }
 }

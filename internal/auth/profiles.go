@@ -17,7 +17,6 @@ import (
 
 const (
 	profilesFile   = "profiles.yaml"
-	legacyFile     = "config.yaml"
 	profilesV      = 2
 	defaultProfile = "default"
 )
@@ -53,15 +52,6 @@ func ConfigDir() (string, error) {
 	return filepath.Join(home, ".config", "gravity"), nil
 }
 
-// LegacyConfigPath returns the v0.x user configuration file, which CLI 1.x never writes.
-func LegacyConfigPath() (string, error) {
-	dir, err := ConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, legacyFile), nil
-}
-
 // TokenKindOf infers the token kind from its prefix.
 func TokenKindOf(token string) string {
 	switch {
@@ -75,59 +65,28 @@ func TokenKindOf(token string) string {
 	return ""
 }
 
-// LoadProfiles reads profiles.yaml; when it is missing it imports the v0.x config.yaml token as profile "default".
-func LoadProfiles() (*Profiles, bool, error) {
+// LoadProfiles reads profiles.yaml; a missing file is an empty set of profiles.
+func LoadProfiles() (*Profiles, error) {
 	dir, err := ConfigDir()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	path := filepath.Join(dir, profilesFile)
 	data, err := os.ReadFile(path)
 	switch {
-	case err == nil:
-		p := &Profiles{path: path}
-		if err := yaml.Unmarshal(data, p); err != nil {
-			return nil, false, fmt.Errorf("parse %s: %w", path, err)
-		}
-		if p.Profiles == nil {
-			p.Profiles = map[string]Profile{}
-		}
-		return p, false, nil
-	case !errors.Is(err, fs.ErrNotExist):
-		return nil, false, fmt.Errorf("read %s: %w", path, err)
+	case errors.Is(err, fs.ErrNotExist):
+		return &Profiles{Version: profilesV, Profiles: map[string]Profile{}, path: path}, nil
+	case err != nil:
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	p := &Profiles{Version: profilesV, Profiles: map[string]Profile{}, path: path}
-	legacy, err := readLegacy(filepath.Join(dir, legacyFile))
-	if err != nil || legacy.Token == "" {
-		return p, false, err
+	p := &Profiles{path: path}
+	if err := yaml.Unmarshal(data, p); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	p.Profiles[defaultProfile] = Profile{APIURL: legacy.APIURL, Token: legacy.Token, TokenKind: TokenKindOf(legacy.Token)}
-	p.Current = defaultProfile
-	if err := p.Save(); err != nil {
-		return nil, false, err
+	if p.Profiles == nil {
+		p.Profiles = map[string]Profile{}
 	}
-	return p, true, nil
-}
-
-type legacyCredentials struct {
-	Token  string `yaml:"token"`
-	APIURL string `yaml:"apiUrl"`
-}
-
-func readLegacy(path string) (legacyCredentials, error) {
-	var c legacyCredentials
-	data, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return c, nil
-	}
-	if err != nil {
-		return c, fmt.Errorf("read %s: %w", path, err)
-	}
-	if err := yaml.Unmarshal(data, &c); err != nil {
-		//nolint:nilerr // an unreadable v0.x file is simply not imported
-		return legacyCredentials{}, nil
-	}
-	return c, nil
+	return p, nil
 }
 
 // Path returns where the profiles are stored.

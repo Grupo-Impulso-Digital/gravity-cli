@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-const pinnedSchemaSHA256 = "bfddbd0608e24e2d907c2faaecb426e91cbd4eef76d68d23cae48d394958aa9d"
+const pinnedSchemaSHA256 = "d1473c5a3a37ecb2eeb2de8daf81e8f3f5a1561e43a81417c0cb2745d86cb018"
 
 func TestEmbeddedSchemaIsPinned(t *testing.T) {
 	sum := sha256.Sum256(SchemaJSON())
@@ -55,15 +55,12 @@ func TestManifestFixtures(t *testing.T) {
 			if err == nil {
 				t.Fatalf("want invalid (%s), got valid", want.Reason)
 			}
-			if want.Path == "" {
-				if !errors.Is(err, ErrV1Manifest) {
-					t.Fatalf("want v1 error, got %v", err)
-				}
-				return
-			}
 			var me *ManifestError
 			if !errors.As(err, &me) {
 				t.Fatalf("want ManifestError, got %T %v", err, err)
+			}
+			if want.Path == "" {
+				return
 			}
 			found := false
 			for _, is := range me.Issues {
@@ -134,17 +131,12 @@ func TestMoreInvalidManifests(t *testing.T) {
 	}
 }
 
-func TestV1Detection(t *testing.T) {
-	for _, src := range []string{"", "site: docs\n", "version: 1\n", "version: 2\nsources: []\n", "spaces:\n  default: x\n"} {
-		if !DetectV1([]byte(src)) {
-			t.Errorf("DetectV1(%q) = false", src)
+func TestVersionlessManifestsAreRefused(t *testing.T) {
+	for _, src := range []string{"", "site: docs\n", "version: 1\n", "version: 2\nsources: []\n"} {
+		var me *ManifestError
+		if _, err := Parse([]byte(src)); !errors.As(err, &me) {
+			t.Errorf("Parse(%q) = %v, want a manifest error", src, err)
 		}
-		if _, err := Parse([]byte(src)); !errors.Is(err, ErrV1Manifest) {
-			t.Errorf("Parse(%q) = %v, want v1", src, err)
-		}
-	}
-	if DetectV1([]byte("version: 2\n")) {
-		t.Error("version 2 detected as v1")
 	}
 }
 
@@ -213,8 +205,9 @@ func TestLoadMissingAndPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = Load(path)
-	if !errors.Is(err, ErrV1Manifest) || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "gravity init") {
-		t.Fatalf("v1 load = %v", err)
+	var me *ManifestError
+	if !errors.As(err, &me) || !strings.Contains(err.Error(), path) {
+		t.Fatalf("versionless load = %v", err)
 	}
 }
 

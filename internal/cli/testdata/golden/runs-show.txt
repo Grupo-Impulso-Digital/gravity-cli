@@ -1,0 +1,12 @@
+Run prun_2
+  * running - real run - manual on feat/x @ 0123456
+  Started 2m ago
+  3 changes - 7 model calls - $0.31
+  Holds lease cr_1:feat/x until 2026-10-01T12:05:00Z
+  Change request: 2 pending, 1 accepted, 0 declined
+  Change request  https://app.gravitydocs.io/app/changes/cr_9
+  Run             https://app.gravitydocs.io/app/repos/runs/prun_2
+  PASS         KIND      STATUS        CHANGES  COST   DETAIL
+  docs         verbatim  ok succeeded  3        $0.00  
+  user-guides  guides    * running     0        $0.31  writing pages (2/5)
+  * still running: gravity runs --watch, or cancel it with gravity runs cancel prun_2

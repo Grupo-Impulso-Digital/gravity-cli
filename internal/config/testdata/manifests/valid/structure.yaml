@@ -1,0 +1,32 @@
+version: 2
+product: polaris
+structure:
+  site: { slug: polaris, name: Polaris }
+  spaces:
+    - slug: developers
+      name: Developers
+      type: api-reference
+      visibility: public
+      collections:
+        - slug: admin
+          title: Admin
+          collections:
+            - slug: setup
+              title: Setup
+              pages:
+                - slug: installation
+                  title: Installation
+                  source: packages/admin/docs/install.md
+          pages:
+            - slug: overview
+              title: Polaris Admin
+              source: packages/admin/README.md
+passes:
+  - name: admin-docs
+    kind: verbatim
+    target: polaris/developers
+    options:
+      allowEmpty: false
+      files:
+        - include: packages/admin/**/*.md
+          collection: admin

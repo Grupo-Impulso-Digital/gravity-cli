@@ -1,4 +1,4 @@
-// Package setup turns local detection and the organization's products and sites into gravity init's suggestions.
+// Package setup turns local detection and the organization's products and sites into gravity setup's suggestions.
 package setup
 
 import (
@@ -407,54 +407,6 @@ func CreateTargets(chosen []Suggestion) []api.CreateTarget {
 		}
 		seen[key] = true
 		out = append(out, *s.Create)
-	}
-	return out
-}
-
-// DeclaredTargets returns createTargets for the v1-declared spaces, and for spaces the converted passes target, missing from the site tree.
-func DeclaredTargets(conv *config.Conversion, tree *api.SiteTree) []api.CreateTarget {
-	exists := map[string]bool{}
-	if tree != nil {
-		for _, sp := range tree.Spaces {
-			exists[sp.Slug] = true
-		}
-	}
-	decl := map[string]config.DeclaredSpace{}
-	for _, d := range conv.Spaces {
-		decl[d.Slug] = d
-	}
-	seen := map[string]bool{}
-	out := []api.CreateTarget{}
-	var add func(slug string)
-	add = func(slug string) {
-		if slug == "" || exists[slug] || seen[slug] {
-			return
-		}
-		seen[slug] = true
-		d, ok := decl[slug]
-		ct := api.CreateTarget{Site: conv.Site, Space: slug, Name: titleCase(slug), Visibility: "inherit"}
-		if ok {
-			ct.Name = firstNonEmpty(d.Name, ct.Name)
-			ct.Type = d.Type
-			if d.Visibility != "" {
-				ct.Visibility = d.Visibility
-			}
-			if d.Parent != "" {
-				parent := d.Parent
-				ct.Parent = &parent
-				add(d.Parent)
-			}
-		}
-		out = append(out, ct)
-	}
-	for _, d := range conv.Spaces {
-		add(d.Slug)
-	}
-	for _, p := range conv.Manifest.Passes {
-		parts := strings.Split(p.Target, "/")
-		if len(parts) >= 2 && parts[0] == conv.Site {
-			add(parts[1])
-		}
 	}
 	return out
 }

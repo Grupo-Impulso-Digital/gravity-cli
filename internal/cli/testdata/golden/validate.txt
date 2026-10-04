@@ -1,0 +1,24 @@
+
+# Pass docs  1 error, 3 warnings
+  x slug_taken  page overview already exists (Polaris, locked by github.com/acme/website)
+      at  README.md
+      fix set options.adopt: true to take it over, or give README.md another slug
+  ! package_title  title "Polaris Admin" comes from the package name @acme/polaris-admin
+      at  packages/admin/README.md
+      fix set `title:` in the file's front matter (or options.files[].title) if Polaris Admin is not what readers should see
+  ! empty_source  packages/api/README.md has no content beyond a title; the run skips it
+      at  packages/api/README.md
+      fix write the page, exclude the file, or set options.allowEmpty: true to import it anyway
+  ! package_title  title "Polaris Api" comes from the package name polaris-api
+      at  packages/api/README.md
+      fix set `title:` in the file's front matter (or options.files[].title) if Polaris Api is not what readers should see
+
+# Pass user-guides  0 errors, 1 warning
+  ! language_not_enabled  site polaris does not serve es
+      fix enable es on the site, or drop it from options.languages
+
+# Languages  what each pass will really produce
+  PASS         REQUESTED  EFFECTIVE  WHY
+  user-guides  fr,es      fr         es is not enabled on site polaris
+
+x 1 error, 4 warnings

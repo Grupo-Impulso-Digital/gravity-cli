@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -38,35 +37,28 @@ type capabilityWarning struct {
 type statusManifest struct {
 	Path string `json:"path"`
 	Hash string `json:"hash"`
-	V1   bool   `json:"v1,omitempty"`
 }
 
 type session struct {
 	info     *repoInfo
 	manifest *config.Manifest
-	v1       bool
 	client   *api.Client
 	who      *api.WhoAmI
 	whoData  whoamiData
 	creds    auth.Credentials
 }
 
-func (a *app) openSession(ctx context.Context, allowV1 bool) (*session, error) {
+func (a *app) openSession(ctx context.Context) (*session, error) {
 	info, err := a.inspectRepo(ctx)
 	if err != nil {
 		return nil, err
 	}
 	s := &session{info: info}
 	m, err := a.loadManifest(info.root)
-	switch {
-	case errors.Is(err, config.ErrV1Manifest) && allowV1:
-		s.v1 = true
-		a.ui.Warn("manifest_v1", "this repository has a v1 .gravity.yaml; run `gravity init` to convert it (it is ignored until then)")
-	case err != nil:
+	if err != nil {
 		return nil, err
-	default:
-		s.manifest = m
 	}
+	s.manifest = m
 	apiURL := ""
 	if s.manifest != nil {
 		apiURL = s.manifest.APIURL
@@ -101,7 +93,7 @@ func newStatusCmd(a *app) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			s, err := a.openSession(ctx, true)
+			s, err := a.openSession(ctx)
 			if err != nil {
 				return err
 			}
@@ -128,8 +120,6 @@ func newStatusCmd(a *app) *cobra.Command {
 			data.Capabilities = capabilityWarnings(s, conn, plan, a.now())
 			if s.manifest != nil {
 				data.Manifest = &statusManifest{Path: s.manifest.Path, Hash: s.manifest.Hash}
-			} else if s.v1 {
-				data.Manifest = &statusManifest{Path: config.ManifestFileName, V1: true}
 			}
 			stored := ""
 			if plan != nil {
@@ -210,7 +200,7 @@ func capabilityWarnings(s *session, conn *api.ConnectResponse, plan *api.Plan, n
 		}
 	}
 	for _, f := range cisetup.Outdated(s.info.root) {
-		add("ci_outdated", "", f.Path+" "+f.Reason+": "+f.Fix+", or run `gravity init` to update a file it wrote")
+		add("ci_outdated", "", f.Path+" "+f.Reason+": "+f.Fix+", or run `gravity ci setup` to update a file it wrote")
 	}
 	passes := conn.Effective.Passes
 	if plan != nil && len(plan.Passes) > 0 {
@@ -301,8 +291,6 @@ func (a *app) printStatus(s *session, conn *api.ConnectResponse, st *api.Status,
 			}
 		}
 		rows = append(rows, []string{"Manifest", relPath(s.info.root, s.manifest.Path) + " · " + shortHash(s.manifest.Hash) + " · " + state})
-	case s.v1:
-		rows = append(rows, []string{"Manifest", ".gravity.yaml is v1 (run gravity init to convert)"})
 	default:
 		rows = append(rows, []string{"Manifest", "none (passes come from the app)"})
 	}

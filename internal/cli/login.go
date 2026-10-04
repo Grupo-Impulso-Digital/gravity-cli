@@ -55,7 +55,7 @@ func newLoginCmd(a *app) *cobra.Command {
 }
 
 func (a *app) login(ctx context.Context, o loginOptions) (*loginData, error) {
-	profiles, _, err := auth.LoadProfiles()
+	profiles, err := auth.LoadProfiles()
 	if err != nil {
 		return nil, Fail(CodeError, err)
 	}

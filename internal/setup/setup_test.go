@@ -121,22 +121,6 @@ func TestScopesAndSchedule(t *testing.T) {
 	}
 }
 
-func TestDeclaredTargetsCreateParentsFirst(t *testing.T) {
-	m, err := config.Parse([]byte("version: 2\npasses:\n  - name: docs\n    kind: guides\n    target: docs/cli\n  - name: cl\n    kind: changelog\n    target: docs/changelog\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	conv := &config.Conversion{Manifest: m, Site: "docs", Spaces: []config.DeclaredSpace{{Site: "docs", Slug: "cli", Name: "CLI", Parent: "developers"}, {Site: "docs", Slug: "developers", Name: "Developers", Type: "api-reference", Visibility: "public"}}}
-	got := DeclaredTargets(conv, &api.SiteTree{Spaces: []api.SiteSpace{{Slug: "changelog"}}})
-	var order []string
-	for _, c := range got {
-		order = append(order, c.Space)
-	}
-	if !reflect.DeepEqual(order, []string{"developers", "cli"}) || *got[1].Parent != "developers" || got[0].Visibility != "public" {
-		t.Fatalf("targets = %+v", got)
-	}
-}
-
 func TestMissingTargetsOnlyForManifestSpaces(t *testing.T) {
 	passes := []api.PlanPass{
 		{Name: "runbooks", Template: config.TemplateRunbook, Source: "manifest", Target: api.PassTarget{Ref: "ops/runbooks", Status: api.TargetMissing}},

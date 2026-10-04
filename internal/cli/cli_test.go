@@ -12,7 +12,6 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 )
 
 func expectCode(t *testing.T, h *harness, got, want int) {
@@ -110,7 +109,7 @@ func TestManifestAPIURLNeverReceivesProfileToken(t *testing.T) {
 	delete(h.env, "GRAVITY_API_URL")
 	writeProfiles(t, h.config, "version: 2\ncurrent: acme\nprofiles:\n  acme:\n    apiUrl: https://api.gravitydocs.io\n    token: gr_user_secret\n    tokenKind: user\n")
 	h.write(".gravity.yaml", "version: 2\napiUrl: "+h.platform.srv.URL+"\n")
-	for _, args := range [][]string{{"status"}, {"passes"}, {"init", "--yes"}, {"whoami"}, {"explain", "p_1"}} {
+	for _, args := range [][]string{{"status"}, {"show"}, {"setup", "--yes"}, {"whoami"}, {"explain", "p_1"}} {
 		expectCode(t, h, h.run(args...), 2)
 		if !strings.Contains(h.stderr.String(), "token was issued by https://api.gravitydocs.io") || !strings.Contains(h.stderr.String(), ".gravity.yaml apiUrl") {
 			t.Fatalf("%v stderr = %s", args, h.stderr.String())
@@ -154,28 +153,6 @@ func writeProfiles(t *testing.T, dir, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "profiles.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestProfileImportedFromV0Config(t *testing.T) {
-	h := newHarness(t)
-	if err := os.MkdirAll(h.config, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	legacy := []byte("token: sk_live_legacy\napiUrl: " + h.platform.srv.URL + "\n")
-	if err := os.WriteFile(filepath.Join(h.config, "config.yaml"), legacy, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	expectCode(t, h, h.run("whoami"), 0)
-	if reqs := h.platform.find("GET", "/api/v1/whoami"); reqs[0].Token != "sk_live_legacy" {
-		t.Fatalf("token = %q", reqs[0].Token)
-	}
-	if !strings.Contains(h.stderr.String(), "Imported the token") {
-		t.Fatalf("stderr = %s", h.stderr.String())
-	}
-	after, _ := os.ReadFile(filepath.Join(h.config, "config.yaml"))
-	if string(after) != string(legacy) {
-		t.Fatal("config.yaml must stay byte-identical")
 	}
 }
 
@@ -253,9 +230,6 @@ func TestLogout(t *testing.T) {
 		t.Fatalf("profiles = %s", data)
 	}
 	expectCode(t, h, h.run("logout", "--all"), 0)
-	if !strings.Contains(h.stderr.String(), "config.yaml still holds a token") {
-		t.Fatalf("stderr = %s", h.stderr.String())
-	}
 	if reqs := h.platform.find("POST", "/api/v1/auth/logout"); len(reqs) != 1 {
 		t.Fatal("org tokens are never revoked through /auth/logout")
 	}
@@ -331,19 +305,6 @@ func TestStatusRepoTokenOmitsRepoParam(t *testing.T) {
 	}
 }
 
-func TestStatusWithV1ManifestWarns(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	h.write(".gravity.yaml", "site: docs\nspaces:\n  default: guides\n")
-	expectCode(t, h, h.run("status"), 0)
-	if !strings.Contains(h.stderr.String(), "v1 .gravity.yaml") {
-		t.Fatalf("stderr = %s", h.stderr.String())
-	}
-	if conn := h.platform.find("POST", "/api/v1/repos/connect"); conn[0].Body["manifest"] != nil {
-		t.Fatal("a v1 manifest is never sent")
-	}
-}
-
 func TestInvalidManifestFailsWithSuggestion(t *testing.T) {
 	h := newHarness(t)
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
@@ -391,105 +352,8 @@ func TestNotFoundIsNeverSkipped(t *testing.T) {
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
 	h.platform.json("GET /api/v1/repos/self/status", 404, `{"error":{"code":"repo_not_connected","message":"Repository github.com/acme/billing-api is not connected."}}`)
 	expectCode(t, h, h.run("status"), 2)
-	if !strings.Contains(h.stderr.String(), "gravity init") {
+	if !strings.Contains(h.stderr.String(), "gravity setup") {
 		t.Fatalf("stderr = %s", h.stderr.String())
-	}
-}
-
-func TestPassesList(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	expectCode(t, h, h.run("passes"), 0)
-	out := h.stdout.String()
-	for _, want := range []string{"passes for push main", "developer-api", "target awaits approval", "not on this trigger"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("missing %q in\n%s", want, out)
-		}
-	}
-	plans := h.platform.find("GET", "/api/v1/repos/self/plan")
-	q := plans[0].Query
-	if q["trigger"][0] != "push" || q["branch"][0] != "main" || q["mode"][0] != "dry" || q["repo"][0] != "github.com/acme/billing-api" {
-		t.Fatalf("plan query = %v", q)
-	}
-	if len(h.platform.find("POST", "/api/v1/repos/connect")) != 0 {
-		t.Fatal("no manifest, no connect")
-	}
-	expectCode(t, h, h.run("passes", "list", "--json", "--trigger", "release"), 0)
-	h.golden("passes.json")
-	plans = h.platform.find("GET", "/api/v1/repos/self/plan")
-	if last := plans[len(plans)-1].Query; last["trigger"][0] != "release" {
-		t.Fatalf("plan query = %v", last)
-	}
-	h.write(".gravity.yaml", "version: 2\n")
-	expectCode(t, h, h.run("passes", "--trigger", "manual"), 0)
-	plans = h.platform.find("GET", "/api/v1/repos/self/plan")
-	if last := plans[len(plans)-1].Query; last["mode"][0] != "write" || last["manifestHash"] != nil {
-		t.Fatalf("a manual run writes, so its passes are planned in write mode: %v", last)
-	}
-}
-
-func TestPassesDetachedHeadNeedsBranch(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_repo_abc"
-	h.env["CI"] = "true"
-	gitCmd(t, h.dir, "checkout", "-q", "--detach")
-	expectCode(t, h, h.run("passes", "--json"), 2)
-	if e := h.envelope()["error"].(map[string]any); e["code"] != "branch_unknown" {
-		t.Fatalf("error = %v", e)
-	}
-	expectCode(t, h, h.run("passes", "--branch", "main"), 0)
-}
-
-func TestPassesOverlayLocalManifest(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	h.write(".gravity.yaml", "version: 2\npasses:\n  - name: developer-api\n    kind: reference\n    target: dev-portal/api\n    triggers: [push]\n  - name: memory\n    kind: nucleus\n    triggers: [push]\n")
-	expectCode(t, h, h.run("passes", "--json"), 0)
-	env := h.envelope()
-	data := env["data"].(map[string]any)
-	byName := map[string]map[string]any{}
-	for _, raw := range data["passes"].([]any) {
-		p := raw.(map[string]any)
-		byName[p["name"].(string)] = p
-	}
-	if byName["memory"]["pending"] != true || byName["memory"]["applies"] != true || byName["developer-api"]["pending"] != true {
-		t.Fatalf("passes = %v", byName)
-	}
-	plans := h.platform.find("GET", "/api/v1/repos/self/plan")
-	if !strings.HasPrefix(plans[0].Query["manifestHash"][0], "sha256:") {
-		t.Fatalf("plan query = %v", plans[0].Query)
-	}
-	conn := h.platform.find("POST", "/api/v1/repos/connect")
-	if len(conn) != 1 || conn[0].Body["dryRun"] != true {
-		t.Fatal("a manifest is snapshotted with a dry connect before planning")
-	}
-	warnings := env["warnings"].([]any)
-	if len(warnings) == 0 {
-		t.Fatal("want manifest_not_authoritative warning")
-	}
-}
-
-func TestPassesShowAndEdit(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	expectCode(t, h, h.run("passes", "show", "developer-api"), 0)
-	out := h.stdout.String()
-	for _, want := range []string{"developer-api - Developer API", "1. Organization voice", "Never describe UI.", "main@9f8e7d6", "approved by dave@acme.io", "pageStrategy=per-tag"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("missing %q in\n%s", want, out)
-		}
-	}
-	expectCode(t, h, h.run("passes", "show", "nope"), 2)
-	if !strings.Contains(h.stderr.String(), "changelog, developer-api, product-guides") {
-		t.Fatalf("stderr = %s", h.stderr.String())
-	}
-	expectCode(t, h, h.run("passes", "edit", "developer-api", "--json"), 0)
-	if data := h.envelope()["data"].(map[string]any); data["url"] != "https://github.com/acme/billing-api/blob/main/.gravity.yaml" || data["locked"] != true {
-		t.Fatalf("edit = %v", data)
-	}
-	expectCode(t, h, h.run("passes", "edit", "product-guides", "--json"), 0)
-	if data := h.envelope()["data"].(map[string]any); data["url"] != "https://app.gravitydocs.io/app/repos/cr_1/passes/rp_2" {
-		t.Fatalf("edit = %v", data)
 	}
 }
 
@@ -545,29 +409,6 @@ func TestExplain(t *testing.T) {
 	expectCode(t, h, h.run("explain", "pg_1", "--block", "missing"), 2)
 }
 
-func TestRemovedCommandsPoint(t *testing.T) {
-	h := newHarness(t)
-	cases := map[string]string{
-		"sync":               "gravity run",
-		"auth login":         "gravity login",
-		"auth status":        "gravity status",
-		"doctor":             "gravity status",
-		"release-notes --ci": "gravity run",
-		"coverage --json":    "gravity check",
-		"check api":          "gravity check",
-		"nucleus sync":       "gravity run",
-		"docs generate":      "gravity run",
-		"capture":            "gravity run",
-		"spaces":             "gravity status",
-	}
-	for args, want := range cases {
-		code := h.run(strings.Fields(args)...)
-		if code != 2 || !strings.Contains(h.stderr.String(), "was removed in gravity 1.0; use `"+want+"`") {
-			t.Errorf("%s: exit %d, stderr %q", args, code, h.stderr.String())
-		}
-	}
-}
-
 func TestExitCodeTable(t *testing.T) {
 	license := &api.ModuleDisabledError{Module: "cli", APIError: &api.APIError{StatusCode: 403, Code: api.CodeModuleDisabled}}
 	cases := []struct {
@@ -589,7 +430,7 @@ func TestExitCodeTable(t *testing.T) {
 			t.Errorf("case %d (%v): CodeFor = %d, want %d", i, tc.err, got, tc.code)
 		}
 	}
-	if errorCode(&config.V1Error{}) != "manifest_v1" || errorCode(&config.ManifestError{}) != api.CodeManifestInvalid || errorCode(&api.APIError{Code: api.CodeLeaseHeld}) != api.CodeLeaseHeld {
+	if errorCode(&config.ManifestError{}) != api.CodeManifestInvalid || errorCode(&api.APIError{Code: api.CodeLeaseHeld}) != api.CodeLeaseHeld {
 		t.Fatal("errorCode mapping")
 	}
 }
@@ -602,11 +443,6 @@ func TestNoRemote(t *testing.T) {
 	if !strings.Contains(h.stderr.String(), "no git remote") {
 		t.Fatalf("stderr = %s", h.stderr.String())
 	}
-}
-
-func approveDevice(h *harness) {
-	h.platform.json("POST /api/v1/auth/device/start", 201, `{"deviceCode":"dc","userCode":"BCDF-GHJK","verificationUri":"https://app/cli/device","verificationUriComplete":"https://app/cli/device?code=BCDF-GHJK","expiresIn":600,"interval":5}`)
-	h.platform.json("POST /api/v1/auth/device/poll", 200, `{"status":"approved","token":"gr_user_device","tokenKind":"user","expiresAt":"2026-12-30T12:00:00Z","organization":{"id":"org_1","slug":"acme","name":"Acme"},"user":{"id":"u","email":"dave@acme.io"},"apiUrl":"`+h.platform.srv.URL+`"}`)
 }
 
 func TestLogoutRevokesExplicitUserToken(t *testing.T) {
@@ -682,41 +518,6 @@ func TestLoginWithTokenFlagIsHeadless(t *testing.T) {
 		t.Fatal("no device flow with --token")
 	}
 	expectCode(t, h, h.run("login", "--token", "nope"), 2)
-}
-
-func TestManifestLinksFollowTheProvider(t *testing.T) {
-	cases := []struct {
-		remote string
-		want   string
-	}{
-		{"git@github.com:acme/billing-api.git", "https://github.com/acme/billing-api/blob/main/.gravity.yaml"},
-		{"https://gitlab.com/acme/billing-api.git", "https://gitlab.com/acme/billing-api/-/blob/main/.gravity.yaml"},
-		{"git@bitbucket.org:acme/billing-api.git", "https://bitbucket.org/acme/billing-api/src/main/.gravity.yaml"},
-		{"https://acme@dev.azure.com/acme/platform/_git/billing-api", "https://dev.azure.com/acme/platform/_git/billing-api?path=%2F.gravity.yaml&version=GBmain"},
-		{"git@ssh.dev.azure.com:v3/acme/platform/billing-api", "https://dev.azure.com/acme/platform/_git/billing-api?path=%2F.gravity.yaml&version=GBmain"},
-		{"git@git.example.com:acme/billing-api.git", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.remote, func(t *testing.T) {
-			web, provider := webURL(git.NormalizeRemoteKey(tc.remote))
-			if got := fileURL(web, provider, "main", ".gravity.yaml"); got != tc.want {
-				t.Fatalf("link = %q, want %q", got, tc.want)
-			}
-		})
-	}
-
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	gitCmd(t, h.dir, "remote", "set-url", "origin", "git@git.example.com:acme/billing-api.git")
-	h.platform.json("GET /api/v1/repos/self/plan", 200, strings.Replace(planBody, `"webUrl":"https://github.com/acme/billing-api",`, "", 1))
-	expectCode(t, h, h.run("passes", "edit", "developer-api", "--json"), 0)
-	data := h.envelope()["data"].(map[string]any)
-	if _, ok := data["url"]; ok || data["file"] != ".gravity.yaml" || data["branch"] != "main" {
-		t.Fatalf("an unknown host gets no link: %v", data)
-	}
-	if !strings.Contains(h.stderr.String(), "edit it in .gravity.yaml on main") {
-		t.Fatalf("stderr = %s", h.stderr.String())
-	}
 }
 
 func TestLogoutNamesTheCLIAndMachinesScreen(t *testing.T) {

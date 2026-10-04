@@ -23,43 +23,17 @@ func isolate(t *testing.T) string {
 	return filepath.Join(dir, "gravity")
 }
 
-func TestImportFromV0ConfigLeavesItUntouched(t *testing.T) {
+func TestV0ConfigIsIgnored(t *testing.T) {
 	dir := isolate(t)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	legacy := []byte("token: sk_live_abc\napiUrl: https://api.example.com\n# keep me\n")
-	legacyPath := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(legacyPath, legacy, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("token: sk_live_abc\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, imported, err := LoadProfiles()
-	if err != nil || !imported {
-		t.Fatalf("LoadProfiles = %v imported=%v", err, imported)
-	}
-	prof, ok := p.Get("default")
-	if !ok || prof.Token != "sk_live_abc" || prof.APIURL != "https://api.example.com" || prof.TokenKind != api.TokenKindOrg || p.Current != "default" {
-		t.Fatalf("imported = %+v current=%q", prof, p.Current)
-	}
-	after, err := os.ReadFile(legacyPath)
-	if err != nil || string(after) != string(legacy) {
-		t.Fatalf("config.yaml changed: %q", after)
-	}
-	info, err := os.Stat(filepath.Join(dir, "profiles.yaml"))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("profiles.yaml mode: %v %v", info, err)
-	}
-	again, imported, err := LoadProfiles()
-	if err != nil || imported || again.Current != "default" {
-		t.Fatalf("second load = %+v imported=%v err=%v", again, imported, err)
-	}
-}
-
-func TestNoLegacyNoImport(t *testing.T) {
-	dir := isolate(t)
-	p, imported, err := LoadProfiles()
-	if err != nil || imported || len(p.Profiles) != 0 {
-		t.Fatalf("p=%+v imported=%v err=%v", p, imported, err)
+	p, err := LoadProfiles()
+	if err != nil || len(p.Profiles) != 0 {
+		t.Fatalf("p=%+v err=%v", p, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "profiles.yaml")); !os.IsNotExist(err) {
 		t.Fatal("profiles.yaml written without anything to import")
@@ -68,7 +42,7 @@ func TestNoLegacyNoImport(t *testing.T) {
 
 func TestPutRemoveSave(t *testing.T) {
 	isolate(t)
-	p, _, err := LoadProfiles()
+	p, err := LoadProfiles()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +54,7 @@ func TestPutRemoveSave(t *testing.T) {
 	if err := p.Save(); err != nil {
 		t.Fatal(err)
 	}
-	loaded, _, err := LoadProfiles()
+	loaded, err := LoadProfiles()
 	if err != nil || len(loaded.Profiles) != 2 || loaded.Version != 2 {
 		t.Fatalf("loaded = %+v %v", loaded, err)
 	}

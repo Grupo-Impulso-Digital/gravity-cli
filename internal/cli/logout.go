@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,10 +14,9 @@ import (
 )
 
 type logoutData struct {
-	Removed       []string     `json:"removed"`
-	Revoked       []string     `json:"revoked"`
-	Token         *tokenLogout `json:"token,omitempty"`
-	LegacyWarning string       `json:"legacyWarning,omitempty"`
+	Removed []string     `json:"removed"`
+	Revoked []string     `json:"revoked"`
+	Token   *tokenLogout `json:"token,omitempty"`
 }
 
 type tokenLogout struct {
@@ -36,7 +34,7 @@ func newLogoutCmd(a *app) *cobra.Command {
 		Long:  "Revoke the current user token and remove its profile. With --token, GRAVITY_REPO_TOKEN or GRAVITY_TOKEN holding a user token (gr_user_), that token is revoked on the host it is used against and any profile holding it is removed; repository and organization tokens are revoked in the app.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			profiles, _, err := auth.LoadProfiles()
+			profiles, err := auth.LoadProfiles()
 			if err != nil {
 				return Fail(CodeError, err)
 			}
@@ -105,17 +103,6 @@ func newLogoutCmd(a *app) *cobra.Command {
 			}
 			if err := profiles.Save(); err != nil {
 				return Fail(CodeError, err)
-			}
-			if legacy, err := auth.LegacyConfigPath(); err == nil {
-				for _, n := range data.Removed {
-					if n != "default" {
-						continue
-					}
-					if _, statErr := os.Stat(legacy); statErr == nil {
-						data.LegacyWarning = "the gravity v0.x file " + legacy + " still holds a token; rm " + legacy + " to remove it"
-						a.ui.Warn("legacy_config", data.LegacyWarning)
-					}
-				}
 			}
 			return a.ui.Result(data)
 		},

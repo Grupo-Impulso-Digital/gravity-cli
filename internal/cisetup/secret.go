@@ -113,7 +113,7 @@ func (i *Installer) Exists(ctx context.Context, name string) (bool, error) {
 	return false, nil
 }
 
-// Describe returns the command shown in the preview.
+// Describe returns the command that installs the secret, as shown to the user.
 func (i *Installer) Describe(name string) string {
 	switch i.Tool {
 	case "gh":

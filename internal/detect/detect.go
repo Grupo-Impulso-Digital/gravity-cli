@@ -1,4 +1,4 @@
-// Package detect inspects a repository's files locally to suggest what gravity init should set up.
+// Package detect inspects a repository's files locally to suggest what gravity setup should suggest.
 package detect
 
 import (

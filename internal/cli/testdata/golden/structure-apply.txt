@@ -1,0 +1,12 @@
+
+# Structure dry run  2 would create, 0 updated, 1 unchanged, 2 deferred, 1 extra, 0 conflicts
+  would create
+    + space guides  Guides
+    + page docs/admin#faq  FAQ
+  left for the verbatim import
+    v page docs#overview  (deferred to import)
+    v page docs/admin#admin-overview  (deferred to import)
+  only in Gravity, kept
+    ! page docs#legacy  Legacy
+
+* run gravity structure apply to make these changes

@@ -44,7 +44,7 @@ func TestPublishedTemplatesMirrorInit(t *testing.T) {
 				t.Fatalf("read %s (run go test ./internal/cisetup -update): %v", p.path, err)
 			}
 			if string(got) != want {
-				t.Fatalf("%s drifted from what gravity init writes:\n%s", p.path, got)
+				t.Fatalf("%s drifted from what gravity ci setup writes:\n%s", p.path, got)
 			}
 		})
 	}

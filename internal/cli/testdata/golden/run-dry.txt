@@ -1,0 +1,17 @@
+ok main @ abc1234 - no upstream
+
+# Plan  dry run - manual on main @ abc1234
+  PASS           KIND       TARGET                  THIS RUN                                         AI   ESTIMATE
+  developer-api  reference  Developer Portal > API  runs - 2 commits                                 no   free - first run
+  user-guides    guides     Developer Portal > API  skips: target awaits approval (gravity approve)  yes  -
+  * 1 of 2 passes run
+
+# Result  nothing was written to Gravity
+  ok developer-api  reference -> Developer Portal > API  1 new
+      + new    refunds  Refunds  API reference for 1 operations from api/openapi.yaml
+  ! user-guides  guides -> Developer Portal > API  skipped: target awaits approval
+
+Dry run finished
+  1 pass ran, 1 skipped, 0 failed - 1 change - $0.25
+  Recorded in .gravity/runs/prun_1.json
+  Send it:  gravity run --send prun_1
