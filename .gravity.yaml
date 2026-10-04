@@ -38,7 +38,7 @@ passes:
   - name: changelog
     kind: changelog
     template: customer-changelog
-    target: gravity/changelog
+    target: gravity/cli-releases
     triggers: [push, release]
     options:
       source: changelog-file
