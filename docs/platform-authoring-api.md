@@ -7,11 +7,10 @@ CLI's side of each exchange: which command sends what, and what it does with
 the answer. The typed requests and responses live in `internal/api`.
 
 **Audience:** CLI contributors and the Gravity platform team.
-**Consumers:** `login`, `logout`, `whoami`, `init`, `status`, `passes`, `run`,
-`preview`, `check` and `explain`. The commands 1.0 removed (`sync`, `docs`,
-`release-notes`, `coverage`, `capture`, `nucleus`, `repos`, `spaces`, `ping`,
-`doctor`, `auth`) are hidden stubs in `internal/cli/removed.go`: they call no
-endpoint, print their replacement and exit `2` with `command_removed`.
+**Consumers:** `login`, `logout`, `whoami`, `org`, `setup`, `show`,
+`validate`, `structure`, `run`, `review`, `runs`, `approve`, `ci`, `status`,
+`check` and `explain`. CLI 1.1 has no stubs for removed commands: an unknown
+command is cobra's usage error.
 
 ## Conventions
 
@@ -46,17 +45,22 @@ endpoint, print their replacement and exit `2` with `command_removed`.
 - **Licence refusals.** A `403` with `module_disabled` (and `module`) or
   `seat_limit` becomes `*api.ModuleDisabledError` / `*api.SeatLimitError`; they
   are not auth errors, and the command exits `3`.
-- **No feature probing by 404.** A `404` is always an error; `repo_not_connected`
-  adds the hint to run `gravity init`.
+- **404 means "not on this server" only for the 1.1 endpoints.** A `404` whose
+  envelope code is empty or `not_found` (or a `405`) on `repos/self/validate`,
+  `repos/self/approvals`, `repos/self/runs`, `runs/{id}/cancel`, `structure` or
+  `structure/apply` is an older server (`api.IsUnsupported`) and the command
+  degrades as listed below. Everywhere else a `404` is an error;
+  `repo_not_connected` adds the hint to run `gravity setup`.
 
 ## Exit codes
 
 | Code | Meaning |
 | ---- | ------- |
 | `0` | Success, or nothing to do; a fork or Dependabot pull request without a token. |
-| `1` | Findings in `failOn` (`run`, `check`), or `status --check` on an unhealthy repository. |
-| `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, removed command. |
+| `1` | Findings: `validate` errors (also before a real run and after a dry run), `check` findings in `failOn`, structure conflicts, refused approvals, `ci check`, `status --check` on an unhealthy repository. |
+| `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, a stale or dirty branch, a recording that no longer matches. |
 | `3` | Licence refusal (`module_disabled`, `seat_limit`). |
+| `130` | Interrupted: the run was finished with `status: cancelled` (or cancelled through `POST /runs/{id}/cancel`). |
 | `4` | No usable credentials: no token (`token_missing`), only unexpanded CI variables such as a literal `$(GRAVITY_REPO_TOKEN)` in CI, or locally with no profile token (`token_unresolved`), or any `401` (`unauthorized`), which also stops a run without its finish call. |
 
 `CodeFor` in `internal/cli/exit.go` applies them: a licence refusal anywhere in
@@ -69,15 +73,20 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | `POST` | `/api/v1/auth/device/start`, `/api/v1/auth/device/poll` | `login` (device flow) |
 | `POST` | `/api/v1/auth/logout` | `logout` (user tokens only) |
 | `GET` | `/api/v1/whoami` | every command that needs a token |
-| `GET` | `/api/v1/products` | `init` (product question) |
-| `GET` | `/api/v1/sites`, `/api/v1/sites/{site}` | `init` (target site and its spaces) |
-| `POST` | `/api/v1/repos/connect` | `init`, `status`, `passes`, and the start of `run`, `preview`, `check` |
-| `PUT` | `/api/v1/repos/{repoId}/passes/{name}` | `init` (app passes) |
-| `POST` | `/api/v1/repos/{repoId}/tokens` | `init` (repository token) |
-| `GET` | `/api/v1/repos/self/plan` | `status`, `passes`, `run`, `preview`, `check` |
-| `GET` | `/api/v1/repos/self/status` | `status` |
-| `POST` | `/api/v1/runs` | `run`, `preview`, `check` (start, lease) |
-| `GET` | `/api/v1/runs/{runId}` | capture passes (Doc Agent progress) |
+| `GET` | `/api/v1/products` | `setup` (product question) |
+| `GET` | `/api/v1/sites`, `/api/v1/sites/{site}` | `setup` (site question, its spaces); `structure` fallback tree |
+| `POST` | `/api/v1/repos/connect` | `setup` (dry, then real to register), `show`, `validate`, `ci setup`, `status`, and the start of `run`, `check` |
+| `POST` | `/api/v1/repos/{repoId}/tokens` | `ci setup` (repository token) |
+| `GET` | `/api/v1/repos/self/plan` | `show` (estimates, target status), `approve` fallback, `status`, `run`, `check` |
+| `POST` | `/api/v1/repos/self/validate` | `validate`, `show`, `setup`, and every local `run` before it starts (P2) |
+| `GET`, `POST` | `/api/v1/repos/self/approvals` | `approve` (P3) |
+| `GET` | `/api/v1/repos/self/runs` | `runs`, `review latest`, `runs show latest` (P4) |
+| `GET` | `/api/v1/repos/self/status` | `status`; `runs` fallback |
+| `GET` | `/api/v1/structure?site=` | `show`, `validate`, `setup`, `structure plan`, `structure show` (P7) |
+| `POST` | `/api/v1/structure/apply` | `structure apply`, `setup` (P7) |
+| `POST` | `/api/v1/runs` | `run`, `run --send`, `check` (start, lease); write runs send `manifestHash` (P1) |
+| `GET` | `/api/v1/runs/{runId}` | `runs show`, `review`, the lease holder line, capture passes |
+| `POST` | `/api/v1/runs/{runId}/cancel` | `runs cancel`; a local run interrupted when finish refuses `cancelled` (P4) |
 | `POST` | `/api/v1/runs/{runId}/heartbeat` | every started run |
 | `POST` | `/api/v1/runs/{runId}/passes/{runPassId}` | pass reports |
 | `POST` | `/api/v1/runs/{runId}/changes` | `reference`, `guides`, `changelog` writes |
@@ -86,13 +95,32 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | `POST` | `/api/v1/runs/{runId}/hints` | cross-repository hints (`guides`, `check`) |
 | `POST` | `/api/v1/runs/{runId}/finish` | the end of every started run |
 | `GET`, `POST` | `/api/v1/products/self/inventory` | doc tools read it; write runs ingest units |
-| `GET` | `/api/v1/content/pages/{pageId}`, `/api/v1/content/pages?spaceId=&slug=` | passes, `preview` diffs, `explain` |
+| `GET` | `/api/v1/content/pages/{pageId}`, `/api/v1/content/pages?spaceId=&slug=` | passes, `explain` |
 | `GET` | `/api/v1/content/spaces/{spaceId}/tree` | `check`, `guides`, `verbatim`, doc tools |
 | `POST` | `/api/v1/content/search` | `guides` impact, doc tools |
 | `GET` | `/api/v1/content/resolve`, `/api/v1/content/pages/{pageId}/provenance` | `explain` |
 | `POST` | `/api/v1/nucleus/recall`, `/api/v1/nucleus/memories` | `nucleus` passes, doc tools |
 | `POST` | `/api/llm/v1/messages` | every AI pass |
 | `GET` | `/api/llm/v1/prompts/{name}` | every AI pass (hosted prompt, with a baked fallback) |
+
+## Guided runs (CLI 1.1)
+
+| Contract | What the CLI sends and does | On an older server |
+| -------- | --------------------------- | ------------------ |
+| P1 local manifest on write runs | `POST /runs` with `mode: write` carries `manifestHash` (after connect sent the manifest); the plan is asked with the same hash | a `400` naming `manifestHash` is retried once without it, with the warning `manifest_snapshot_unsupported` (stored passes only) |
+| P2 validate | `{manifestHash, branch, verbatim:[{pass, slug, title, collectionPath, language, sourcePath, empty}], structure}`; issues are merged with the local ones (`source: server`), `i18n` feeds `show` and `validate` | local checks only, warning `server_validate_unsupported` |
+| P3 approvals | `GET` lists pending targets and `mayApprove`; `POST {passes}` or `{all: true}` with a user token | the plan's `approveUrl` per pending target |
+| P4 cancel, progress, lease | `finish(status: cancelled)` on SIGINT/SIGTERM, then `POST /runs/{id}/cancel` if finish refuses; `runs show` renders `progress` and `lease`; the lease-holder line reads `GET /runs/{holder}` | `runs cancel` exits `2` (`server_unsupported`); without `progress` the step column is empty |
+| P5 estimate | the plan view and `show` render `estimate` (`approxCostUsd`, `firstRun`, `commits`) and sum the cost of the AI passes that run | `-` in the estimate column |
+| P6 CI first runs | a `first_run_manual` skip is labelled "first run is local: gravity run --dry-run" | — |
+| P7 structure | `GET /structure?site=` (pages included) marks what exists; `POST /structure/apply {structure, dryRun}` renders created / updated / deferred / extra / conflicts | `structure show` and `plan` read `/sites/{site}` (no pages); `structure apply` exits `2` |
+
+Dry runs are recorded in `.gravity/runs/<runId>.json` (the directory carries
+its own `.gitignore`): the recorded requests of each pass with its range, the
+head SHA and the manifest hash. `gravity run --send <runId>` refuses when
+either changed, then starts a write run with the recorded passes and ranges,
+uploads the recorded images from that commit, replays the recorded writes
+through the normal endpoints and finishes the run; no model is called.
 
 ## Capabilities
 
@@ -104,7 +132,7 @@ the CLI decodes it but gates on whoami and the plan.
 | Key | Where | Effect when absent |
 | --- | ----- | ------------------ |
 | `pipelines` | whoami, plan | CLI 1.x refuses the server (`pipelines_unsupported`, exit `2`); use gravity 0.x. |
-| `machine-tokens` | whoami | `init` mints no repository token and says to create one in the app. |
+| `machine-tokens` | whoami | `ci setup` mints no repository token and says to create one in the app. |
 | `product-inventory` | plan | Write runs skip the inventory ingest. |
 | `cross-repo-hints` | plan | Hints are not sent; the pass report carries a warning. |
 | `verbatim-lock` | whoami or plan | `status` warns that verbatim passes are not supported. |
@@ -131,16 +159,16 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
 - `POST /repos/connect` sends the CLI build, the repository facts (remote,
   name, provider, web URL, default branch, branch, commit), the context
   (`trigger` and `origin`), the manifest as JSON plus its raw YAML and
-  canonical hash, and `dryRun`. `init` adds `detected` and `createTargets`.
+  canonical hash, and `dryRun`. `setup` and `ci setup` send `dryRun: false` to
+  register the repository.
   The answer is the registered repository, the manifest outcome (`accepted`,
   `persisted`, `reason`, the authoritative branch, warnings), the effective
   passes, created targets and siblings.
 - `GET /repos/self/plan?trigger=&branch=&pass=&mode=&manifestHash=` returns
   the passes with `applies` and `skipReason`, targets, watermarks, instruction
   layers, the product inventory and the capabilities. Dry plans send the
-  manifest hash so the branch's manifest is overlaid. `--pass` becomes
-  repeated `pass=` parameters; `gravity passes --trigger manual` plans in write
-  mode, the mode of a manual run.
+  manifest hash so the branch's manifest is overlaid; so do write plans of
+  local runs (P1). `--pass` becomes repeated `pass=` parameters.
 - `GET /repos/self/status?runs=N` feeds `gravity status`.
 
 ## A run
@@ -154,10 +182,12 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
    skip must advance a watermark.
 3. `POST /runs` carries the trigger, mode, origin, branch, head and base, the
    pull request or release, the CI context, the plan hash, the manifest hash
-   (dry runs) and one entry per pass with its range kind, base, the watermark it
+   (dry runs, and write runs on servers that accept it) and one entry per pass with its range kind, base, the watermark it
    saw and its skip reason. `409 lease_held` is retried after its `retryAfter`
-   (clamped to 5-60 s) until `--lease-timeout`; `409 plan_stale` re-plans, up to
-   three times.
+   (clamped to 5-60 s) until `--lease-timeout`, and every wait is announced with
+   the holder (`GET /runs/{holder}` for its trigger, branch and start);
+   `409 plan_stale` re-plans, up to three times. Before the start, a local run
+   shows the plan view and, on a terminal, asks before AI passes.
 4. Heartbeats run every `heartbeatSeconds`. `lease_lost`, `run_not_running`
    or a `401` (on a heartbeat or any other call of the run, `api.StopsRun`)
    stops the run without a finish call.
@@ -170,7 +200,7 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
    uploads name their pass run with `X-Gravity-Run-Pass-Id`. Dry runs record the
    would-be requests instead of sending them.
 7. `POST /runs/{id}/finish` returns the advanced watermarks and the bundle to
-   review.
+   review. An interrupted run finishes with `status: cancelled`.
 
 ## Unit keys
 

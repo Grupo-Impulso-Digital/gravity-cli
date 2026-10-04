@@ -1,5 +1,83 @@
 # Changelog
 
+## v1.1.0 — Unreleased
+
+The guided CLI. `gravity` now walks a repository from sign-in to a reviewed
+change request, says what it is about to do before it does it, and shows
+what it did. Breaking: the 1.0 compatibility paths are gone (see Removed).
+
+### Added
+
+- `gravity setup`, the front door: signs you in, detects the repository
+  (languages, monorepo packages, READMEs and docs folders, OpenAPI, changelog,
+  CI), asks for the product and the site, drafts the docs structure, suggests
+  passes, writes `.gravity.yaml`, validates it, shows it, then offers to apply
+  the structure, to dry-run and to wire CI. Re-running is safe; `--yes` without
+  a terminal; `--json` alone prints the proposal and writes nothing.
+- `structure:` in `.gravity.yaml` (site, spaces, collections nested up to five
+  levels, pages with an optional `source:`) and `gravity structure plan`
+  (deterministic draft from the repository and the live site, YAML plus tree
+  diff, `--write`, `--repo` for sibling repositories), `gravity structure
+  apply [--dry-run]` (creates what is missing, never deletes, never creates a
+  page a verbatim pass imports) and `gravity structure show`.
+- `gravity show`: the manifest as a structure tree, a verbatim mapping table
+  (source file to collection, slug and title, flagged empty, duplicate slug,
+  package-name title, page exists, not in structure), a pass table (triggers,
+  branches, audiences, requested and effective languages, AI, estimate) and the
+  CI status.
+- `gravity validate`: schema, local rules and the platform's checks
+  (`POST /repos/self/validate`) grouped by pass with a fix for each issue, plus
+  the languages each pass will really produce; exits `1` on errors.
+- `gravity run` outside CI: fetches and refuses a branch behind or diverged
+  from its upstream, or uncommitted tracked files (`--allow-dirty` for dry
+  runs), with the git commands to fix it; validates first; shows the plan
+  (passes that run and why the others do not, estimates, total cost) and asks
+  before AI passes on a terminal unless `--yes`; announces a lease wait at once
+  with the holder, its trigger, branch and age, and a countdown (also with
+  `-q`); shows live progress; Ctrl-C finishes the run as cancelled and exits
+  `130`.
+- Dry runs are recorded in `.gravity/runs/<runId>.json` and rendered as a
+  result report; on a terminal gravity asks whether to send them.
+  `gravity run --send <runId|latest>` replays the recorded changes as a real
+  run without recomputing, and refuses when HEAD or `.gravity.yaml` changed.
+- Real runs from any branch use the local `.gravity.yaml` (the manifest
+  snapshot is sent with the write run) and end with the change request link.
+- `gravity review [runId|latest]`, `gravity runs [--watch]`,
+  `gravity runs show <id>` (per-pass status, progress, lease, change request),
+  `gravity runs cancel <id>`, `gravity approve [pass]... [--all]`,
+  `gravity org [list|use]`, `gravity ci setup` and `gravity ci check`.
+- `gravity agent install [--tool claude|cursor|codex|agents-md] [--global]`
+  and a Claude Code plugin marketplace in this repository (`plugin/`: the
+  Gravity skill with its references, `/gravity:setup`, `/gravity:structure`,
+  `/gravity:run`, `/gravity:review`, and the Gravity MCP server). The skill
+  teaches the guided workflow and the guardrails.
+- Terminal output: section headings, box-drawing trees, bordered tables and
+  cards with colour and icons on a terminal; plain ASCII columns in CI or
+  without a terminal; one `--json` envelope for every command.
+
+### Changed
+
+- A leading H1 equal to the page title is dropped wherever the title comes
+  from; package-name titles (`@scope/polaris-admin`) become `Polaris Admin`
+  and slugs never come from package names.
+- A verbatim file with nothing but a title is skipped with a warning unless
+  `options.allowEmpty: true`.
+- `install.sh` and `install.ps1` pick the newest release that has an archive
+  for the platform, falling back to the previous one.
+- Against a server without the 1.1 endpoints, validation is local only (with a
+  warning), `approve` links to the app, `runs` reads `status`, and a refused
+  manifest snapshot falls back to the stored passes.
+
+### Removed
+
+- `gravity init` (use `gravity setup` and `gravity ci setup`), `gravity
+  passes` (use `gravity show`) and `gravity preview` (use
+  `gravity run --dry-run`).
+- v1 manifest conversion: a manifest without `version: 2` is now a schema
+  error.
+- The hidden stubs of the commands 1.0 removed, the import of the v0.x
+  `config.yaml` token, and the 0.x pipeline detection of the CI setup.
+
 ## v1.0.4 — 2026-10-04
 
 ### Fixed
