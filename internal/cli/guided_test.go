@@ -484,7 +484,7 @@ func TestApproveListsApprovesAndFallsBack(t *testing.T) {
 	h.platform.json("GET /api/v1/repos/self/approvals", 200, `{"repo":{"id":"cr_1","remoteKey":"github.com/acme/billing-api","name":"billing-api"},"canApprove":true,"pending":[{"target":"product/handbook","site":"product","space":"handbook","passes":["handbook"],"reasons":["skips_review"],"why":"verbatim imports go live without review","mayApprove":true},{"target":"ops/runbooks","site":"ops","space":"runbooks","passes":["internal"],"reasons":["private_space"],"mayApprove":false,"reason":"needs docs.write on ops"}],"granted":[]}`)
 	expectCode(t, h, h.run("approve"), 0)
 	out := h.stdout.String()
-	for _, want := range []string{"Allow billing-api to write to product/handbook — verbatim imports go live without review", "the space is not public", "needs docs.write on ops"} {
+	for _, want := range []string{"Allow billing-api to write to product/handbook - verbatim imports go live without review", "the space is not public", "needs docs.write on ops"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout lacks %q:\n%s", want, out)
 		}
