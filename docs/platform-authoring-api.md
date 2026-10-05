@@ -111,7 +111,7 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | P2 validate | `{manifestHash, branch, verbatim:[{pass, slug, title, collectionPath, language, sourcePath, empty}], structure}`; issues are merged with the local ones (`source: server`), `i18n` feeds `show` and `validate` | local checks only, warning `server_validate_unsupported` |
 | P3 approvals | `GET` lists pending grants per site/space (`target`, `passes`, `reasons`, `why`, `mayApprove`) and `granted`; `POST {spaces}`, `{passes}` or `{all: true}` with a user token | the plan's `approveUrl` per pending target |
 | P4 cancel, progress, lease | `finish(status: cancelled)` on SIGINT/SIGTERM, then `POST /runs/{id}/cancel` if finish refuses; `runs show` renders `progress` and `lease`; the lease-holder line reads `GET /runs/{holder}` | `runs cancel` exits `2` (`server_unsupported`); without `progress` the step column is empty |
-| P5 estimate | the plan view and `show` render `estimate` (`approxCostUsd`, `firstRun`, `commits`) and sum the cost of the AI passes that run | `-` in the estimate column |
+| P5 estimate | `run` sends `stats=` with the plan request; the plan view and `show` render `estimate` (`approxCostUsd`, `firstRun`, `commits`) and sum the cost of the AI passes that run | `-` in the estimate column |
 | P6 CI first runs | a `first_run_manual` skip is labelled "first run is local: gravity run --dry-run" | — |
 | P7 structure | `GET /structure?site=` (pages included) marks what exists; `POST /structure/apply {structure, dryRun}` renders created / updated / deferred / extra / conflicts | `structure show` and `plan` read `/sites/{site}` (no pages); `structure apply` exits `2` |
 
@@ -164,11 +164,15 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
   The answer is the registered repository, the manifest outcome (`accepted`,
   `persisted`, `reason`, the authoritative branch, warnings), the effective
   passes, created targets and siblings.
-- `GET /repos/self/plan?trigger=&branch=&pass=&mode=&manifestHash=` returns
+- `GET /repos/self/plan?trigger=&branch=&pass=&mode=&manifestHash=&repo=&stats=` returns
   the passes with `applies` and `skipReason`, targets, watermarks, instruction
   layers, the product inventory and the capabilities. Dry plans send the
   manifest hash so the branch's manifest is overlaid; so do write plans of
-  local runs (P1). `--pass` becomes repeated `pass=` parameters.
+  local runs (P1). `--pass` becomes repeated `pass=` parameters. Before the
+  plan view, `run` measures the change set of each pass that will run and
+  fetches the plan again with one `stats=<pass>:<commits>:<files>[:<bytes>]`
+  parameter per pass, so the server can size the estimate (P5); bytes are the
+  commit messages plus about 40 bytes per changed line of text files.
 - `GET /repos/self/status?runs=N` feeds `gravity status`.
 
 ## A run
