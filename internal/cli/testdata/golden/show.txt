@@ -24,6 +24,7 @@ Gravity - billing-api
   docs         verbatim  polaris/docs                 push     -          -           no   free - first run
   user-guides  guides    polaris/guides (unapproved)  push     users      fr,es -> fr  yes  ~$0.84 - 12 commits
   * user-guides languages: es is not enabled on site polaris
+  ! user-guides needs a grant for polaris/guides: gravity approve polaris/guides
 
 # CI  GitHub Actions
   - .github/workflows/gravity.yml  missing

@@ -61,7 +61,7 @@ for the user to handle in the app. Result items have `kind`, `path`, `title`, `r
 - `conflicts`: something at that path is incompatible (wrong kind, locked by another repository, no
   permission). Read `reason`; fix the yaml or ask an admin.
 - Permissions: a user needs docs.spaces.manage (and site create rights for a new site). A repository
-  token may only apply inside already-approved targets.
+  token may only apply inside spaces the repository holds a grant for (setup grants them).
 
 ```bash
 gravity structure show [--site <slug>] --json

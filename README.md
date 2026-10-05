@@ -91,6 +91,7 @@ when you are signed in:
   PASS         KIND      TARGET                       RUNS ON  AUDIENCES  LANGUAGES    AI   ESTIMATE
   docs         verbatim  polaris/docs                 push     -          -            no   free - first run
   user-guides  guides    polaris/guides (unapproved)  push     users      fr,es -> fr  yes  ~$0.84 - 12 commits
+  ! user-guides needs a grant for polaris/guides: gravity approve polaris/guides
 ```
 
 On a terminal the same view uses box-drawing trees, bordered tables and colour.
@@ -146,9 +147,9 @@ run reports the same conflicts the real run would hit) and shows the plan:
 
 ```
 # Plan  dry run - manual on main @ abc1234
-  PASS           KIND       TARGET                  THIS RUN                                         AI   ESTIMATE
-  developer-api  reference  Developer Portal > API  runs - 2 commits                                 no   free - first run
-  user-guides    guides     Developer Portal > API  skips: target awaits approval (gravity approve)  yes  -
+  PASS           KIND       TARGET                  THIS RUN                                                        AI   ESTIMATE
+  developer-api  reference  Developer Portal > API  runs - 2 commits                                                no   free - first run
+  user-guides    guides     Developer Portal > API  skips: target awaits approval (gravity approve dev-portal/api)  yes  -
   * 1 of 2 passes run
 ```
 
@@ -183,8 +184,20 @@ since the dry run. A real run prints the change request link and offers to open
 it; `gravity review [runId|latest]` opens it later, `gravity runs [--watch]`
 lists recent runs, `gravity runs show <id>` is the authoritative state of one
 run (per-pass status, progress, lease, change request) and
-`gravity runs cancel <id>` cancels one. A pass whose target awaits approval is
-skipped until `gravity approve <pass>` (or `--all`) approves it.
+`gravity runs cancel <id>` cancels one.
+
+The repository token CI uses may only write where a person allowed it, since
+anyone who can push could otherwise point `.gravity.yaml` at any space. The
+allowance is a grant per site/space: one grant covers every pass of the
+repository that targets that space or a collection in it. A grant is needed
+only when a pass would bypass review or expose content: verbatim imports and
+auto-accepting passes (they go live without review), nucleus passes (they
+write to the product memory) and any target space that is not public (the
+token could read it). Passes that land as change requests in a public space
+need none. `gravity setup`, `gravity run` and other actions you take with your
+own login grant automatically where you have write access, and setup asks one
+yes/no per remaining grant; otherwise the pass is skipped (`target awaits
+approval`) until `gravity approve <site/space>` (or `--all`) grants it.
 
 Locally, and on a GitHub `workflow_dispatch` (or any manual pipeline), the
 trigger is `manual`: passes triggered on `manual`, `push` or `schedule` run,
@@ -375,7 +388,7 @@ Gravity does not fence pages per repository.
 | `gravity run` | Dry run (`--dry-run`) or real run; `--pass`, `--yes`, `--send <runId>`, `--allow-dirty`, `--note`, `--lease-timeout`; in CI also `--trigger`, `--branch`, `--from`, `--to`, `--parallel`, `--no-comment`, `--annotate`, `--strict`. |
 | `gravity review [runId\|latest]` | Open a run's change request (prints the link without a terminal or with `--json`). |
 | `gravity runs [--watch]` | Recent runs; `runs show <id>` per-pass state, `runs cancel <id>`. |
-| `gravity approve [pass]... [--all]` | List pending pass targets, approve them (user token). |
+| `gravity approve [site/space]... [--all]` | List the spaces waiting for a grant and why, grant them (user token). |
 | `gravity ci setup\|check` | Write the CI file, mint and install `GRAVITY_REPO_TOKEN` (`--provider`, `--no-secret`); check the file and the secret. |
 | `gravity status` | Auth, connection, manifest, passes with targets and watermarks, recent runs, open bundles, tokens, health and capability warnings; `--runs N`, `--check`. |
 | `gravity check` | The pull request gate: check passes (or the built-in check: drift, coverage of new operations, verbatim notes) plus every pass's doc impact; `--fail-on`, `--annotate`, `--comment`. |

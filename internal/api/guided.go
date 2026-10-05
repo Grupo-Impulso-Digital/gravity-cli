@@ -74,11 +74,22 @@ type I18nOutcome struct {
 	Reason    string   `json:"reason"`
 }
 
+// ValidatePass is the target verdict of one pass in a validation.
+type ValidatePass struct {
+	Name             string   `json:"name"`
+	Kind             string   `json:"kind"`
+	Target           string   `json:"target"`
+	Status           string   `json:"status"`
+	RequiresApproval bool     `json:"requiresApproval"`
+	Reasons          []string `json:"reasons"`
+}
+
 // ValidateResponse is the response of POST /api/v1/repos/self/validate.
 type ValidateResponse struct {
 	OK     bool            `json:"ok"`
 	Issues []ValidateIssue `json:"issues"`
 	I18n   []I18nOutcome   `json:"i18n"`
+	Passes []ValidatePass  `json:"passes,omitempty"`
 }
 
 // Validate calls POST /api/v1/repos/self/validate.
@@ -90,19 +101,46 @@ func (c *Client) Validate(ctx context.Context, repo string, req ValidateRequest)
 	return &out, nil
 }
 
-// PendingApproval is a pass target awaiting approval.
+// PendingApproval is a site/space the repository needs a grant for.
 type PendingApproval struct {
-	Pass       string `json:"pass"`
-	Target     string `json:"target"`
-	Status     string `json:"status"`
-	MayApprove bool   `json:"mayApprove"`
-	Reason     string `json:"reason,omitempty"`
-	ApproveURL string `json:"approveUrl,omitempty"`
+	Target     string   `json:"target"`
+	Site       string   `json:"site,omitempty"`
+	Space      string   `json:"space,omitempty"`
+	SpaceName  string   `json:"spaceName,omitempty"`
+	Visibility string   `json:"visibility,omitempty"`
+	Passes     []string `json:"passes"`
+	Reasons    []string `json:"reasons"`
+	Why        string   `json:"why,omitempty"`
+	MayApprove bool     `json:"mayApprove"`
+	Reason     string   `json:"reason,omitempty"`
+	ApproveURL string   `json:"approveUrl,omitempty"`
+}
+
+// Grant is a site/space the repository may already write to.
+type Grant struct {
+	Target    string   `json:"target"`
+	Site      string   `json:"site,omitempty"`
+	Space     string   `json:"space,omitempty"`
+	SpaceName string   `json:"spaceName,omitempty"`
+	By        string   `json:"by,omitempty"`
+	At        string   `json:"at,omitempty"`
+	Source    string   `json:"source,omitempty"`
+	Passes    []string `json:"passes"`
+}
+
+// ApprovalsRepo names the repository of an approvals answer.
+type ApprovalsRepo struct {
+	ID        string `json:"id"`
+	RemoteKey string `json:"remoteKey"`
+	Name      string `json:"name"`
 }
 
 // Approvals is the response of GET /api/v1/repos/self/approvals.
 type Approvals struct {
-	Pending []PendingApproval `json:"pending"`
+	Repo       ApprovalsRepo     `json:"repo"`
+	CanApprove bool              `json:"canApprove"`
+	Pending    []PendingApproval `json:"pending"`
+	Granted    []Grant           `json:"granted"`
 }
 
 // Approvals calls GET /api/v1/repos/self/approvals.
@@ -116,15 +154,20 @@ func (c *Client) Approvals(ctx context.Context, repo string) (*Approvals, error)
 
 // ApproveRequest is the body of POST /api/v1/repos/self/approvals.
 type ApproveRequest struct {
+	Spaces []string `json:"spaces,omitempty"`
 	Passes []string `json:"passes,omitempty"`
 	All    bool     `json:"all,omitempty"`
 }
 
-// ApprovalOutcome is one pass of an approval answer.
+// ApprovalOutcome is one grant made or refused by an approval answer.
 type ApprovalOutcome struct {
-	Pass   string `json:"pass"`
-	Target string `json:"target,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	Target  string   `json:"target,omitempty"`
+	Site    string   `json:"site,omitempty"`
+	Space   string   `json:"space,omitempty"`
+	Passes  []string `json:"passes,omitempty"`
+	Pass    string   `json:"pass,omitempty"`
+	Code    string   `json:"code,omitempty"`
+	Message string   `json:"message,omitempty"`
 }
 
 // ApproveResult is the response of POST /api/v1/repos/self/approvals.

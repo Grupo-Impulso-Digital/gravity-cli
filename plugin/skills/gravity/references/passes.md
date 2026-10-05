@@ -72,7 +72,29 @@ estimate to the user before running AI passes.
 
 ## Targets and approval
 
-A pass writes only into its `target`. A target must exist (`target_missing`) and be approved for the
-repository (`target_unapproved`). A signed-in user with write access is approved automatically on their
-own runs; CI repository tokens need the approval recorded once: `gravity approve <pass>` (lists pending
-targets without arguments).
+A pass writes only into its `target` (`<site>/<space>[/<collection>...]`), and the target must exist
+(`target_missing`).
+
+Why grants exist: in CI the pass runs with the repository token, and anyone who can push could edit
+`.gravity.yaml` to point it at any space. So the token may only write (and read) where a person allowed
+it. The allowance is a **grant per site/space**: one grant covers every pass of the repository that
+targets that space or any collection inside it.
+
+When a grant is needed (`requiresApproval`, with `reasons`):
+
+- `skips_review`: a verbatim pass (imports and translations go live, repo-locked) or a pass whose
+  changes are auto-accepted (`publish: auto_if_trusted` into a space that trusts the repository and
+  whose review policy needs no human);
+- `nucleus`: a nucleus pass writes to the product memory directly;
+- `private_space`: the target space is not public (private, unlisted, or inheriting private), so the
+  token would gain read access to it.
+
+Normal passes (guides, reference, changelog, check) that land as change requests in a public space
+need **no grant**: humans review them anyway, and their target status is `ok`.
+
+Grants are made automatically whenever someone with write access to the space acts with their own
+login: `gravity setup` (it also asks one yes/no for anything left), creating or updating a pass in the
+app, `gravity structure apply`, and a real `gravity run`. Otherwise the pass is skipped with
+`target_unapproved` until a person runs `gravity approve <site/space>` (no arguments lists the waiting
+spaces and the reason in plain words; a pass name also works). A repository token can never grant.
+Never grant (or `--all`) without telling the user which spaces and why.

@@ -15,7 +15,7 @@ checks, so dry run == real run for conflicts.
 | `duplicate_slug` | two mapped files produce the same slug in one collection | pin `slug:` on one entry or split collections |
 | `overview_clash` | two index files map to the same collection overview | give one a `collection:` or exclude it |
 | `target_missing` | the pass target does not exist | add it to `structure:` and `gravity structure apply`, or fix `target` |
-| `target_unapproved` | the target is not approved for this repository | `gravity approve <pass>` (user token) or approve in the app |
+| `target_unapproved` | the pass needs a grant (verbatim, auto-accept, nucleus or non-public space) and the repository has none for that space | `gravity approve <site/space>` with a user login, after the user agrees |
 | `language_not_enabled` | the site lacks a requested language | see i18n.md |
 | `translations_disabled` | org translations gate off: nothing will translate | see i18n.md |
 | `empty_source` | file has no content; skipped | write content, exclude it, or `allowEmpty: true` |
@@ -49,7 +49,7 @@ Error `lease_held` after the timeout means nothing ran.
 - `running` with progress moving: wait. No progress and the holder machine is gone: the lease expires
   (status `abandoned`); cancelling releases it at once.
 - `skipped` with `first_run_manual`: CI skipped the first run of an AI pass; run it locally.
-- `skipped` with `target_unapproved`: `gravity approve`.
+- `skipped` with `target_unapproved`: `gravity approve` lists the space and the reason; `gravity approve <site/space>`.
 - `partial`: some passes failed; read each pass's `error`.
 
 ## Credentials

@@ -40,6 +40,8 @@ type showPass struct {
 	AI                 bool          `json:"ai"`
 	Enabled            bool          `json:"enabled"`
 	Estimate           *api.Estimate `json:"estimate"`
+	Grant              string        `json:"grant,omitempty"`
+	ApprovalWhy        string        `json:"approvalWhy,omitempty"`
 }
 
 type ciFileState struct {
@@ -161,6 +163,9 @@ func (a *app) showData(m *model, only []string) showData {
 		if pp, ok := planned[p.Name]; ok {
 			sp.TargetStatus = pp.Target.Status
 			sp.Estimate = pp.Estimate
+			if pp.Target.Status == api.TargetUnapproved {
+				sp.Grant, sp.ApprovalWhy = pp.Target.GrantKey(), api.ApprovalWhy(pp.Kind, pp.Target.Reasons)
+			}
 		}
 		d.Passes = append(d.Passes, sp)
 	}
@@ -404,6 +409,13 @@ func renderPasses(p *ui.Printer, list []showPass) {
 	for _, sp := range list {
 		if sp.I18n != "" {
 			p.Note("  ", ui.MarkInfo, "%s languages: %s", sp.Name, sp.I18n)
+		}
+		if sp.Grant != "" {
+			why := ""
+			if sp.ApprovalWhy != "" {
+				why = " (" + sp.ApprovalWhy + ")"
+			}
+			p.Note("  ", ui.MarkWarn, "%s needs a grant for %s%s: gravity approve %s", sp.Name, sp.Grant, why, sp.Grant)
 		}
 	}
 }

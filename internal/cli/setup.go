@@ -46,6 +46,7 @@ type setupData struct {
 	Detected  *detect.Result    `json:"detected"`
 	SignedIn  bool              `json:"signedIn"`
 	Proposal  bool              `json:"proposal"`
+	Granted   []string          `json:"granted,omitempty"`
 }
 
 const (
@@ -570,6 +571,9 @@ func (r *setupRun) finish() error {
 			next = append(next, "gravity structure apply --dry-run   then   gravity structure apply")
 		}
 	}
+	if r.client != nil {
+		next = append(next, r.offerGrants(interactive)...)
+	}
 	if !r.o.noRun && m.errors() == 0 && r.client != nil {
 		if interactive && a.confirm("Dry-run the passes now?", "everything is computed (model calls included) and nothing is written") {
 			if err := a.runPipeline(r.ctx, runFlags{pipelineFlags: pipelineFlags{dryRun: true, leaseTimeout: defaultLeaseTimeout, annotate: "none", parallel: 1}, allowDirty: true}); err != nil {
@@ -604,6 +608,51 @@ func (r *setupRun) finish() error {
 	p.Println("")
 	p.Card("Setup done", lines, nil)
 	return a.ui.Result(r.data)
+}
+
+func (r *setupRun) offerGrants(interactive bool) []string {
+	a := r.a
+	p := a.ui
+	repo := repoParam(r.who, r.info)
+	pending, err := r.client.Approvals(r.ctx, repo)
+	if err != nil {
+		p.Debugf("approvals: %v", err)
+		return nil
+	}
+	repoName := firstNonEmpty(pending.Repo.Name, r.info.name)
+	var spaces, next []string
+	for _, pa := range pending.Pending {
+		if !pa.MayApprove {
+			next = append(next, fmt.Sprintf("ask someone with write access to %s to run gravity approve %s", pa.Target, pa.Target))
+			continue
+		}
+		if interactive && !a.confirm(fmt.Sprintf("Allow %s to write to %s?", repoName, pa.Target), firstNonEmpty(pendingWhy(pa), "CI runs need it")) {
+			next = append(next, "gravity approve "+pa.Target)
+			continue
+		}
+		if !interactive && !r.o.yes {
+			next = append(next, "gravity approve "+pa.Target)
+			continue
+		}
+		spaces = append(spaces, pa.Target)
+	}
+	if len(spaces) == 0 {
+		return next
+	}
+	res, err := r.client.Approve(r.ctx, repo, api.ApproveRequest{Spaces: spaces})
+	if err != nil {
+		a.ui.Warn("approve_failed", err.Error())
+		return append(next, "gravity approve "+strings.Join(spaces, " "))
+	}
+	for _, o := range res.Approved {
+		r.data.Granted = append(r.data.Granted, o.Target)
+		p.Note("", ui.MarkOK, "%s may now write to %s", repoName, o.Target)
+	}
+	for _, o := range res.Refused {
+		p.Note("", ui.MarkFail, "%s: %s", firstNonEmpty(o.Target, o.Pass), firstNonEmpty(o.Message, o.Code, "refused"))
+		next = append(next, "gravity approve "+firstNonEmpty(o.Target, o.Pass))
+	}
+	return next
 }
 
 func (a *app) confirm(title, desc string) bool {

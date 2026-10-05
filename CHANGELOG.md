@@ -44,7 +44,7 @@ what it did. Breaking: the 1.0 compatibility paths are gone (see Removed).
   snapshot is sent with the write run) and end with the change request link.
 - `gravity review [runId|latest]`, `gravity runs [--watch]`,
   `gravity runs show <id>` (per-pass status, progress, lease, change request),
-  `gravity runs cancel <id>`, `gravity approve [pass]... [--all]`,
+  `gravity runs cancel <id>`, `gravity approve [site/space]... [--all]`,
   `gravity org [list|use]`, `gravity ci setup` and `gravity ci check`.
 - `gravity agent install [--tool claude|cursor|codex|agents-md] [--global]`
   and a Claude Code plugin marketplace in this repository (`plugin/`: the
@@ -79,6 +79,20 @@ what it did. Breaking: the 1.0 compatibility paths are gone (see Removed).
   `config.yaml` token, and the 0.x pipeline detection of the CI setup.
 
 ## v1.0.4 — 2026-10-04
+
+### Changed
+
+- Target approvals are grants per site/space and stay out of the way: one
+  grant covers every pass of the repository targeting that space, and the plan,
+  `show`, `validate` and the run view only mention approval when a pass needs
+  one (verbatim imports or auto-accepting passes that skip review, nucleus
+  passes, or a space that is not public). `gravity approve` lists the waiting
+  spaces with the reason in plain words ("Allow polaris-repo to write to
+  polaris/developers — verbatim imports go live without review") and grants
+  `site/space` arguments; a pass name still grants that pass's space.
+  `gravity setup` asks one yes/no per grant the server did not already make
+  for you. Needs a platform with grants (`GET /repos/self/approvals` returning
+  `pending[].target`).
 
 ### Fixed
 

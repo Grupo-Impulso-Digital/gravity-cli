@@ -481,15 +481,23 @@ func TestRunsListShowCancelAndReview(t *testing.T) {
 func TestApproveListsApprovesAndFallsBack(t *testing.T) {
 	h := newHarness(t)
 	h.env["GRAVITY_TOKEN"] = "gr_user_abc"
-	h.platform.json("GET /api/v1/repos/self/approvals", 200, `{"pending":[{"pass":"product-guides","target":"product/guides","status":"unapproved","mayApprove":true},{"pass":"internal","target":"ops/runbooks","status":"unapproved","mayApprove":false,"reason":"needs docs.write on ops"}]}`)
+	h.platform.json("GET /api/v1/repos/self/approvals", 200, `{"repo":{"id":"cr_1","remoteKey":"github.com/acme/billing-api","name":"billing-api"},"canApprove":true,"pending":[{"target":"product/handbook","site":"product","space":"handbook","passes":["handbook"],"reasons":["skips_review"],"why":"verbatim imports go live without review","mayApprove":true},{"target":"ops/runbooks","site":"ops","space":"runbooks","passes":["internal"],"reasons":["private_space"],"mayApprove":false,"reason":"needs docs.write on ops"}],"granted":[]}`)
 	expectCode(t, h, h.run("approve"), 0)
-	if out := h.stdout.String(); !strings.Contains(out, "product-guides") || !strings.Contains(out, "needs docs.write on ops") {
-		t.Fatalf("stdout = %s", out)
+	out := h.stdout.String()
+	for _, want := range []string{"Allow billing-api to write to product/handbook — verbatim imports go live without review", "the space is not public", "needs docs.write on ops"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout lacks %q:\n%s", want, out)
+		}
 	}
-	h.platform.json("POST /api/v1/repos/self/approvals", 200, `{"approved":[{"pass":"product-guides","target":"product/guides"}],"refused":[]}`)
-	expectCode(t, h, h.run("approve", "product-guides", "--json"), 0)
+	h.platform.json("POST /api/v1/repos/self/approvals", 200, `{"approved":[{"target":"product/handbook","site":"product","space":"handbook","passes":["handbook"]}],"refused":[]}`)
+	expectCode(t, h, h.run("approve", "product/handbook", "--json"), 0)
 	body := h.platform.find("POST", "/api/v1/repos/self/approvals")[0].Body
-	if names := body["passes"].([]any); len(names) != 1 || names[0] != "product-guides" {
+	if spaces := body["spaces"].([]any); len(spaces) != 1 || spaces[0] != "product/handbook" || body["passes"] != nil {
+		t.Fatalf("body = %v", body)
+	}
+	expectCode(t, h, h.run("approve", "handbook", "--json"), 0)
+	body = h.platform.find("POST", "/api/v1/repos/self/approvals")[1].Body
+	if names := body["passes"].([]any); len(names) != 1 || names[0] != "handbook" {
 		t.Fatalf("body = %v", body)
 	}
 	h.platform.json("GET /api/v1/repos/self/approvals", 404, `{"error":{"code":"not_found","message":"no route"}}`)

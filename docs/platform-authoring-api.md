@@ -109,7 +109,7 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | -------- | --------------------------- | ------------------ |
 | P1 local manifest on write runs | `POST /runs` with `mode: write` carries `manifestHash` (after connect sent the manifest); the plan is asked with the same hash | a `400` naming `manifestHash` is retried once without it, with the warning `manifest_snapshot_unsupported` (stored passes only) |
 | P2 validate | `{manifestHash, branch, verbatim:[{pass, slug, title, collectionPath, language, sourcePath, empty}], structure}`; issues are merged with the local ones (`source: server`), `i18n` feeds `show` and `validate` | local checks only, warning `server_validate_unsupported` |
-| P3 approvals | `GET` lists pending targets and `mayApprove`; `POST {passes}` or `{all: true}` with a user token | the plan's `approveUrl` per pending target |
+| P3 approvals | `GET` lists pending grants per site/space (`target`, `passes`, `reasons`, `why`, `mayApprove`) and `granted`; `POST {spaces}`, `{passes}` or `{all: true}` with a user token | the plan's `approveUrl` per pending target |
 | P4 cancel, progress, lease | `finish(status: cancelled)` on SIGINT/SIGTERM, then `POST /runs/{id}/cancel` if finish refuses; `runs show` renders `progress` and `lease`; the lease-holder line reads `GET /runs/{holder}` | `runs cancel` exits `2` (`server_unsupported`); without `progress` the step column is empty |
 | P5 estimate | the plan view and `show` render `estimate` (`approxCostUsd`, `firstRun`, `commits`) and sum the cost of the AI passes that run | `-` in the estimate column |
 | P6 CI first runs | a `first_run_manual` skip is labelled "first run is local: gravity run --dry-run" | — |

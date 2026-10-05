@@ -30,7 +30,7 @@ runs) and for small targeted fixes the user asks for.
 6. **Ask before spending.** AI passes cost money. Show the plan view / estimate and get a yes before
    `gravity run` or `gravity run --dry-run` on AI passes; only then pass `--yes`.
 7. **Ask before acting on other people's work.** Never `gravity runs cancel <id>` a run you did not
-   start without the user's explicit consent. Never `gravity approve --all` without listing the targets.
+   start without the user's explicit consent. Never `gravity approve --all` without listing the waiting spaces first.
 8. **Never write tokens into files** (`.gravity.yaml`, `.env`, CI files, commits). Tokens live in
    `gravity login` profiles or CI secrets set by `gravity ci setup`.
 9. **First AI runs are local.** CI skips an AI pass with no watermark (`first_run_manual`). Do the first
@@ -149,7 +149,7 @@ gravity run --pass <name>          # one pass, whatever its triggers
 gravity runs                       # recent runs; --watch to follow
 gravity runs show <runId> --json   # the only source of truth for "did it finish"
 gravity review latest              # open the change request
-gravity approve                    # list pending targets; gravity approve <pass> after the user agrees
+gravity approve                    # spaces waiting for a grant and why; gravity approve <site/space> after the user agrees
 gravity status                     # health, passes, open bundles
 ```
 

@@ -210,6 +210,7 @@ func (s *runState) passes(ctx context.Context) []PassResult {
 	for i, pp := range s.prep.passes {
 		rp, ok := server[pp.pass.Name]
 		base := PassResult{Name: pp.pass.Name, Kind: pp.pass.Kind, Target: passes.TargetLabel(pp.pass), RunPassID: rp.RunPassID, ApproveURL: pp.pass.Target.ApproveURL, Missing: pp.pass.MissingScopes}
+		base.Grant, base.Why = grantOf(pp.pass, pp.decision.Skip)
 		if pp.ranged {
 			rng := pp.rng
 			base.Range = &rng

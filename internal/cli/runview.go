@@ -131,7 +131,7 @@ func renderPlanView(p *ui.Printer, view engine.PlanView) {
 		if !pp.Run {
 			will = p.Dim("skips: " + skipLabel(pp.Skip))
 			if pp.Skip == api.SkipTargetUnapproved {
-				will = p.Paint(ui.ToneWarn, "skips: "+skipLabel(pp.Skip)) + p.Dim(" (gravity approve)")
+				will = p.Paint(ui.ToneWarn, "skips: "+skipLabel(pp.Skip)) + p.Dim(" (gravity approve "+pp.Grant+")")
 			}
 		} else {
 			run++
@@ -437,8 +437,12 @@ func renderRunResult(p *ui.Printer, res *engine.Result, data *runData, before fu
 		}
 	}
 	for _, ps := range res.Passes {
-		if ps.ApproveURL != "" && ps.SkipReason == api.SkipTargetUnapproved {
-			lines = append(lines, "Approve "+ps.Name+":  gravity approve "+ps.Name)
+		if ps.SkipReason == api.SkipTargetUnapproved && ps.Grant != "" {
+			line := "Grant " + ps.Grant + " for " + ps.Name + ":  gravity approve " + ps.Grant
+			if ps.Why != "" {
+				line += "  (" + ps.Why + ")"
+			}
+			lines = append(lines, line)
 		}
 	}
 	title = "Dry run finished"

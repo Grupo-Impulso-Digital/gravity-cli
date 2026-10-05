@@ -110,6 +110,8 @@ type PlannedPass struct {
 	Commits  int           `json:"commits"`
 	AI       bool          `json:"ai"`
 	Estimate *api.Estimate `json:"estimate,omitempty"`
+	Grant    string        `json:"grant,omitempty"`
+	Why      string        `json:"approvalWhy,omitempty"`
 }
 
 // PlanView is what a run is about to do.
@@ -148,6 +150,8 @@ type PassResult struct {
 	LLMCalls   int              `json:"llmCalls"`
 	Implicit   bool             `json:"implicit,omitempty"`
 	ApproveURL string           `json:"approveUrl,omitempty"`
+	Grant      string           `json:"grant,omitempty"`
+	Why        string           `json:"approvalWhy,omitempty"`
 	Missing    []string         `json:"missingScopes,omitempty"`
 }
 
@@ -496,6 +500,7 @@ func planView(opts Options, prep *prepared, snapshot bool) PlanView {
 	v := PlanView{Mode: opts.Mode, Trigger: opts.Trigger, Branch: opts.Branch, HeadSHA: prep.headSHA, Snapshot: snapshot}
 	for _, pp := range prep.passes {
 		item := PlannedPass{Name: pp.pass.Name, Kind: pp.pass.Kind, Target: passes.TargetLabel(pp.pass), Run: pp.decision.Run, Skip: pp.decision.Skip, AI: UsesAI(pp.pass), Estimate: pp.pass.Estimate}
+		item.Grant, item.Why = grantOf(pp.pass, pp.decision.Skip)
 		if pp.cs != nil {
 			item.Commits = len(pp.cs.Commits)
 		}
@@ -505,6 +510,13 @@ func planView(opts Options, prep *prepared, snapshot bool) PlanView {
 		v.Passes = append(v.Passes, item)
 	}
 	return v
+}
+
+func grantOf(p api.PlanPass, skip string) (string, string) {
+	if skip != api.SkipTargetUnapproved && p.Target.Status != api.TargetUnapproved {
+		return "", ""
+	}
+	return p.Target.GrantKey(), api.ApprovalWhy(p.Kind, p.Target.Reasons)
 }
 
 var aiKinds = map[string]bool{config.KindGuides: true, config.KindChangelog: true, config.KindNucleus: true, config.KindCapture: true}
@@ -583,6 +595,7 @@ func skippedResults(prep *prepared) []PassResult {
 	out := make([]PassResult, 0, len(prep.passes))
 	for _, pp := range prep.passes {
 		r := PassResult{Name: pp.pass.Name, Kind: pp.pass.Kind, Target: passes.TargetLabel(pp.pass), Status: api.StatusSkipped, SkipReason: pp.decision.Skip, ApproveURL: pp.pass.Target.ApproveURL, Missing: pp.pass.MissingScopes}
+		r.Grant, r.Why = grantOf(pp.pass, pp.decision.Skip)
 		if pp.ranged {
 			rng := pp.rng
 			r.Range = &rng

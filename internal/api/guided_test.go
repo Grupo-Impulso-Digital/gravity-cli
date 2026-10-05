@@ -39,16 +39,30 @@ func TestUnsupportedEndpointsAreRecognised(t *testing.T) {
 }
 
 func TestApprovalEndpoints(t *testing.T) {
-	c, s := fixtureServer(t, 200, `{"pending":[{"pass":"guides","target":"docs/guides","status":"unapproved","mayApprove":true}]}`)
+	c, s := fixtureServer(t, 200, `{"repo":{"id":"cr_1","remoteKey":"github.com/acme/docs","name":"docs"},"canApprove":true,"pending":[{"target":"docs/guides","site":"docs","space":"guides","passes":["guides"],"reasons":["skips_review"],"why":"verbatim imports go live without review","mayApprove":true}],"granted":[{"target":"docs/api","passes":["api"],"source":"auto"}]}`)
 	got, err := c.Approvals(context.Background(), "")
-	if err != nil || len(got.Pending) != 1 || !got.Pending[0].MayApprove {
+	if err != nil || len(got.Pending) != 1 || !got.Pending[0].MayApprove || got.Pending[0].Target != "docs/guides" || got.Pending[0].Passes[0] != "guides" || got.Granted[0].Source != "auto" || got.Repo.Name != "docs" {
 		t.Fatalf("approvals = %+v %v", got, err)
 	}
 	expectRequest(t, s, "GET", "/api/v1/repos/self/approvals")
-	c, s = fixtureServer(t, 200, `{"approved":[{"pass":"guides","target":"docs/guides"}],"refused":[{"pass":"ops","reason":"forbidden"}]}`)
-	res, err := c.Approve(context.Background(), "", api.ApproveRequest{All: true})
-	if err != nil || len(res.Approved) != 1 || res.Refused[0].Reason != "forbidden" || s.body["all"] != true {
+	c, s = fixtureServer(t, 200, `{"approved":[{"target":"docs/guides","site":"docs","space":"guides","passes":["guides"]}],"refused":[{"target":"ops/runbooks","code":"forbidden","message":"needs docs.write"}]}`)
+	res, err := c.Approve(context.Background(), "", api.ApproveRequest{Spaces: []string{"docs/guides", "ops/runbooks"}})
+	if err != nil || len(res.Approved) != 1 || res.Refused[0].Code != "forbidden" || len(s.body["spaces"].([]any)) != 2 {
 		t.Fatalf("approve = %+v %v %v", res, err, s.body)
+	}
+}
+
+func TestGrantKeyAndWhy(t *testing.T) {
+	for ref, want := range map[string]string{"docs/guides": "docs/guides", "docs/guides/setup/advanced": "docs/guides", "docs": "docs"} {
+		if got := api.GrantKey(ref); got != want {
+			t.Errorf("GrantKey(%q) = %q, want %q", ref, got, want)
+		}
+	}
+	if got := api.ApprovalWhy("verbatim", []string{api.ApprovalSkipsReview, api.ApprovalPrivateSpace}); got != "verbatim imports go live without review; the space is not public, so the repository token could read its content" {
+		t.Errorf("why = %q", got)
+	}
+	if got := api.ApprovalWhy("guides", []string{api.ApprovalSkipsReview}); got != "changes are auto-accepted without review" {
+		t.Errorf("why = %q", got)
 	}
 }
 

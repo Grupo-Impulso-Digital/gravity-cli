@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // Product identifies a product.
@@ -268,11 +269,19 @@ type CollectionRef struct {
 	Path []string `json:"path,omitempty"`
 }
 
-// Approval records who approved a pass target.
+// Approval records the grant that lets the repository write to a pass target.
 type Approval struct {
-	By string `json:"by"`
-	At string `json:"at"`
+	By     string `json:"by"`
+	At     string `json:"at"`
+	Source string `json:"source,omitempty"`
 }
+
+// Reasons a pass target needs a grant.
+const (
+	ApprovalSkipsReview  = "skips_review"
+	ApprovalPrivateSpace = "private_space"
+	ApprovalNucleus      = "nucleus"
+)
 
 // Target statuses.
 const (
@@ -284,17 +293,51 @@ const (
 
 // PassTarget is where a pass writes.
 type PassTarget struct {
-	Status         string         `json:"status"`
-	Ref            string         `json:"ref"`
-	Site           *NamedRef      `json:"site,omitempty"`
-	Space          *NamedRef      `json:"space,omitempty"`
-	Collection     *CollectionRef `json:"collection,omitempty"`
-	ViewerURL      string         `json:"viewerUrl,omitempty"`
-	ApproveURL     string         `json:"approveUrl,omitempty"`
-	Approval       *Approval      `json:"approval,omitempty"`
-	SiteSlug       string         `json:"siteSlug,omitempty"`
-	SpaceSlug      string         `json:"spaceSlug,omitempty"`
-	CollectionPath []string       `json:"collectionPath,omitempty"`
+	Status           string         `json:"status"`
+	Ref              string         `json:"ref"`
+	Site             *NamedRef      `json:"site,omitempty"`
+	Space            *NamedRef      `json:"space,omitempty"`
+	Collection       *CollectionRef `json:"collection,omitempty"`
+	ViewerURL        string         `json:"viewerUrl,omitempty"`
+	ApproveURL       string         `json:"approveUrl,omitempty"`
+	Approval         *Approval      `json:"approval,omitempty"`
+	RequiresApproval bool           `json:"requiresApproval,omitempty"`
+	Reasons          []string       `json:"reasons,omitempty"`
+	SiteSlug         string         `json:"siteSlug,omitempty"`
+	SpaceSlug        string         `json:"spaceSlug,omitempty"`
+	CollectionPath   []string       `json:"collectionPath,omitempty"`
+}
+
+// GrantKey returns the site/space a grant for this target covers.
+func (t PassTarget) GrantKey() string { return GrantKey(t.Ref) }
+
+// GrantKey returns the site/space part of a target ref, or the site alone for a site-only target.
+func GrantKey(ref string) string {
+	parts := strings.SplitN(strings.Trim(ref, "/"), "/", 3)
+	if len(parts) >= 2 {
+		return parts[0] + "/" + parts[1]
+	}
+	return parts[0]
+}
+
+// ApprovalWhy explains in plain words why a target needs a grant.
+func ApprovalWhy(kind string, reasons []string) string {
+	out := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		switch r {
+		case ApprovalSkipsReview:
+			if kind == "verbatim" {
+				out = append(out, "verbatim imports go live without review")
+			} else {
+				out = append(out, "changes are auto-accepted without review")
+			}
+		case ApprovalNucleus:
+			out = append(out, "it writes to the product memory directly")
+		case ApprovalPrivateSpace:
+			out = append(out, "the space is not public, so the repository token could read its content")
+		}
+	}
+	return strings.Join(out, "; ")
 }
 
 // PassScope is the scope of a pass.
