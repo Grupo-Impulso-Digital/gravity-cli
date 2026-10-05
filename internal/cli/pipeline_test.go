@@ -105,7 +105,7 @@ func TestRunCommandWritesAndPrintsPasses(t *testing.T) {
 	if env["ok"] != true || env["command"] != "run" || pass["status"] != "succeeded" || pass["costUsd"] != 0.25 {
 		t.Fatalf("envelope = %v", env)
 	}
-	if !strings.Contains(h.stderr.String(), "developer-api") || !strings.Contains(h.stderr.String(), "1 new") || !strings.Contains(h.stderr.String(), "Bundle: 1 changes awaiting review") {
+	if !strings.Contains(h.stderr.String(), "developer-api") || !strings.Contains(h.stderr.String(), "1 new") || !strings.Contains(h.stderr.String(), "1 change awaiting review") {
 		t.Fatalf("stderr = %s", h.stderr.String())
 	}
 	start := h.platform.find("POST", "/api/v1/runs")[0].Body
@@ -130,7 +130,7 @@ func TestRunOnATerminalShowsLiveProgressAndASummaryCard(t *testing.T) {
 	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
 	expectCode(t, h, h.run("run"), 0)
 	out := h.stdout.String()
-	for _, want := range []string{"developer-api  reference → dev-portal/api", "Gravity run finished", "1 pass ran, 0 skipped, 0 failed", "Review bundle", "https://app.gravitydocs.io/app/repos/runs/prun_1"} {
+	for _, want := range []string{"▍ Plan", "│ developer-api │ reference │", "✓ developer-api  reference → Developer Portal › API  1 new", "Run finished", "1 pass ran, 0 skipped, 0 failed", "Change request", "https://app.gravitydocs.io/app/repos/runs/prun_1", "gravity runs show prun_1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in\n%s", want, out)
 		}
@@ -348,72 +348,6 @@ func TestCheckCommandIsThePullRequestGate(t *testing.T) {
 	h.platform.json("GET /api/v1/content/spaces/sp_1/tree", 200, `{"space":{"id":"sp_1","slug":"api"},"collections":[],"pages":[],"nextCursor":null}`)
 	expectCode(t, h, h.run("check", "--fail-on", "coverage"), 0)
 	expectCode(t, h, h.run("check", "--fail-on", "bogus"), 2)
-	expectCode(t, h, h.run("check", "api"), 2)
-	if !strings.Contains(h.stderr.String(), "gravity check") {
-		t.Fatal(h.stderr.String())
-	}
-}
-
-func TestPreviewShowsWorkingTreeDiffWithoutWriting(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_dev"
-	h.write(".gravity.yaml", "version: 2\ncode:\n  openapi: [api/openapi.yaml]\n")
-	gitCmd(t, h.dir, "add", "-A")
-	gitCmd(t, h.dir, "commit", "-q", "-m", "manifest")
-	if err := os.MkdirAll(filepath.Join(h.dir, "api"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h.write("api/openapi.yaml", pipelineSpec)
-	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference")))
-	expectCode(t, h, h.run("preview", "--format", "diff"), 0)
-	out := h.stdout.String()
-	if !strings.Contains(out, "create developer-api refunds") || !strings.Contains(out, "+ [api api:POST:/v1/refunds machine]") || !strings.Contains(out, "Cost: $0.25") {
-		t.Fatalf("preview output:\n%s\nstderr: %s", out, h.stderr.String())
-	}
-	start := h.platform.find("POST", "/api/v1/runs")[0].Body
-	if start["mode"] != "dry" || start["rangeKind"] != api.RangeWorkingTree {
-		t.Fatalf("preview start = %v", start)
-	}
-	conn := h.platform.find("POST", "/api/v1/repos/connect")[0].Body
-	if conn["context"].(map[string]any)["trigger"] != "preview" || conn["dryRun"] != true {
-		t.Fatalf("connect = %v", conn)
-	}
-	if q := h.platform.find("GET", "/api/v1/repos/self/plan")[0].Query; q["repo"][0] != "github.com/acme/billing-api" {
-		t.Fatalf("a user token names the repo: %v", q)
-	}
-	if len(h.platform.find("POST", "/api/v1/runs/prun_1/changes")) != 0 {
-		t.Fatal("preview never writes")
-	}
-	expectCode(t, h, h.run("preview", "--format", "json", "--json"), 0)
-	data := h.envelope()["data"].(map[string]any)
-	if len(data["pages"].([]any)) != 1 || data["instructions"].(map[string]any)["developer-api"] == nil {
-		t.Fatalf("json preview = %v", data)
-	}
-}
-
-func TestPreviewShowsTranslatedVerbatimFiles(t *testing.T) {
-	h := newHarness(t)
-	h.env["GRAVITY_TOKEN"] = "gr_user_dev"
-	h.write(".gravity.yaml", "version: 2\n")
-	if err := os.MkdirAll(filepath.Join(h.dir, "docs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h.write("docs/rotation.md", "# On-call rotation\n\nWho is on call.\n")
-	h.write("docs/rotation.fr.md", "# Astreinte\n\nQui est d'astreinte.\n")
-	gitCmd(t, h.dir, "add", "-A")
-	gitCmd(t, h.dir, "commit", "-q", "-m", "docs")
-	pass := referencePlanPass("verbatim")
-	pass["name"] = "handbook"
-	pass["options"] = map[string]any{"files": []any{map[string]any{"include": "docs/**"}}}
-	h.pipelineRoutes(t, pipelinePlan(t, pass))
-	expectCode(t, h, h.run("preview", "--committed"), 0)
-	out := h.stdout.String()
-	if !strings.Contains(out, "import handbook rotation (On-call rotation): docs/rotation.md") || !strings.Contains(out, "import handbook rotation (Astreinte) [fr]: docs/rotation.fr.md") {
-		t.Fatalf("preview output:\n%s\nstderr: %s", out, h.stderr.String())
-	}
-	if strings.Contains(out, "rotation-fr") {
-		t.Fatalf("a translation is never its own page:\n%s", out)
-	}
 }
 
 func TestCheckFromPlansAgainstTheDefaultBranch(t *testing.T) {
@@ -466,7 +400,7 @@ func TestManualRunNamesThePassesItLeftOut(t *testing.T) {
 	scoped["watermark"] = map[string]any{"branch": "main", "commitSha": gitCmd(t, h.dir, "rev-parse", "HEAD~1")}
 	h.pipelineRoutes(t, pipelinePlan(t, referencePlanPass("reference"), scoped))
 	expectCode(t, h, h.run("run"), 0)
-	for _, want := range []string{"Manual run: 2 passes eligible (developer-api, ui-guides).", "skipped: ui-guides (scope unchanged)"} {
+	for _, want := range []string{"Manual run: 2 passes eligible (developer-api, ui-guides).", "skipped: ui-guides (nothing changed in scope)"} {
 		if !strings.Contains(h.stdout.String(), want) {
 			t.Fatalf("missing %q in\n%s", want, h.stdout.String())
 		}
@@ -519,7 +453,7 @@ func TestManualRunOfANamedPass(t *testing.T) {
 	}
 }
 
-func TestRunWarnsAboutUncommittedChanges(t *testing.T) {
+func TestRunRefusesUncommittedChanges(t *testing.T) {
 	h := newHarness(t)
 	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
 	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
@@ -530,8 +464,13 @@ func TestRunWarnsAboutUncommittedChanges(t *testing.T) {
 		t.Fatalf("clean tree: %s", h.stderr.String())
 	}
 	h.write("README.md", "# billing, edited\n")
-	expectCode(t, h, h.run("run"), 0)
-	if !strings.Contains(h.stderr.String(), "uncommitted changes are not part of this run") {
+	expectCode(t, h, h.run("run", "--json"), 2)
+	if e := h.envelope()["error"].(map[string]any); e["code"] != "worktree_dirty" || !strings.Contains(e["message"].(string), "README.md") || !strings.Contains(e["message"].(string), "git stash") {
+		t.Fatalf("error = %v", e)
+	}
+	expectCode(t, h, h.run("run", "--allow-dirty"), 2)
+	expectCode(t, h, h.run("run", "--dry-run", "--allow-dirty"), 0)
+	if !strings.Contains(h.stderr.String(), "are not part of this dry run") {
 		t.Fatalf("stderr = %s", h.stderr.String())
 	}
 }
@@ -557,7 +496,7 @@ func TestDependabotRunWithoutATokenIsSkipped(t *testing.T) {
 	if err := os.WriteFile(h.env["GITHUB_EVENT_PATH"], []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, cmd := range []string{"check", "run", "preview"} {
+	for _, cmd := range []string{"check", "run"} {
 		expectCode(t, h, h.run(cmd, "--json"), 0)
 		if h.envelope()["data"].(map[string]any)["skipped"] != "dependabot_no_token" || !strings.Contains(h.stderr.String(), "Dependabot secret") {
 			t.Fatalf("%s: stderr = %s", cmd, h.stderr.String())

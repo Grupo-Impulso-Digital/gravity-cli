@@ -41,8 +41,8 @@ func TestRunWritesInsideALeaseIngestsAndFinishes(t *testing.T) {
 	if start["headSha"] != head || start["mode"] != "write" || start["clientKey"] != "clientkey-0001" || entry["rangeKind"] != "watermark" || entry["baseSha"] != wm || entry["watermarkSeen"] != wm {
 		t.Fatalf("start = %+v", start)
 	}
-	if _, has := start["manifestHash"]; has && start["manifestHash"] != nil {
-		t.Fatalf("write runs never send manifestHash: %v", start["manifestHash"])
+	if start["manifestHash"] != e.Manifest.Hash {
+		t.Fatalf("write runs send the local manifest snapshot: %v", start["manifestHash"])
 	}
 	ingest := p.find("POST", "/products/self/inventory")
 	if len(ingest) != 1 {

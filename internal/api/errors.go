@@ -118,7 +118,7 @@ func (e *APIError) hint() string {
 	case CodeTokenExpired:
 		return "run `gravity login` to get a new token"
 	case CodeRepoNotConnected:
-		return "run `gravity init` to connect this repository"
+		return "run `gravity setup` to connect this repository"
 	}
 	if e.StatusCode == http.StatusUnauthorized && e.Code == "" {
 		return "check the token or run `gravity login`"

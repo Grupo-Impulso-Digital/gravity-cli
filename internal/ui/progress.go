@@ -90,6 +90,9 @@ func (g *Progress) Add(label string) int {
 // Begin marks a step as running.
 func (g *Progress) Begin(i int) { g.set(i, stepRunning, "") }
 
+// Update changes the detail of a running step.
+func (g *Progress) Update(i int, detail string) { g.set(i, stepRunning, detail) }
+
 // Done marks a step as finished.
 func (g *Progress) Done(i int, detail string) { g.set(i, stepDone, detail) }
 

@@ -1,4 +1,4 @@
-// Package cisetup renders the CI files gravity init writes and installs the repository token as a CI secret.
+// Package cisetup renders the CI files gravity ci setup writes and installs the repository token as a CI secret.
 package cisetup
 
 import (
@@ -236,7 +236,7 @@ func planFile(root, rel, content string) (File, error) {
 	if reason := outdatedReason(rel, existing); reason != "" {
 		return File{Path: rel, Action: ActionKeep, Content: string(existing), Note: "left as is, but it " + reason + "; " + tokenFix(rel)}, nil
 	}
-	return File{Path: rel, Action: ActionKeep, Content: string(existing), Note: "exists; left as is (delete it and run gravity init again to regenerate it)"}, nil
+	return File{Path: rel, Action: ActionKeep, Content: string(existing), Note: "exists; left as is (delete it and run gravity ci setup again to regenerate it)"}, nil
 }
 
 const (

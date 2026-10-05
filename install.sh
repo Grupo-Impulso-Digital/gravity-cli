@@ -22,6 +22,36 @@ api_get() {
   fi
 }
 
+platform() {
+  os="$(uname -s)"
+  case "$os" in
+    Linux)  os="linux" ;;
+    Darwin) os="darwin" ;;
+    *) err "unsupported OS '$os'; on Windows use install.ps1, Scoop or https://github.com/$REPO/releases" ;;
+  esac
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64)  arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *) err "unsupported architecture '$arch'" ;;
+  esac
+}
+
+fields() {
+  tr ',{}[]' '\n\n\n\n\n'
+}
+
+with_archive() {
+  fields | grep '"browser_download_url"' | cut -d'"' -f4 | awk -v b="$BINARY" -v os="$os" -v arch="$arch" '
+    {
+      n = split($0, p, "/")
+      if (n < 3 || p[n - 2] != "download") next
+      tag = p[n - 1]
+      if (tag !~ /^v/) next
+      if (p[n] == b "_" substr(tag, 2) "_" os "_" arch ".tar.gz") print tag
+    }'
+}
+
 newest_of_major() {
   major="$1"
   tags=""
@@ -29,11 +59,12 @@ newest_of_major() {
   while [ "$page" -le 5 ]; do
     json="$(api_get "$GRAVITY_RELEASES_API/repos/$REPO/releases?per_page=100&page=$page")" \
       || err "could not list the releases of $REPO"
-    batch="$(printf '%s\n' "$json" | grep '"tag_name"' | cut -d'"' -f4 || true)"
-    [ -n "$batch" ] || break
+    count="$(printf '%s\n' "$json" | fields | grep -c '"tag_name"' || true)"
+    [ "$count" -gt 0 ] || break
+    batch="$(printf '%s\n' "$json" | with_archive || true)"
     tags="$tags
 $batch"
-    [ "$(printf '%s\n' "$batch" | wc -l)" -ge 100 ] || break
+    [ "$count" -ge 100 ] || break
     page=$((page + 1))
   done
   printf '%s\n' "$tags" | awk -F. -v m="$major" '
@@ -47,13 +78,21 @@ $batch"
 resolve_tag() {
   case "$GRAVITY_VERSION" in
     latest)
-      t="$(api_get "$GRAVITY_RELEASES_API/repos/$REPO/releases/latest" | grep '"tag_name"' | head -n1 | cut -d'"' -f4)"
+      json="$(api_get "$GRAVITY_RELEASES_API/repos/$REPO/releases/latest")" || err "could not resolve the latest release of $REPO"
+      t="$(printf '%s\n' "$json" | fields | grep '"tag_name"' | head -n1 | cut -d'"' -f4)"
       [ -n "$t" ] || err "could not resolve the latest release of $REPO"
+      if [ -z "$(printf '%s\n' "$json" | with_archive)" ]; then
+        m="$(printf '%s\n' "$t" | sed -n 's/^v\([0-9][0-9]*\)\..*/\1/p')"
+        [ -n "$m" ] || err "the latest release $t has no archive for $os/$arch"
+        warn "the latest release $t has no archive for $os/$arch yet; using the newest v$m.x.y release that does"
+        t="$(newest_of_major "$m")"
+        [ -n "$t" ] || err "no v$m.x.y release of $REPO has an archive for $os/$arch"
+      fi
       ;;
     [0-9]|[0-9][0-9]|v[0-9]|v[0-9][0-9])
       m="${GRAVITY_VERSION#v}"
       t="$(newest_of_major "$m")"
-      [ -n "$t" ] || err "no v$m.x.y release of $REPO exists yet"
+      [ -n "$t" ] || err "no v$m.x.y release of $REPO with an archive for $os/$arch exists yet"
       ;;
     v[0-9]*.[0-9]*.[0-9]*) t="$GRAVITY_VERSION" ;;
     [0-9]*.[0-9]*.[0-9]*) t="v$GRAVITY_VERSION" ;;
@@ -62,6 +101,7 @@ resolve_tag() {
   printf '%s\n' "$t"
 }
 
+platform
 tag="$(resolve_tag)"
 if [ -n "$GRAVITY_RESOLVE_ONLY" ]; then
   printf '%s\n' "$tag"
@@ -69,20 +109,6 @@ if [ -n "$GRAVITY_RESOLVE_ONLY" ]; then
 fi
 
 command -v tar >/dev/null 2>&1 || err "tar is required"
-
-os="$(uname -s)"
-case "$os" in
-  Linux)  os="linux" ;;
-  Darwin) os="darwin" ;;
-  *) err "unsupported OS '$os'; on Windows use install.ps1, Scoop or https://github.com/$REPO/releases" ;;
-esac
-
-arch="$(uname -m)"
-case "$arch" in
-  x86_64|amd64)  arch="amd64" ;;
-  arm64|aarch64) arch="arm64" ;;
-  *) err "unsupported architecture '$arch'" ;;
-esac
 
 version="${tag#v}"
 archive="${BINARY}_${version}_${os}_${arch}.tar.gz"

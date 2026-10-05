@@ -1,0 +1,8 @@
+version: 2
+structure:
+  site: { slug: polaris }
+  spaces:
+    - slug: developers
+      pages:
+        - slug: intro
+          body: not allowed

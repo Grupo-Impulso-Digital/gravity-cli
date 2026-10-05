@@ -119,13 +119,22 @@ func (Verbatim) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	}
 	var failures []string
 	ready := map[string]bool{}
+	allowEmpty, _ := in.Pass.Options["allowEmpty"].(bool)
 	for _, page := range m.Pages {
+		if page.Empty && !allowEmpty {
+			if _, ok := locked[page.Path]; ok {
+				rep.warn("%s: empty, skipped (set options.allowEmpty: true to import it); its existing page is left as is", page.Path)
+			} else {
+				rep.warn("%s: empty, skipped (set options.allowEmpty: true to import it)", page.Path)
+			}
+			continue
+		}
 		if cur, ok := locked[page.Path]; ok && cur.Lock.Hash == page.Hash {
 			rep.Counts.Unchanged++
 			ready[page.Path] = true
 			continue
 		}
-		doc, err := convert(page.Path, page.Body, verbatim.Options{Path: page.Path, Hash: page.Hash, MDX: page.MDX, DropTitleH1: page.TitleFromH1, Audiences: page.FrontMatter.Audiences})
+		doc, err := convert(page.Path, page.Body, verbatim.Options{Path: page.Path, Hash: page.Hash, MDX: page.MDX, DropTitleH1: page.TitleFromH1, Title: page.Title, Audiences: page.FrontMatter.Audiences})
 		if err != nil {
 			return rep, err
 		}
@@ -161,7 +170,7 @@ func (Verbatim) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			continue
 		}
 		for _, t := range page.Translations {
-			doc, err := convert(t.Path, t.Body, verbatim.Options{Path: t.Path, Hash: t.Hash, MDX: t.MDX, DropTitleH1: t.TitleFromH1, Audiences: t.FrontMatter.Audiences})
+			doc, err := convert(t.Path, t.Body, verbatim.Options{Path: t.Path, Hash: t.Hash, MDX: t.MDX, DropTitleH1: t.TitleFromH1, Title: t.Title, Audiences: t.FrontMatter.Audiences})
 			if err != nil {
 				return rep, err
 			}

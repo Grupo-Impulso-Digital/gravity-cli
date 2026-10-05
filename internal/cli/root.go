@@ -16,7 +16,7 @@ func newRootCommand(a *app) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "gravity",
 		Short:         "Gravity keeps your documentation in step with your code",
-		Long:          "gravity connects a repository to Gravity and runs its documentation passes in CI.\nThe repository declares code facts in .gravity.yaml; the app decides what each pass writes.",
+		Long:          "gravity connects a repository to Gravity: the repository declares its docs structure and passes in .gravity.yaml, gravity applies them and runs the passes, and the results land as a change request reviewed in the app.\nStart with `gravity setup`; `gravity show` and `gravity validate` explain the manifest; `gravity run --dry-run` shows what a run would write.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version.String(),
@@ -40,16 +40,22 @@ func newRootCommand(a *app) *cobra.Command {
 		newLoginCmd(a),
 		newLogoutCmd(a),
 		newWhoamiCmd(a),
-		newInitCmd(a),
-		newStatusCmd(a),
+		newOrgCmd(a),
+		newSetupCmd(a),
+		newShowCmd(a),
+		newValidateCmd(a),
+		newStructureCmd(a),
 		newRunCmd(a),
-		newPreviewCmd(a),
+		newReviewCmd(a),
+		newRunsCmd(a),
+		newApproveCmd(a),
+		newCICmd(a),
+		newStatusCmd(a),
 		newCheckCmd(a),
-		newPassesCmd(a),
 		newExplainCmd(a),
+		newAgentCmd(a),
 		newVersionCmd(a),
 	)
-	root.AddCommand(removedCommands()...)
 	return root
 }
 

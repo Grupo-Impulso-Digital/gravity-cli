@@ -36,14 +36,14 @@ cmd/gravity              entrypoint: signal-aware context
        │                      GitHub/Azure annotations, GitLab Code Quality; page diffs
        ├─ internal/prompts    hosted pass prompts with baked fallbacks
        ├─ internal/changeset  range resolution, ChangeSet, OpenAPI diff, symbols, unit mapping
-       ├─ internal/setup      init suggestions: product ranking, target site, pass templates, spaces to create
+       ├─ internal/setup      setup suggestions: product ranking, target site, pass templates, structure drafts and diffs
        │    └─ internal/detect  local repository detection (languages, specs, routes, docs, releases, CI files)
        ├─ internal/cisetup    CI file templates per provider (also published under ci/), gh/glab secret installers
        ├─ internal/ci         CI provider detection
        ├─ internal/api        REST client for the CLI 1.0 contract + LLM gateway
        ├─ internal/docs       OpenAPI -> api blocks
        ├─ internal/checks     OpenAPI parsing
-       ├─ internal/config     manifest v2 (embedded JSON Schema, strict parse, did-you-mean), v1 detection + conversion, token scopes
+       ├─ internal/config     manifest v2 (embedded JSON Schema, strict parse, did-you-mean, structure:), YAML key edits, token scopes
        ├─ internal/normalize  productSlug, apiUnitKey, canonical JSON (golden fixtures shared with the platform)
        ├─ internal/git        thin wrapper over the system `git` binary
        ├─ internal/glob       doublestar matching (leaf)
@@ -51,7 +51,9 @@ cmd/gravity              entrypoint: signal-aware context
        └─ internal/pathsafe   repo-root path validation (leaf, stdlib-only)
 
 internal/distribution    tests only: install.sh (major resolution, checksum), the GitHub action, ci/ templates, workflows
-ci/                      the GitHub action (ci/github/action.yml) and the CI templates init writes, per provider
+ci/                      the GitHub action (ci/github/action.yml) and the CI templates `ci setup` writes, per provider
+plugin/                  the Claude Code plugin (skill, commands, MCP server); package plugin embeds skills/ for `agent install`
+.claude-plugin/          the marketplace that publishes plugin/
 install.sh, install.ps1  release installers (also mirrored by the app's /install.sh route)
 ```
 
@@ -152,8 +154,7 @@ to `debug.ReadBuildInfo`.
 - **Token-security boundary** (`internal/auth`): a token comes only from
   `--token`, `GRAVITY_REPO_TOKEN`, `GRAVITY_TOKEN` or a profile in `~/.config/gravity/profiles.yaml`
   (mode `0600`). A `token:` anywhere in `.gravity.yaml` is a manifest error.
-  CLI 1.x never writes the v0.x `config.yaml`; it copies its token into the
-  profile `default` once and leaves the file untouched.
+  The v0.x `config.yaml` is ignored (1.1 removed its one-time import).
 - **Precedence**: token `--token` > `GRAVITY_REPO_TOKEN` > `GRAVITY_TOKEN` >
   profile (`--profile` > `GRAVITY_PROFILE` > current). `auth.EnvToken` trims
   values and skips unexpanded references; when only references are set, CI
@@ -180,13 +181,14 @@ to `debug.ReadBuildInfo`.
   - `go.yaml.in/yaml/v3`: the manifest, CI files and the action under test.
   - `santhosh-tekuri/jsonschema/v6`: validating the manifest against the
     embedded schema, as the spec requires.
-  - `charmbracelet/huh`: init's prompts, with an accessible line mode that also
-    drives the scripted tests.
+  - `charmbracelet/huh`: the prompts of `setup`, `run` and `approve`, with an
+    accessible line mode that also drives the scripted tests.
   - `charmbracelet/bubbletea` + `charmbracelet/bubbles`: the live per-step
-    progress of `init`, `login`, `run`, `preview`, `check` (bubbles only for its
-    spinner).
-  - `charmbracelet/lipgloss` + `muesli/termenv`: the summary card; termenv to
-    force an ASCII profile with `--no-color`.
+    progress of `login`, `run`, `check` and the lease countdown (bubbles only for
+    its spinner).
+  - `charmbracelet/lipgloss` + `muesli/termenv`: cards and bordered tables
+    (`lipgloss/table`); termenv to force an ASCII profile with `--no-color`.
+    Trees are drawn by `ui.Tree` itself so the ASCII fallback stays exact.
 
   The terminal libraries are used only on a terminal; `--json`, `CI=true` and
   non-terminals never start them. They stay on the v1 lines already in the
@@ -197,10 +199,16 @@ to `debug.ReadBuildInfo`.
   dependency needs the same one-line justification here, in the same commit.
 - **Testing**: stdlib `testing` + `httptest` mocks, table-driven where it fits.
   No live-server integration tests.
-- **Capabilities, not 404s**: server features come from `/whoami` and
-  `plan.capabilities` (connect's `serverFeatures` is decoded, not consulted). CLI 1.0 refuses a server
-  without `pipelines`. A `404` is always an error (`repo_not_connected` hints
-  `gravity init`), never "feature unavailable".
+- **Capabilities, and 404 only for 1.1 endpoints**: server features come from
+  `/whoami` and `plan.capabilities` (connect's `serverFeatures` is decoded, not
+  consulted). CLI 1.x refuses a server without `pipelines`. The guided-runs
+  endpoints (`repos/self/validate`, `repos/self/approvals`, `repos/self/runs`,
+  `runs/{id}/cancel`, `structure`, `structure/apply`) are new: a `404` with an
+  empty or `not_found` code there is `api.IsUnsupported` and the command
+  degrades (see docs/platform-authoring-api.md). Every other `404` is an error
+  (`repo_not_connected` hints `gravity setup`). A write run whose
+  `manifestHash` an older server refuses (`api.RejectsWriteManifest`) is
+  retried once without it.
 - **Retries** (`internal/api`): `429` and `5xx` get up to three attempts with
   exponential backoff from 1 s, honoring `Retry-After`; network errors are
   retried for GET only. `lease_lost` and `run_not_running` stop a run without a
@@ -208,19 +216,31 @@ to `debug.ReadBuildInfo`.
 - **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
   all human output on stderr. With `CI=true` or without a terminal, output is
   plain ASCII and nothing prompts. There is no global `--ci` flag in 1.x
-  (`init --ci <provider>` picks the CI file to write). Prompts go through
+  (`ci setup --provider <provider>` picks the CI file to write). Prompts go through
   `ui.Prompter` (huh; `ACCESSIBLE=1` or `TERM=dumb` selects its line mode);
   long work goes through `ui.Progress`, which on a terminal redirects the
   printer's output above its live view until `Stop`; summaries go through
-  `Printer.Card`.
-- **Init** (`internal/cli/init.go`, `initflow.go`): at most three questions
-  (product, passes with the site change inside the passes question, write);
-  the site sub-list and the re-asked passes question do not count. Without a
-  terminal `init` needs `--yes` (or `--dry-run`). Nothing is written before
-  the real connect succeeds; the repository token is printed only on stderr
-  and only when it was not installed; secret installers get it on stdin.
+  `Printer.Card`, sections through `Printer.Section`, trees through
+  `Printer.Tree` and tables with headers through `Printer.Grid` (bordered on a
+  terminal, tabwriter columns elsewhere). Renderers are plain functions of a
+  `*ui.Printer` and their data (`renderShow`, `renderIssues`, `renderPlanView`,
+  `renderRunResult`, ...) so golden tests cover both modes
+  (`internal/cli/testdata/golden/*.txt`, `go test ./internal/cli -update`).
+- **Setup** (`internal/cli/setup.go`): product, site, structure draft,
+  passes, write, then validate + show and offers (structure apply, dry run, CI).
+  Re-running keeps what the manifest declares (`config.SetKey`,
+  `config.UpsertPass` edit the YAML in place). Without a terminal it needs
+  `--yes`; `--json` alone prints the proposal and writes nothing. `ci setup`
+  (`internal/cli/ci.go`) mints the repository token and prints it only on
+  stderr, only when it was not installed; secret installers get it on stdin.
+- **Runs outside CI** (`internal/cli/run.go`, `runview.go`): preflight (fetch,
+  behind/diverged/dirty refusals), the local model and server validation
+  (`modelFor`), the plan view through `engine.Env.Confirm`, lease waits through
+  `Env.OnLease`, then the result report. Dry runs are recorded with
+  `engine.NewRecording`/`SaveRecording` and sent with `engine.Replay`. CI runs
+  keep the 1.0 output (`printRun`) and never prompt.
 - **Manifest** (`internal/config`): YAML is decoded to a generic tree, checked
-  for tokens and v1 shape, validated by friendly Go rules and the embedded JSON
+  for tokens, validated by friendly Go rules and the embedded JSON
   Schema (byte-identical to the spec's, pinned by sha256 in
   `manifest_test.go`), then decoded strictly into the typed `Manifest`. Add a
   key in the spec's schema first, then the typed field. The manifest hash is
@@ -232,12 +252,17 @@ to `debug.ReadBuildInfo`.
   register it in `internal/cli/root.go`; print through `a.ui`, return data with
   `a.ui.Result(data)` for `--json`, and failures as `*ExitError`. Test it with
   the fake platform in `internal/cli/harness_test.go`.
-- **Change init**: script it with the harness's accessible prompter
-  (`h.terminal = true`, `h.stdin` holds one answer per line, `0` confirms a
-  multi-select) and assert the prompt titles in `h.prompts`; fake `gh`/`glab`
-  go on `PATH` with `h.secrets = cisetup.ExecRunner`. CI templates and v1
-  conversions are golden files (`go test ./internal/cisetup -update`,
-  `go test ./internal/config -update`).
+- **Change setup or a prompt**: script it with the harness's accessible
+  prompter (`h.terminal = true`, `h.stdin` holds one answer per line, `0`
+  confirms a multi-select) and assert the prompt titles in `h.prompts`; fake
+  `gh`/`glab` go on `PATH` with `h.secrets = cisetup.ExecRunner`. CI templates
+  are golden files (`go test ./internal/cisetup -update`).
+- **Change a renderer**: update the golden files with
+  `go test ./internal/cli -update` (plain and terminal variants) and
+  `internal/ui/render_test.go`; review the diff.
+- **Change the agent skill**: edit `plugin/skills/gravity/`; `plugin_test.go`
+  and `TestAgentInstallWritesThePluginSkill` keep the embedded copy and the
+  installed files identical to it.
 - **Add an API endpoint**: typed request/response next to its siblings in
   `internal/api` and a thin method on `Client`; add an `httptest` case to
   `endpoints_test.go` built from the spec's JSON example.
@@ -252,7 +277,7 @@ to `debug.ReadBuildInfo`.
 - **Change the Markdown converter**: update `internal/verbatim` and regenerate
   the golden with `go test ./internal/verbatim -update`; review the diff.
 - **Change a CI template**: edit it in `internal/cisetup`, then
-  `go test ./internal/cisetup -update` rewrites the init goldens and the
+  `go test ./internal/cisetup -update` rewrites the cisetup goldens and the
   published copies under `ci/`; `internal/distribution` checks that every
   template installs major `1`, runs `gravity run` and never uses
   `pull_request_target`.
@@ -271,7 +296,7 @@ to `debug.ReadBuildInfo`.
 
 ## Known limitations / deliberate decisions
 
-- **Init writes CI files only when they do not exist**: an existing workflow,
+- **`ci setup` writes CI files only when they do not exist**: an existing workflow,
   `bitbucket-pipelines.yml` or a `.gitlab-ci.yml` with its own `include:` list
   is kept and a snippet is printed instead. Jenkins and CircleCI always get a
   snippet.
@@ -280,8 +305,8 @@ to `debug.ReadBuildInfo`.
   purpose }`; the gateway composes the org/site/space/collection/pass/note
   layers server-side.
 - **Writes only through a `passes.Sink`**: `PlatformSink` in write runs,
-  `Recorder` in dry runs (PRs, `preview`, `--dry-run`), which records the
-  would-be requests into the pass report's `impact` and the preview diffs.
+  `Recorder` in dry runs (PRs, `--dry-run`), which records the would-be
+  requests into the pass report; a recorded dry run replays them.
 - **Unit keys are filtered client-side** (`passes.Units`: plan inventory plus
   what this run ingested) before `/changes`, so a write never fails on a key
   the product does not know yet.
@@ -302,8 +327,9 @@ to `debug.ReadBuildInfo`.
 - **`read_file` reads at the end of the range under review** (`--to`, else
   `HEAD`), not the working tree, so the agent stays deterministic in CI.
 - **`gravity run` never reads the working tree.** Writes cite commits and
-  watermarks advance to commits, so a run covers committed history only and
-  warns about uncommitted changes; `gravity preview` is the working-tree view.
+  watermarks advance to commits, so a run covers committed history only;
+  outside CI it refuses uncommitted tracked files (`--allow-dirty` for dry
+  runs). `show` and `validate` read the working tree.
 - **Manual runs and `--pass`.** Trigger matching is the server's
   (`evaluateSkip`): a write-mode manual run runs passes triggered on `manual`,
   `push` or `schedule`, and a pass named in the plan's `pass=` runs whatever
@@ -317,12 +343,16 @@ to `debug.ReadBuildInfo`.
   base and head: a change a push-triggered reference pass will apply is a note,
   drift that predates the range is a warning, and only a change nothing will
   follow is an error.
-- **`init` and 0.x pipelines.** init stores the repository token as
-  `GRAVITY_REPO_TOKEN` and never touches `GRAVITY_TOKEN`, which 0.x pipelines
-  keep (0.x refuses repository tokens); `cisetup.LegacyPipelines` only names
-  them. A caller of the shared `gravity-docs.yml` is 1.x-ready
-  (`cisetup.SharedWorkflowCaller`), so init keeps it instead of writing
-  `gravity.yml`. `--replace-secret` is a hidden no-op that warns.
+- **`ci setup` and the shared workflow.** `ci setup` stores the repository
+  token as `GRAVITY_REPO_TOKEN` and never touches `GRAVITY_TOKEN`. A caller of
+  the shared `gravity-docs.yml` is 1.x-ready (`cisetup.SharedWorkflowCaller`),
+  so it is kept instead of writing `gravity.yml`.
+- **Structure pages with `source:` are never created by `structure apply`**;
+  the verbatim import creates them, so an apply can never leave a stub that
+  makes the import fail with `slug_taken`.
+- **The manifest schema gained `structure:` and verbatim `allowEmpty`.** The
+  platform's `docs/pipelines/gravity.schema.json` must carry the same bytes
+  (`pinnedSchemaSHA256`).
 - **No live integration tests**: server interactions use `httptest` mocks.
 - **`gosec` is intentionally not enabled yet**; the git `exec.Command` and
   computed-path reads are sandboxed.

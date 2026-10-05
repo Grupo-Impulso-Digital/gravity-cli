@@ -161,6 +161,22 @@ type RunDetail struct {
 	CostUSD       float64      `json:"costUsd"`
 	Error         *string      `json:"error"`
 	AppURL        string       `json:"appUrl"`
+	Lease         *RunLease    `json:"lease,omitempty"`
+	Progress      *Progress    `json:"progress,omitempty"`
+}
+
+// RunLease is the lease a run holds.
+type RunLease struct {
+	Key       string `json:"key"`
+	HolderRun string `json:"holderRunId,omitempty"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+}
+
+// Progress is the last progress a pass or run reported.
+type Progress struct {
+	Step  string `json:"step"`
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
 }
 
 // RunPassDetail is one pass run of GET /api/v1/runs/{runId}.
@@ -186,6 +202,7 @@ type RunPassDetail struct {
 	Error             *string    `json:"error"`
 	StartedAt         *string    `json:"startedAt"`
 	FinishedAt        *string    `json:"finishedAt"`
+	Progress          *Progress  `json:"progress,omitempty"`
 }
 
 // BundleSummary counts the changes of a run bundle.

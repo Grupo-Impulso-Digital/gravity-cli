@@ -1,0 +1,12 @@
+{
+  "name": "gravity",
+  "version": "1.1.0",
+  "description": "Keep documentation in step with code: guided setup, declared docs structure, dry runs and reviews with the gravity CLI, plus the Gravity MCP server.",
+  "author": {
+    "name": "Grupo Impulso Digital",
+    "url": "https://gravitydocs.io"
+  },
+  "homepage": "https://github.com/Grupo-Impulso-Digital/gravity-cli",
+  "repository": "https://github.com/Grupo-Impulso-Digital/gravity-cli",
+  "keywords": ["documentation", "docs", "gravity", "cli"]
+}

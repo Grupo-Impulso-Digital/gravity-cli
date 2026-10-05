@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -41,7 +40,6 @@ type pipelineMode int
 
 const (
 	modeRun pipelineMode = iota
-	modePreview
 	modeCheck
 )
 
@@ -64,18 +62,13 @@ type pipelineSession struct {
 
 var errForkPR = errors.New("fork pull request without a token")
 
-func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipelineFlags, committed bool) (*pipelineSession, error) {
+func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipelineFlags) (*pipelineSession, error) {
 	info, err := a.inspectRepo(ctx)
 	if err != nil {
 		return nil, err
 	}
 	m, err := a.loadManifest(info.root)
 	if err != nil {
-		var ee *ExitError
-		if errors.As(err, &ee) && errors.Is(ee.Err, config.ErrV1Manifest) {
-			ee.ErrCode = "manifest_v1"
-			ee.Err = fmt.Errorf("%w; run `gravity init` to convert it to version 2", ee.Err)
-		}
 		return nil, err
 	}
 	c, err := a.detectCI(ctx, info.repo)
@@ -83,7 +76,7 @@ func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipeline
 		return nil, err
 	}
 	s := &pipelineSession{info: info, manifest: m, ci: c}
-	opts, err := a.pipelineOptions(ctx, s, mode, f, committed)
+	opts, err := a.pipelineOptions(s, mode, f)
 	if err != nil {
 		return nil, err
 	}
@@ -120,17 +113,11 @@ func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipeline
 	return s, nil
 }
 
-func (a *app) pipelineOptions(ctx context.Context, s *pipelineSession, mode pipelineMode, f pipelineFlags, committed bool) (engine.Options, error) {
+func (a *app) pipelineOptions(s *pipelineSession, mode pipelineMode, f pipelineFlags) (engine.Options, error) {
 	c := s.ci
 	opts := engine.Options{Passes: f.passes, From: f.from, To: f.to, Note: f.note, LeaseTimeout: f.leaseTimeout, Parallel: f.parallel, FailOn: f.failOn, Origin: origin(c)}
 	trigger := f.trigger
 	switch mode {
-	case modePreview:
-		trigger = ci.TriggerManual
-		opts.Preview = true
-		opts.Mode = api.ModeDry
-		opts.WorkingTree = !committed
-		opts.ConnectContext = api.ContextPreview
 	case modeCheck:
 		trigger = ci.TriggerPR
 		opts.ImplicitCheck = true
@@ -199,7 +186,6 @@ func (a *app) pipelineOptions(ctx context.Context, s *pipelineSession, mode pipe
 	if opts.ConnectContext == "" {
 		opts.ConnectContext = trigger
 	}
-	_ = ctx
 	return opts, nil
 }
 
@@ -290,6 +276,8 @@ func runError(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, engine.ErrInterrupted), errors.Is(err, context.Canceled):
+		return &ExitError{Code: CodeInterrupted, ErrCode: "interrupted", Err: errors.New("interrupted; the run was finished as canceled")}
 	case errors.As(err, &se) && se.Reason == engine.SelectionUnknown:
 		return &ExitError{Code: CodeError, ErrCode: "pass_unknown", Err: err}
 	case errors.As(err, &se):
@@ -526,13 +514,10 @@ func findingMark(f api.Finding) string {
 	return ui.MarkInfo
 }
 
-func (a *app) finishPipeline(res *engine.Result, strict bool, extra error) error {
-	if extra != nil {
-		return extra
-	}
+func (a *app) finishPipeline(res *engine.Result, strict bool, payload any) error {
 	code := res.ExitCode(strict)
 	if code == CodeOK {
-		return a.ui.Result(res)
+		return a.ui.Result(payload)
 	}
 	errCode := "pass_failed"
 	msg := "one or more passes failed"
@@ -549,7 +534,7 @@ func (a *app) finishPipeline(res *engine.Result, strict bool, extra error) error
 		}
 	}
 	ee := &ExitError{Code: code, ErrCode: errCode, Err: errors.New(msg)}
-	if err := a.ui.Failure(ui.ErrorInfo{Code: errCode, Message: msg, ExitCode: code}, res); err != nil {
+	if err := a.ui.Failure(ui.ErrorInfo{Code: errCode, Message: msg, ExitCode: code}, payload); err != nil {
 		return err
 	}
 	return ee
@@ -575,13 +560,4 @@ func findingsMessage(res *engine.Result) string {
 		return "1 finding fails the check"
 	}
 	return fmt.Sprintf("%d findings fail the check", n)
-}
-
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

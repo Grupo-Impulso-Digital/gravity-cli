@@ -19,9 +19,6 @@ func newCheckCmd(a *app) *cobra.Command {
 			"Claim review needs a declared check pass. Drift that predates the pull request is a warning, never a failure.\n\n" +
 			"Exits 1 when an error finding falls in --fail-on (default drift, claims, verbatim), 4 without usable credentials; a fork pull request without a token is skipped with exit 0.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) > 0 && (args[0] == "api" || args[0] == "docs") {
-				return removedPointer("check "+args[0], "gravity check")
-			}
 			if len(args) > 0 {
 				return Failf(CodeError, "unexpected argument %q", args[0])
 			}
@@ -34,7 +31,7 @@ func newCheckCmd(a *app) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
-			s, err := a.pipelineSession(ctx, modeCheck, f, false)
+			s, err := a.pipelineSession(ctx, modeCheck, f)
 			if errors.Is(err, errForkPR) {
 				return a.forkPR(s)
 			}
@@ -50,7 +47,7 @@ func newCheckCmd(a *app) *cobra.Command {
 			}
 			comment := f.comment || a.hasCommentToken(s)
 			a.publishReport(ctx, s, res, comment, f.annotate)
-			return a.finishPipeline(res, false, nil)
+			return a.finishPipeline(res, false, res)
 		},
 	}
 	fl := cmd.Flags()

@@ -7,7 +7,7 @@ branding:
 
 inputs:
   repo-token:
-    description: "The repository token, from the secret GRAVITY_REPO_TOKEN that gravity init stores. Exported as GRAVITY_REPO_TOKEN, which the CLI reads first."
+    description: "The repository token, from the secret GRAVITY_REPO_TOKEN that gravity ci setup stores. Exported as GRAVITY_REPO_TOKEN, which the CLI reads first."
     required: false
     default: ""
   token:

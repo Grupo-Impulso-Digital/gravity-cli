@@ -34,6 +34,7 @@ type API interface {
 	Heartbeat(ctx context.Context, runID string) (string, error)
 	ReportPass(ctx context.Context, runID, runPassID string, req api.PassReportRequest) (*api.PassRunResult, error)
 	FinishRun(ctx context.Context, runID string, req api.FinishRunRequest) (*api.FinishedRun, error)
+	CancelRun(ctx context.Context, runID string) (*api.CancelledRun, error)
 	IngestInventory(ctx context.Context, req api.IngestRequest) (*api.IngestResult, error)
 }
 
@@ -46,6 +47,7 @@ type Logger interface {
 
 // Options select what a run does.
 type Options struct {
+	Stats          []api.PassStats
 	Trigger        string
 	Branch         string
 	Head           string
@@ -68,6 +70,7 @@ type Options struct {
 	RepoParam      string
 	ConnectContext string
 	TokenBudget    int
+	NoSnapshot     bool
 }
 
 // Env carries the collaborators of a run.
@@ -84,6 +87,52 @@ type Env struct {
 	Generator string
 	OnPlan    func(*api.Plan)
 	OnPass    func(PassResult)
+	OnStart   func(*api.StartedRun)
+	OnLease   func(LeaseWait)
+	Confirm   func(PlanView) error
+}
+
+// LeaseWait describes a wait for another run's lease.
+type LeaseWait struct {
+	Holder   *api.LeaseHolder
+	Wait     time.Duration
+	Deadline time.Time
+	Timeout  time.Duration
+}
+
+// PlannedPass is one pass of the plan view shown before a run starts.
+type PlannedPass struct {
+	Name     string        `json:"name"`
+	Kind     string        `json:"kind"`
+	Target   string        `json:"target"`
+	Run      bool          `json:"run"`
+	Skip     string        `json:"skip,omitempty"`
+	Commits  int           `json:"commits"`
+	AI       bool          `json:"ai"`
+	Estimate *api.Estimate `json:"estimate,omitempty"`
+	Grant    string        `json:"grant,omitempty"`
+	Why      string        `json:"approvalWhy,omitempty"`
+}
+
+// PlanView is what a run is about to do.
+type PlanView struct {
+	Mode     string        `json:"mode"`
+	Trigger  string        `json:"trigger"`
+	Branch   string        `json:"branch"`
+	HeadSHA  string        `json:"headSha"`
+	Passes   []PlannedPass `json:"passes"`
+	Snapshot bool          `json:"localManifest"`
+}
+
+// AIPasses counts the passes of the view that will call a model.
+func (v PlanView) AIPasses() int {
+	n := 0
+	for _, p := range v.Passes {
+		if p.Run && p.AI {
+			n++
+		}
+	}
+	return n
 }
 
 // PassResult is the outcome of one pass of a run.
@@ -101,6 +150,8 @@ type PassResult struct {
 	LLMCalls   int              `json:"llmCalls"`
 	Implicit   bool             `json:"implicit,omitempty"`
 	ApproveURL string           `json:"approveUrl,omitempty"`
+	Grant      string           `json:"grant,omitempty"`
+	Why        string           `json:"approvalWhy,omitempty"`
 	Missing    []string         `json:"missingScopes,omitempty"`
 }
 
@@ -119,7 +170,15 @@ type Result struct {
 	Ingest   *api.IngestResult    `json:"ingest,omitempty"`
 	Handoffs []Handoff            `json:"handoffs,omitempty"`
 	Warnings []api.Warning        `json:"warnings,omitempty"`
+	Snapshot bool                 `json:"localManifest"`
+	HeadSHA  string               `json:"headSha,omitempty"`
 }
+
+// ErrInterrupted means the run was interrupted and finished as canceled.
+var ErrInterrupted = errors.New("run interrupted")
+
+// ErrDeclined means the plan view was declined.
+var ErrDeclined = errors.New("run declined")
 
 // ErrLeaseTimeout means another run held the lease for longer than --lease-timeout.
 var ErrLeaseTimeout = errors.New("lease timeout")
@@ -313,8 +372,10 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 	}
 	deadline := env.now().Add(timeout)
 	stale := 0
+	snapshot := opts.Mode == api.ModeWrite && env.Manifest != nil && !opts.NoSnapshot
+	confirmed := env.Confirm == nil
 	for {
-		p, err := fetchPlan(ctx, env, opts)
+		p, err := fetchPlan(ctx, env, opts, snapshot)
 		if err != nil {
 			return res, err
 		}
@@ -332,11 +393,18 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 		if err != nil {
 			return res, err
 		}
-		res.Range, res.Commits = prep.runRange, prep.commits
+		res.Range, res.Commits, res.HeadSHA = prep.runRange, prep.commits, prep.headSHA
 		res.Handoffs = expectedHandoffs(p, env.Info, Roles(env.Manifest), prep)
 		decisions := make([]plan.Decision, 0, len(prep.passes))
 		for _, pp := range prep.passes {
 			decisions = append(decisions, pp.decision)
+		}
+		if !confirmed {
+			confirmed = true
+			estimate(ctx, env, opts, snapshot, prep)
+			if err := env.Confirm(planView(opts, prep, snapshot)); err != nil {
+				return res, err
+			}
 		}
 		if !plan.NeedsRun(decisions, opts.Mode == api.ModeWrite) {
 			res.Passes = skippedResults(prep)
@@ -345,14 +413,27 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 			}
 			return res, nil
 		}
-		started, err := env.Client.StartRun(ctx, opts.RepoParam, startRequest(env, opts, p, prep))
+		req := startRequest(env, opts, p, prep)
+		if snapshot {
+			h := env.Manifest.Hash
+			req.ManifestHash = &h
+		}
+		started, err := env.Client.StartRun(ctx, opts.RepoParam, req)
 		switch {
+		case snapshot && api.RejectsWriteManifest(err):
+			snapshot = false
+			env.Log.Warn("manifest_snapshot_unsupported", fmt.Sprintf("this Gravity server runs write runs with the passes stored from %s only; your local %s changes take effect once they reach it", firstOf(p.Repo.AuthoritativeBranch, p.Repo.DefaultBranch, "the default branch"), config.ManifestFileName))
+			continue
 		case errors.Is(err, api.ErrLeaseHeld):
 			wait := leaseWait(err)
 			if env.now().Add(wait).After(deadline) {
 				return res, fmt.Errorf("%w: %s", ErrLeaseTimeout, holderLine(err, opts.Branch, timeout))
 			}
-			env.Log.Infof("Another Gravity run holds %s; retrying in %s", firstOf(opts.Branch, opts.Tag), wait)
+			if env.OnLease != nil {
+				env.OnLease(LeaseWait{Holder: leaseHolder(err), Wait: wait, Deadline: deadline, Timeout: timeout})
+			} else {
+				env.Log.Infof("Another Gravity run holds %s; retrying in %s", firstOf(opts.Branch, opts.Tag), wait)
+			}
 			if err := env.sleep(ctx, wait); err != nil {
 				return res, err
 			}
@@ -365,6 +446,10 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 			return res, fmt.Errorf("start run: %w", err)
 		}
 		res.Run = &started.Run
+		res.Snapshot = snapshot
+		if env.OnStart != nil {
+			env.OnStart(started)
+		}
 		if err := execute(ctx, env, opts, p, prep, started, res); err != nil {
 			return res, err
 		}
@@ -375,8 +460,92 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 	}
 }
 
-func fetchPlan(ctx context.Context, env *Env, opts Options) (*api.Plan, error) {
-	q := api.PlanQuery{Repo: opts.RepoParam, Trigger: opts.Trigger, Branch: opts.Branch, Passes: opts.Passes, Mode: opts.Mode}
+const bytesPerChangedLine = 40
+
+func estimate(ctx context.Context, env *Env, opts Options, snapshot bool, prep *prepared) {
+	var stats []api.PassStats
+	for _, pp := range prep.passes {
+		if pp.cs == nil || !pp.decision.Run {
+			continue
+		}
+		var bytes int64
+		for _, c := range pp.cs.Commits {
+			bytes += int64(len(c.Subject) + len(c.Body))
+		}
+		for _, f := range pp.cs.Files {
+			if !f.Binary {
+				bytes += int64(f.Additions+f.Deletions) * bytesPerChangedLine
+			}
+		}
+		stats = append(stats, api.PassStats{Pass: pp.pass.Name, Commits: len(pp.cs.Commits), Files: len(pp.cs.Files), Bytes: bytes})
+	}
+	if len(stats) == 0 {
+		return
+	}
+	o := opts
+	o.Stats = stats
+	p, err := fetchPlan(ctx, env, o, snapshot)
+	if err != nil {
+		env.Log.Debugf("estimate: %v", err)
+		return
+	}
+	for i := range prep.passes {
+		if pp, ok := p.PassByName(prep.passes[i].pass.Name); ok && pp.Estimate != nil {
+			prep.passes[i].pass.Estimate = pp.Estimate
+		}
+	}
+}
+
+func planView(opts Options, prep *prepared, snapshot bool) PlanView {
+	v := PlanView{Mode: opts.Mode, Trigger: opts.Trigger, Branch: opts.Branch, HeadSHA: prep.headSHA, Snapshot: snapshot}
+	for _, pp := range prep.passes {
+		item := PlannedPass{Name: pp.pass.Name, Kind: pp.pass.Kind, Target: passes.TargetLabel(pp.pass), Run: pp.decision.Run, Skip: pp.decision.Skip, AI: UsesAI(pp.pass), Estimate: pp.pass.Estimate}
+		item.Grant, item.Why = grantOf(pp.pass, pp.decision.Skip)
+		if pp.cs != nil {
+			item.Commits = len(pp.cs.Commits)
+		}
+		if pp.pass.Estimate != nil {
+			item.AI = pp.pass.Estimate.AI
+		}
+		v.Passes = append(v.Passes, item)
+	}
+	return v
+}
+
+func grantOf(p api.PlanPass, skip string) (string, string) {
+	if skip != api.SkipTargetUnapproved && p.Target.Status != api.TargetUnapproved {
+		return "", ""
+	}
+	return p.Target.GrantKey(), api.ApprovalWhy(p.Kind, p.Target.Reasons)
+}
+
+var aiKinds = map[string]bool{config.KindGuides: true, config.KindChangelog: true, config.KindNucleus: true, config.KindCapture: true}
+
+// UsesAI reports whether a pass calls a model when it runs.
+func UsesAI(p api.PlanPass) bool {
+	switch {
+	case aiKinds[p.Kind]:
+		return true
+	case p.Kind == config.KindReference:
+		v, _ := p.Options["prose"].(bool)
+		return v
+	case p.Kind == config.KindCheck:
+		v, ok := p.Options["claims"].(bool)
+		return !ok || v
+	}
+	return false
+}
+
+func leaseHolder(err error) *api.LeaseHolder {
+	var ae *api.APIError
+	if errors.As(err, &ae) {
+		return ae.Holder
+	}
+	return nil
+}
+
+func fetchPlan(ctx context.Context, env *Env, opts Options, snapshot bool) (*api.Plan, error) {
+	q := api.PlanQuery{Repo: opts.RepoParam, Trigger: opts.Trigger, Branch: opts.Branch, Passes: opts.Passes, Mode: opts.Mode, Stats: opts.Stats}
 	switch opts.Trigger {
 	case config.TriggerPR:
 		if opts.PR != nil && opts.PR.TargetBranch != "" {
@@ -385,7 +554,7 @@ func fetchPlan(ctx context.Context, env *Env, opts Options) (*api.Plan, error) {
 	case config.TriggerRelease:
 		q.Branch = ""
 	}
-	if opts.Mode == api.ModeDry && env.Manifest != nil {
+	if (opts.Mode == api.ModeDry || snapshot) && env.Manifest != nil {
 		q.ManifestHash = env.Manifest.Hash
 	}
 	p, err := env.Client.Plan(ctx, q)
@@ -398,7 +567,7 @@ func fetchPlan(ctx context.Context, env *Env, opts Options) (*api.Plan, error) {
 	for _, w := range p.Warnings {
 		env.Log.Warn(w.Code, w.Message)
 	}
-	if opts.Mode == api.ModeWrite && env.Manifest != nil && p.Repo.ManifestHash != "" && p.Repo.ManifestHash != env.Manifest.Hash && opts.Branch != firstOf(p.Repo.AuthoritativeBranch, p.Repo.DefaultBranch) {
+	if opts.Mode == api.ModeWrite && !snapshot && env.Manifest != nil && p.Repo.ManifestHash != "" && p.Repo.ManifestHash != env.Manifest.Hash && opts.Branch != firstOf(p.Repo.AuthoritativeBranch, p.Repo.DefaultBranch) {
 		env.Log.Warn("manifest_not_authoritative", fmt.Sprintf("%s differs from the configuration stored in Gravity; this write run uses the stored passes (changes take effect when the file reaches %s)", config.ManifestFileName, firstOf(p.Repo.AuthoritativeBranch, p.Repo.DefaultBranch, "the default branch")))
 	}
 	return p, nil
@@ -426,6 +595,7 @@ func skippedResults(prep *prepared) []PassResult {
 	out := make([]PassResult, 0, len(prep.passes))
 	for _, pp := range prep.passes {
 		r := PassResult{Name: pp.pass.Name, Kind: pp.pass.Kind, Target: passes.TargetLabel(pp.pass), Status: api.StatusSkipped, SkipReason: pp.decision.Skip, ApproveURL: pp.pass.Target.ApproveURL, Missing: pp.pass.MissingScopes}
+		r.Grant, r.Why = grantOf(pp.pass, pp.decision.Skip)
 		if pp.ranged {
 			rng := pp.rng
 			r.Range = &rng

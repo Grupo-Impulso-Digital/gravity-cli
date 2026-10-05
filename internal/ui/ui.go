@@ -251,6 +251,7 @@ func (p *Printer) Error(msg string) {
 var asciiReplacer = strings.NewReplacer(
 	"✓", "ok", "–", "-", "—", "-", "✗", "x", "›", ">", "·", "-", "…", "...",
 	"←", "<-", "→", "->", "•", "*", "“", `"`, "”", `"`, "‘", "'", "’", "'",
+	"↓", "v", "↳", "+", "▍", "#", "●", "*",
 )
 
 type asciiWriter struct{ w io.Writer }

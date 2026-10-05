@@ -1,0 +1,33 @@
+Gravity - billing-api
+  Product   polaris
+  Manifest  .gravity.yaml  sha256:000000000000
+  Branch    main @ abc1234
+  Account   dave@acme.io - Acme
+
+# Structure  = exists  + created by structure apply  v created by the import
+  Polaris  site polaris
+  |-- = Documentation  docs - product-docs - public
+  |   |-- = Polaris  overview  <- README.md
+  |   `-- + Polaris Admin/  admin
+  |       |-- v Polaris Admin  admin-overview  <- packages/admin/README.md
+  |       `-- + FAQ  faq
+  `-- + Guides  guides - product-docs
+
+# Verbatim - docs  polaris/docs - 3 pages
+  SOURCE                        COLLECTION  SLUG            TITLE          FLAGS
+  README.md                 ->  -           overview        Polaris        page exists
+  packages/admin/README.md  ->  admin       admin-overview  Polaris Admin  package-name title
+  packages/api/README.md    ->  api         api-overview    Polaris Api    empty, package-name title, not in structure
+
+# Passes  2 passes
+  PASS         KIND      TARGET                       RUNS ON  AUDIENCES  LANGUAGES   AI   ESTIMATE
+  docs         verbatim  polaris/docs                 push     -          -           no   free - first run
+  user-guides  guides    polaris/guides (unapproved)  push     users      fr,es -> fr  yes  ~$0.84 - 12 commits
+  * user-guides languages: es is not enabled on site polaris
+  ! user-guides needs a grant for polaris/guides: gravity approve polaris/guides
+
+# CI  GitHub Actions
+  - .github/workflows/gravity.yml  missing
+  Run gravity ci setup to write it and install the token.
+
+x 1 error, 4 warnings - run gravity validate for details and fixes

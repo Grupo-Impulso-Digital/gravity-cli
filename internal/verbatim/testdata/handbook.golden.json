@@ -11,6 +11,7 @@
         "path": "docs/handbook/a/b/c/d/e/f/deep.md",
         "slug": "deep",
         "title": "Deep",
+        "empty": true,
         "position": 0,
         "collectionPath": [
           "a",
@@ -562,6 +563,7 @@
         "path": "docs/handbook/runbooks/README.md",
         "slug": "overview-2",
         "title": "Runbooks",
+        "empty": true,
         "position": 0,
         "collectionPath": [
           "runbooks"
@@ -614,6 +616,7 @@
         "path": "docs/other/rotation.md",
         "slug": "rotation",
         "title": "Other rotation",
+        "empty": true,
         "position": 0,
         "collectionPath": [
           "misc"

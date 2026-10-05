@@ -159,7 +159,7 @@ func TestMapAndConvertGolden(t *testing.T) {
 	}{Hidden: m.Hidden, Warnings: m.Warnings}
 	for _, p := range m.Pages {
 		doc := verbatim.Convert(p.Body, verbatim.Options{
-			Path: p.Path, Hash: p.Hash, Generator: "gravity-cli/test", MDX: p.MDX, DropTitleH1: p.TitleFromH1, Audiences: p.FrontMatter.Audiences,
+			Path: p.Path, Hash: p.Hash, Generator: "gravity-cli/test", MDX: p.MDX, DropTitleH1: p.TitleFromH1, Title: p.Title, Audiences: p.FrontMatter.Audiences,
 			Link: m.Linker(p.Path, "handbook", repo),
 			Image: func(s string) (string, bool) {
 				full := path.Clean(path.Join(path.Dir(p.Path), s))

@@ -12,6 +12,7 @@ import (
 
 	yaml "go.yaml.in/yaml/v3"
 
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
 )
 
@@ -27,6 +28,8 @@ type Manifest struct {
 	Code      *Code  `yaml:"code,omitempty" json:"code,omitempty"`
 	Docs      *Docs  `yaml:"docs,omitempty" json:"docs,omitempty"`
 	Passes    []Pass `yaml:"passes,omitempty" json:"passes,omitempty"`
+
+	Structure *api.Structure `yaml:"structure,omitempty" json:"structure,omitempty"`
 
 	Path string          `yaml:"-" json:"-"`
 	YAML []byte          `yaml:"-" json:"-"`
@@ -181,27 +184,10 @@ func Load(path string) (*Manifest, error) {
 		if errors.As(err, &me) {
 			me.File = path
 		}
-		var ve *V1Error
-		if errors.As(err, &ve) {
-			ve.File = path
-		}
 		return nil, err
 	}
 	m.Path = path
 	return m, nil
-}
-
-// DetectV1 reports whether manifest bytes are a v1 manifest.
-func DetectV1(data []byte) bool {
-	var doc any
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return false
-	}
-	if doc == nil {
-		return true
-	}
-	root, ok := doc.(map[string]any)
-	return ok && IsV1(root)
 }
 
 // Parse decodes and validates manifest bytes.
@@ -219,9 +205,6 @@ func Parse(data []byte) (*Manifest, error) {
 	}
 	if issues := tokenIssues(root, nil); len(issues) > 0 {
 		return nil, &ManifestError{Issues: issues}
-	}
-	if IsV1(root) {
-		return nil, &V1Error{}
 	}
 	jsonDoc, err := json.Marshal(jsonCompatible(root))
 	if err != nil {

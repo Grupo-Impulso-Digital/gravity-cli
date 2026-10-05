@@ -1,0 +1,5 @@
+
+# Runs  2 runs
+  STATUS        RUN     MODE      TRIGGER          STARTED  CHANGES  COST
+  * running     prun_2  real run  manual - feat/x  2m ago   3        $0.31
+  ok succeeded  prun_1  dry run   push - main      26h ago  0        $0.00

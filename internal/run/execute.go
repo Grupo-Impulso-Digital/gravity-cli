@@ -84,6 +84,10 @@ func execute(ctx context.Context, env *Env, opts Options, p *api.Plan, prep *pre
 		}
 	}
 	results := s.passes(runCtx)
+	if ctx.Err() != nil {
+		res.Passes = results
+		return cancelRun(ctx, env, started.Run.ID, res)
+	}
 	if err := s.stopped(); err != nil {
 		res.Passes = results
 		return err
@@ -109,6 +113,22 @@ func execute(ctx context.Context, env *Env, opts Options, p *api.Plan, prep *pre
 	}
 	res.Finish = fin
 	return nil
+}
+
+func cancelRun(ctx context.Context, env *Env, runID string, res *Result) error {
+	bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	msg := "interrupted"
+	fin, err := env.Client.FinishRun(bg, runID, api.FinishRunRequest{Status: api.StatusCancelled, Error: &msg, Report: &api.FinishReport{Summary: "interrupted by the user"}})
+	if err == nil {
+		res.Finish = fin
+		return ErrInterrupted
+	}
+	env.Log.Debugf("finish as canceled: %v", err)
+	if _, cerr := env.Client.CancelRun(bg, runID); cerr != nil {
+		env.Log.Warn("cancel_failed", fmt.Sprintf("could not cancel run %s (%v); its lease expires on its own, or cancel it in the app", runID, cerr))
+	}
+	return ErrInterrupted
 }
 
 func (s *runState) heartbeat(ctx context.Context, done chan<- struct{}) {
@@ -190,6 +210,7 @@ func (s *runState) passes(ctx context.Context) []PassResult {
 	for i, pp := range s.prep.passes {
 		rp, ok := server[pp.pass.Name]
 		base := PassResult{Name: pp.pass.Name, Kind: pp.pass.Kind, Target: passes.TargetLabel(pp.pass), RunPassID: rp.RunPassID, ApproveURL: pp.pass.Target.ApproveURL, Missing: pp.pass.MissingScopes}
+		base.Grant, base.Why = grantOf(pp.pass, pp.decision.Skip)
 		if pp.ranged {
 			rng := pp.rng
 			base.Range = &rng

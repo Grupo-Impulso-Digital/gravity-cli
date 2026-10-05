@@ -306,33 +306,6 @@ func TestShellAndGroovyQuoting(t *testing.T) {
 	}
 }
 
-func TestLegacyPipelines(t *testing.T) {
-	root := t.TempDir()
-	files := map[string]string{
-		".github/workflows/docs.yml":    "steps:\n  - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v0\n",
-		".github/workflows/gravity.yml": "steps:\n  - uses: Grupo-Impulso-Digital/gravity-cli/ci/github@v1\n",
-		".github/workflows/shared.yaml": "jobs:\n  docs:\n    uses: Grupo-Impulso-Digital/workflows/.github/workflows/gravity-docs.yml@main\n",
-		".gitlab-ci.yml":                "docs:\n  variables:\n    GRAVITY_CLI_VERSION: \"0\"\n  script: [gravity sync]\n",
-		"bitbucket-pipelines.yml":       "script:\n  - curl -fsSL https://app.gravitydocs.io/install.sh | GRAVITY_VERSION=1 sh && gravity run\n",
-		"azure-pipelines.yml":           "steps:\n  - script: gravity docs generate\n",
-		"Jenkinsfile":                   "sh 'GRAVITY_VERSION=0 ./install.sh && gravity release-notes'\n",
-		"docs/notes.yml":                "gravity sync\n",
-	}
-	for name, body := range files {
-		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(name)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got := strings.Join(LegacyPipelines(root), ",")
-	want := ".github/workflows/docs.yml,.gitlab-ci.yml,Jenkinsfile,azure-pipelines.yml"
-	if got != want {
-		t.Fatalf("legacy = %s, want %s", got, want)
-	}
-}
-
 func TestSharedWorkflowCallerKeepsTheGitHubFile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
@@ -347,9 +320,6 @@ func TestSharedWorkflowCallerKeepsTheGitHubFile(t *testing.T) {
 	}
 	if f := p.Files[0]; f.Action != ActionKeep || !strings.Contains(f.Note, ".github/workflows/docs.yml calls the shared gravity-docs.yml workflow") {
 		t.Fatalf("file = %+v", f)
-	}
-	if got := LegacyPipelines(root); len(got) != 0 {
-		t.Fatalf("a shared workflow caller is not a 0.x pipeline: %v", got)
 	}
 }
 

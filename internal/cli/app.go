@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,6 +69,16 @@ func newApp() *app {
 		terminal:    ui.IsTerminal(os.Stdin) && ui.IsTerminal(os.Stderr),
 		openBrowser: openURL,
 	}
+}
+
+const defaultLeaseTimeout = 20 * time.Minute
+
+func (a *app) prompter() ui.Prompter {
+	if a.prompts != nil {
+		return a.prompts
+	}
+	accessible := a.env("ACCESSIBLE") != "" || a.env("TERM") == "dumb"
+	return &ui.HuhPrompter{In: a.stdin, Out: a.stderr, Accessible: accessible}
 }
 
 func (a *app) sleeper() func(context.Context, time.Duration) error {
@@ -151,12 +160,9 @@ func (a *app) repoAPIURL(ctx context.Context) string {
 }
 
 func (a *app) credentials(manifestAPIURL string) (auth.Credentials, error) {
-	profiles, imported, err := auth.LoadProfiles()
+	profiles, err := auth.LoadProfiles()
 	if err != nil {
 		return auth.Credentials{}, Fail(CodeError, err)
-	}
-	if imported {
-		a.ui.Warn("profile_imported", "Imported the token of ~/.config/gravity/config.yaml (gravity v0.x) as profile \"default\"; that file is left untouched")
 	}
 	creds, err := auth.Resolve(auth.Inputs{
 		FlagToken:      a.gf.token,
@@ -326,24 +332,6 @@ func webURL(remoteKey string) (string, string) {
 		}
 	}
 	return "https://" + remoteKey, provider
-}
-
-func fileURL(webURL, provider, branch, path string) string {
-	if webURL == "" || branch == "" {
-		return ""
-	}
-	base := strings.TrimRight(webURL, "/")
-	switch provider {
-	case ci.GitHub:
-		return base + "/blob/" + branch + "/" + path
-	case ci.GitLab:
-		return base + "/-/blob/" + branch + "/" + path
-	case ci.Bitbucket:
-		return base + "/src/" + branch + "/" + path
-	case ci.Azure:
-		return base + "?path=" + url.QueryEscape("/"+path) + "&version=" + url.QueryEscape("GB"+branch)
-	}
-	return ""
 }
 
 func (a *app) detectCI(ctx context.Context, repo *git.Repo) (ci.Context, error) {

@@ -9,7 +9,7 @@
     "properties": {
         "version": {
             "const": 2,
-            "description": "Manifest schema version. A file without `version: 2` is a v1 manifest and is refused by CLI 1.x (run `gravity init` to convert it)."
+            "description": "Manifest schema version. Any other value is refused."
         },
         "product": {
             "$ref": "#/$defs/slug",
@@ -33,9 +33,96 @@
             "maxItems": 32,
             "items": { "$ref": "#/$defs/pass" },
             "description": "Passes-as-code. Each name must be unique. Declared passes win over app passes of the same name."
-        }
+        },
+        "structure": { "$ref": "#/$defs/structure" }
     },
     "$defs": {
+        "structure": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["site"],
+            "description": "The documentation tree this repository declares. `gravity structure apply` creates what is missing (idempotent by slug path, never deletes); pages with `source` are created by the verbatim import instead.",
+            "properties": {
+                "site": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["slug"],
+                    "properties": {
+                        "slug": { "$ref": "#/$defs/slug" },
+                        "name": { "type": "string", "minLength": 1, "maxLength": 120 }
+                    }
+                },
+                "spaces": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": { "$ref": "#/$defs/structureSpace" }
+                }
+            }
+        },
+        "structureSpace": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slug"],
+            "properties": {
+                "slug": { "$ref": "#/$defs/slug" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+                "type": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                    "description": "A space type of the app catalog (api-reference, product-docs, release-notes, handbook, knowledge-base...)."
+                },
+                "visibility": { "enum": ["public", "private"] },
+                "parent": {
+                    "oneOf": [{ "$ref": "#/$defs/slug" }, { "type": "null" }],
+                    "description": "Slug of the parent space, for subspaces."
+                },
+                "collections": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": { "$ref": "#/$defs/structureCollection" }
+                },
+                "pages": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": { "$ref": "#/$defs/structurePage" }
+                }
+            }
+        },
+        "structureCollection": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slug"],
+            "properties": {
+                "slug": { "$ref": "#/$defs/slug" },
+                "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "description": { "type": "string", "maxLength": 1000 },
+                "collections": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": { "$ref": "#/$defs/structureCollection" },
+                    "description": "Nested collections, at most five levels deep."
+                },
+                "pages": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": { "$ref": "#/$defs/structurePage" }
+                }
+            }
+        },
+        "structurePage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slug"],
+            "properties": {
+                "slug": { "$ref": "#/$defs/slug" },
+                "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "description": { "type": "string", "maxLength": 1000 },
+                "source": {
+                    "$ref": "#/$defs/glob",
+                    "description": "Repository file a verbatim pass imports into this page. Such pages are never created as stubs."
+                }
+            }
+        },
         "slug": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
@@ -367,6 +454,11 @@
                             }
                         }
                     }
+                },
+                "allowEmpty": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Import files that have no content beyond a title. Off: empty files are skipped with a warning."
                 },
                 "adopt": {
                     "type": "boolean",

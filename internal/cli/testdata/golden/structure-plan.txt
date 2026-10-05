@@ -1,0 +1,55 @@
+
+# Draft  structure: for site polaris
+  structure:
+    site:
+      slug: polaris
+      name: Polaris
+    spaces:
+      - slug: docs
+        name: Documentation
+        type: product-docs
+        collections:
+          - slug: guides
+            title: Guides
+            pages:
+              - slug: start
+                title: Start here
+                source: docs/guides/start.md
+          - slug: admin
+            title: Polaris Admin
+            pages:
+              - slug: admin-overview
+                title: Polaris Admin
+                source: packages/admin/README.md
+        pages:
+          - slug: overview
+            title: Polaris
+            source: README.md
+
+# Verbatim pass  fills the pages that have a source
+  passes:
+    - name: docs
+      kind: verbatim
+      target: polaris/docs
+      triggers: [push]
+      options:
+        files:
+          - include: README.md
+            slug: overview
+          - include: docs/**/*.md
+            stripPrefix: docs
+          - include: packages/admin/README.md
+            collection: admin
+            slug: admin-overview
+
+# Against Gravity  + create  = exists  v created by the import  ! only in Gravity (kept)
+  = Documentation  space docs
+  =   Polaris  overview
+  +   Guides/  guides
+  v     Start here  start
+  +   Polaris Admin/  admin
+  v     Polaris Admin  admin-overview
+
+* 2 to create, 2 imported by the verbatim pass, 2 already there, 0 only in Gravity
+
+* edit freely, then gravity structure plan --write writes it into .gravity.yaml

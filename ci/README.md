@@ -6,8 +6,9 @@ schedule, manual run), resolves each pass's commit range from its watermark,
 skips the passes whose scope did not change, and runs the rest in one Gravity
 run. You do not pass a site, a space, a range or a command per trigger.
 
-`gravity init` writes the right file for your provider (with your default
-branch and, when a pass needs it, a weekly schedule) and installs the secret.
+`gravity ci setup` writes the right file for your provider (with your default
+branch and, when a pass needs it, a weekly schedule) and installs the secret;
+`gravity ci check` tells you whether the file and the secret are in place.
 The files below are the same templates with `main` as the default branch; they
 are regenerated from `internal/cisetup` and checked by its tests.
 
@@ -18,8 +19,8 @@ are regenerated from `internal/cisetup` and checked by its tests.
 | Bitbucket Pipelines | [`bitbucket/bitbucket-pipelines.yml`](bitbucket/bitbucket-pipelines.yml) | `bitbucket-pipelines.yml` (merge the `pipelines` into yours) |
 | Azure Pipelines | [`azure/azure-pipelines.gravity.yml`](azure/azure-pipelines.gravity.yml) | `azure-pipelines.gravity.yml`, then create a pipeline from it |
 
-Jenkins and CircleCI snippets are printed by `gravity init --ci jenkins` and
-`gravity init --ci circleci`.
+Jenkins and CircleCI snippets are printed by `gravity ci setup --provider jenkins`
+and `gravity ci setup --provider circleci`.
 
 ## What a run does per trigger
 
@@ -46,10 +47,15 @@ overrides the detection anywhere.
 
 Deploys are never gated by documentation writes. Only `check` findings exit `1`.
 
+The first CI run of an AI pass (no watermark yet) is skipped with
+`first_run_manual` unless the repository setting `ci.firstRun` is `run`: a
+merge never launches a full AI pipeline nobody estimated. Do the first run
+locally, `gravity run --dry-run`, review it, then `gravity run --send <runId>`.
+
 ## Secrets and tokens
 
 `GRAVITY_REPO_TOKEN` holds the repository token (`gr_repo_…`) that `gravity
-init` mints with exactly the scopes of the repository's passes and stores in
+ci setup` mints with exactly the scopes of the repository's passes and stores in
 the provider's secret store. The CLI reads `GRAVITY_REPO_TOKEN` first, then
 `GRAVITY_TOKEN` (a user or organization token, and the name gravity 0.x
 pipelines use), so a 0.x pipeline keeps its `GRAVITY_TOKEN` while the
@@ -69,8 +75,8 @@ How each template hands the token over:
 CI files written by gravity 1.0.0 to 1.0.2 pass only `GRAVITY_TOKEN` (GitHub
 before 1.0.2, Azure, Jenkins), or both secrets through the one `token` input
 (GitHub 1.0.2). They keep working while the token sits in `GRAVITY_TOKEN`.
-`gravity status` flags them, and `gravity init` rewrites a file it generated
-that you did not edit (an edited file is kept, and init prints the lines to
+`gravity status` flags them, and `gravity ci setup` rewrites a file it generated
+that you did not edit (an edited file is kept, and it prints the lines to
 change).
 
 Pull request comments need a provider token next to it:
@@ -83,9 +89,9 @@ Pull request comments need a provider token next to it:
 | Azure | `SYSTEM_ACCESSTOKEN` (mapped by the template) | the build service may contribute to pull requests |
 
 Without it the report is written to `gravity-report.md` and the log says so.
-`--no-comment` turns comments off. `gravity init` cannot mint the GitLab or
-Bitbucket token for you: its preview and closing summary name the token to
-create and where to store it.
+`--no-comment` turns comments off. `gravity ci setup` cannot mint the GitLab or
+Bitbucket token for you: its closing summary names the token to create and
+where to store it.
 
 Fork pull requests run without secrets. The CLI detects them per provider
 (the GitHub event's head and base repositories, GitLab's source and target
@@ -145,8 +151,8 @@ resolved release with `actions/cache`, and installs it with `install.sh`
 Templates and the action install the newest `1.x` release
 (`GRAVITY_VERSION=1`, `ci/github@v1`), so a future 2.0 never changes a 1.x
 pipeline. Pipelines still on CLI 0.3 keep `ci/github@v0` or `GRAVITY_VERSION=0`
-and never receive 1.0; run `gravity init` to convert the repository when you are
-ready.
+and never receive 1.x; CLI 1.1 no longer converts v1 manifests, so move such a
+repository with `gravity setup`, which writes a fresh version 2 manifest.
 
 `install.sh` accepts `GRAVITY_VERSION=<major>` (the newest release of that
 major), a release tag (`v1.2.3`) or `latest`; `GRAVITY_INSTALL_DIR` picks where
