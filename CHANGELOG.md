@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.0 — Unreleased
+## v1.1.0 — 2026-10-06
 
 The guided CLI. `gravity` now walks a repository from sign-in to a reviewed
 change request, says what it is about to do before it does it, and shows
