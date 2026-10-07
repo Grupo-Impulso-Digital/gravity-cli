@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.1 — Unreleased
+
+### Fixed
+
+- A dropped connection during a model call (`connection reset by peer`) is
+  retried instead of failing the page.
+
 ## v1.1.0 — 2026-10-06
 
 The guided CLI. `gravity` now walks a repository from sign-in to a reviewed
