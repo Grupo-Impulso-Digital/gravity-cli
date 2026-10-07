@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 )
 
 // Roles in a conversation.
@@ -176,7 +177,8 @@ func (r *MessagesResponse) TextContent() string {
 // Messages calls POST /api/llm/v1/messages.
 func (c *Client) Messages(ctx context.Context, req MessagesRequest) (*MessagesResponse, error) {
 	var out MessagesResponse
-	if err := c.Post(ctx, "/api/llm/v1/messages", req, &out); err != nil {
+	r := request{method: http.MethodPost, path: "/api/llm/v1/messages", body: req, idempotent: true}
+	if err := c.do(ctx, r, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
