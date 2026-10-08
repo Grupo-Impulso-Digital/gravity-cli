@@ -69,6 +69,7 @@ type request struct {
 	raw         []byte
 	contentType string
 	headers     map[string]string
+	idempotent  bool
 }
 
 func (c *Client) do(ctx context.Context, r request, out any) error {
@@ -89,7 +90,7 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		status, data, header, err := c.send(ctx, r, payload)
 		if err != nil {
 			lastErr = err
-			if r.method != http.MethodGet || attempt == attempts || ctx.Err() != nil {
+			if (r.method != http.MethodGet && !r.idempotent) || attempt == attempts || ctx.Err() != nil {
 				return err
 			}
 			if serr := c.wait(ctx, c.backoff(attempt, 0)); serr != nil {

@@ -34,7 +34,7 @@ command is cobra's usage error.
   unstamped build reports `dev+<commit>`.
 - **Retries.** A `429` or `5xx` is tried up to three times in all, waiting
   `Retry-After` (or the envelope's `retryAfter`) when given, else 1 s doubling,
-  capped at 60 s. A network error is retried only for `GET`.
+  capped at 60 s. A network error is retried for `GET` and for model calls (`POST /api/llm/v1/messages`); other writes fail on the first one.
 - **Error envelope.** A non-2xx body is
   `{"error":{"code","message","details":[{path,code,message}],"module","retryAfter","holder"}}`,
   decoded into `*api.APIError`. A body that is not the envelope (an HTML gateway

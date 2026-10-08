@@ -193,7 +193,7 @@ func TestHTMLErrorSummary(t *testing.T) {
 	}
 }
 
-func TestNetworkErrorRetriesOnlyGets(t *testing.T) {
+func TestNetworkErrorRetriesGetsAndModelCalls(t *testing.T) {
 	c, rec := newTestClient("http://127.0.0.1:1")
 	c.HTTPClient = &http.Client{Timeout: time.Second}
 	if _, err := c.WhoAmI(context.Background()); err == nil || len(rec.d) != 2 {
@@ -202,6 +202,10 @@ func TestNetworkErrorRetriesOnlyGets(t *testing.T) {
 	rec.d = nil
 	if err := c.Logout(context.Background()); err == nil || len(rec.d) != 0 {
 		t.Fatalf("POST: err=%v sleeps=%v", err, rec.d)
+	}
+	rec.d = nil
+	if _, err := c.Messages(context.Background(), api.MessagesRequest{}); err == nil || len(rec.d) != 2 {
+		t.Fatalf("messages: err=%v sleeps=%v", err, rec.d)
 	}
 }
 
