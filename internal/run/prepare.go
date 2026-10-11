@@ -232,7 +232,7 @@ func startRequest(env *Env, opts Options, p *api.Plan, prep *prepared) api.Start
 	req := api.StartRunRequest{
 		ClientKey: env.key(), Trigger: opts.Trigger, Mode: opts.Mode, Origin: firstOf(opts.Origin, api.OriginLocal),
 		Branch: opts.Branch, HeadSHA: prep.headSHA, PR: opts.PR, CI: opts.CI,
-		CLI: api.CLIInfo{Version: strings.TrimPrefix(env.Generator, "gravity-cli/")}, Note: opts.Note, PlanHash: p.PlanHash,
+		CLI: api.CLIInfo{Version: strings.TrimPrefix(env.Generator, "gravity-cli/")}, Note: opts.Note, PlanHash: p.PlanHash, Model: opts.Model,
 	}
 	if opts.Trigger == config.TriggerRelease {
 		req.Branch = ""

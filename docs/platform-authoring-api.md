@@ -83,7 +83,7 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | `GET` | `/api/v1/sites`, `/api/v1/sites/{site}` | `setup` (site question, its spaces); `structure` fallback tree |
 | `POST` | `/api/v1/repos/connect` | `setup` (dry, then real to register), `show`, `validate`, `ci setup`, `status`, and the start of `run`, `check` |
 | `POST` | `/api/v1/repos/{repoId}/tokens` | `ci setup` (repository token) |
-| `GET` | `/api/v1/repos/self/plan` | `show` (estimates, target status), `approve` fallback, `status`, `run`, `check` |
+| `GET` | `/api/v1/repos/self/plan` | `show` (estimates, target status, model and language of AI passes; `--model`), `approve` fallback, `status`, `run` (`--model`), `check` |
 | `POST` | `/api/v1/repos/self/validate` | `validate`, `show`, `setup`, and every local `run` before it starts (P2) |
 | `GET`, `POST` | `/api/v1/repos/self/approvals` | `approve` (P3) |
 | `GET` | `/api/v1/repos/self/runs` | `runs`, `review latest`, `runs show latest` (P4) |
@@ -107,7 +107,7 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | `GET` | `/api/v1/content/resolve`, `/api/v1/content/pages/{pageId}/provenance` | `explain` |
 | `POST` | `/api/v1/nucleus/recall`, `/api/v1/nucleus/memories` | `nucleus` passes, doc tools |
 | `POST` | `/api/llm/v1/messages` | every AI pass |
-| `GET` | `/api/llm/v1/instructions?runPassId=&model=&maxOutput=` | every AI pass: the instructions bundle of its run pass, fetched once before its first model call (`api.Client.InstructionsBundle`) |
+| `GET` | `/api/llm/v1/instructions?runPassId=&model=&maxOutput=` | `run`: the instructions bundle of every run pass that calls a model, fetched once right after `POST /runs` (`api.Client.InstructionsBundle`); `model` from `--model`, `maxOutput` from the hidden `--max-output` |
 
 ## Guided runs (CLI 1.1)
 
@@ -127,6 +127,12 @@ head SHA and the manifest hash. `gravity run --send <runId>` refuses when
 either changed, then starts a write run with the recorded passes and ranges,
 uploads the recorded images from that commit, replays the recorded writes
 through the normal endpoints and finishes the run; no model is called.
+Each recorded pass that called a model also keeps `generation
+{instructionsVersion, model, provider}` and `usage {turns, inputTokens,
+outputTokens}` (`run.RecordedPass`, recording format 1 unchanged); `--send`
+forwards `generation` in that pass's report, so the server can fill the run
+pass's model and instructions version, and refuses `--model` and
+`--max-output`.
 
 ## Capabilities
 
@@ -201,8 +207,11 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
    saw and its skip reason. `409 lease_held` is retried after its `retryAfter`
    (clamped to 5-60 s) until `--lease-timeout`, and every wait is announced with
    the holder (`GET /runs/{holder}` for its trigger, branch and start);
-   `409 plan_stale` re-plans, up to three times. Before the start, a local run
-   shows the plan view and, on a terminal, asks before AI passes.
+   `409 plan_stale` re-plans, up to three times. Before the start, any pass
+   that will run and call a model whose plan `model.unavailable` is set stops
+   the run with `model_unavailable` (`run.ModelUnavailableError`, exit `2`)
+   before the plan view; then a local run shows the plan view and, on a
+   terminal, asks before AI passes.
 4. Heartbeats run every `heartbeatSeconds`. `lease_lost`, `run_not_running`
    or a `401` (on a heartbeat or any other call of the run, `api.StopsRun`)
    stops the run without a finish call.
@@ -295,7 +304,7 @@ change at a successful `submit_page`.
   return line ranges; a partial reply ends with `[lines a–b of N; call again
   with offset=<b+1>]`. The doc tools are `read_page`, `search_docs`, `recall`,
   `inventory` and `list_target`.
-- With `run.Options.Debug`, each draft is kept at
+- With `gravity run --debug`, each draft is kept at
   `.gravity/runs/<runId>/<runPassId>/<pageId|new-<slug>>.json`.
 - Before updating a page whose open change request carries pipeline changes,
   guides reads `openProposal.pending` (`repoId`, `remoteKey`, `pass`, `runId`)
@@ -351,16 +360,34 @@ source?>`), `<existing_units>`, `<entrypoint_files>`, `<units>` and
 
 ## Run launch and failures (CLI 1.2)
 
+- `gravity run --model <id>` sends `model=` on every plan request, `model` on
+  `POST /runs` and `model=` on every bundle request; without it the server
+  resolves the model configured for each pass's scope. The hidden
+  `--max-output <n>` (development, model evaluation) sends `maxOutput=` on
+  bundle requests only; the server can only lower the output limit with it
+  and ignores it for repository tokens.
+- The plan view lists, under the pass table, one line per AI pass that runs:
+  `<pass> model: <label> · <quality> · <language> (<code>)`. A fallback model
+  adds the warning `model_fallback`, and a `not_recommended` model the warning
+  `model_not_recommended` (`--yes` still proceeds). Without a plan view (CI),
+  the `not_recommended` warning is printed at launch instead, with the
+  bundle's `qualityNote`.
+- `gravity show` renders the same model line per AI pass from the plan
+  (`--model <id>` previews another model). The tenant procedure
+  `passes.render`, which renders a run pass's instructions, is tRPC only and
+  needs a run pass; the CLI has no REST path to it, so `show` shows the
+  plan-level model, quality and language only.
 - Right after `POST /runs` and before the inventory ingest, the CLI fetches
   the bundle of every run pass that calls a model (guides, changelog,
   nucleus, check with `claims`, reference with `prose`) and prints `<pass>:
   <model label> · <quality> · <language> (<code>) · instructions
   <version8>`, plus the fallback and the bundle warnings. Any error (a `409
   model_unavailable` or `model_conflict`, a server too old) finishes the run
-  as failed before any pass starts. With `run.Options.Debug` the bundle is
-  kept at `.gravity/runs/<runId>/<runPassId>.instructions.json`.
+  as failed before any pass starts. With `--debug` (`run.Options.Debug`) the
+  bundle is kept at `.gravity/runs/<runId>/<runPassId>.instructions.json` and
+  each page draft under `.gravity/runs/<runId>/<runPassId>/`.
 - Pass reports carry `generation {instructionsVersion, model, provider}` from
-  the bundle.
+  the bundle; so does each pass of `gravity run --json` (`passes[].generation`).
 - A page task that fails (`output_limit`, `no_submit`, `refusal`,
   `cap_reached`, a rejected forced submit) sends nothing for that page; the
   other pages go on and the pass fails with the per-page list. Reference

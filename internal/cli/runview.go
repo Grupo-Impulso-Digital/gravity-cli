@@ -156,6 +156,31 @@ func renderPlanView(p *ui.Printer, view engine.PlanView) {
 		}
 	}
 	p.Note("  ", ui.MarkInfo, "%s", line)
+	for _, pp := range view.Passes {
+		if !pp.Run || pp.Model == nil {
+			continue
+		}
+		p.Note("  ", ui.MarkInfo, "%s model: %s", pp.Name, modelLine(pp.Model, pp.Language))
+		m := pp.Model
+		if m.Fallback != nil {
+			p.Warn("model_fallback", fmt.Sprintf("%s: %s replaces %s (%s)", pp.Name, firstNonEmpty(m.Label, m.ID), m.Fallback.From, m.Fallback.Reason))
+		}
+		if m.Quality == api.QualityNotRecommended {
+			p.Warn("model_not_recommended", engine.NotRecommended(pp.Name, firstNonEmpty(m.Label, m.ID), ""))
+		}
+	}
+}
+
+func modelLine(m *api.PlanModel, lang *api.Language) string {
+	parts := []string{firstNonEmpty(m.Label, m.ID, "default model"), firstNonEmpty(m.Quality, api.QualityUntested)}
+	if lang != nil && (lang.Code != "" || lang.Name != "") {
+		l := firstNonEmpty(lang.Name, lang.Code)
+		if lang.Code != "" && lang.Name != "" {
+			l += " (" + lang.Code + ")"
+		}
+		parts = append(parts, l)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (v *runView) onLease(s *pipelineSession, w engine.LeaseWait) {

@@ -4,6 +4,31 @@
 
 ### Added
 
+- `gravity run --model <id>` runs the AI passes on that model instead of the
+  one configured in Gravity: it is sent on the plan, the run start and every
+  instructions bundle request.
+- The plan view names each AI pass that runs with its model, quality label
+  and output language (`<pass> model: <label> · <quality> · <language>
+  (<code>)`), warns about a fallback model (`model_fallback`) and a model
+  rated `not_recommended` (`model_not_recommended`; `--yes` still proceeds;
+  in CI the warning is printed at launch), and stops the run before the
+  confirm, with `model_unavailable` and exit `2`, when a model cannot run
+  (not enabled, no provider key, model catalog unreachable).
+- `gravity show` prints the model, quality label and output language of each
+  AI pass from the plan; `gravity show --model <id>` previews another model.
+- `gravity run --debug` keeps each pass's instructions bundle
+  (`.gravity/runs/<runId>/<runPassId>.instructions.json`) and page drafts
+  (`.gravity/runs/<runId>/<runPassId>/`).
+- A hidden `gravity run --max-output <n>` lowers the model's output limit for
+  model evaluation (sent as the bundle's `maxOutput`).
+- Recorded dry runs keep, per AI pass, `generation` (instructions version,
+  model, provider) and `usage` (turns, input and output tokens);
+  `gravity run --send` forwards `generation` in the pass reports and refuses
+  `--model` and `--max-output`. `gravity run --json` carries
+  `passes[].generation` and `plan.passes[].model`/`language`.
+- A run whose AI passes need instructions from a server without the bundle
+  endpoint fails with `server_too_old`; an unsupported tool contract fails
+  with `tool_contract_unsupported`.
 - API client for the harness v2 contract: the `gravity.instructions/1`
   bundle (`GET /api/llm/v1/instructions`, with `model` and `maxOutput`),
   checked for its schema and tool contract majors; an older server fails with
@@ -21,7 +46,6 @@
   `bundle_required`, `context_too_large` and `provider_bad_request`, with
   hints; object-shaped error `details` are decoded. `budget_exceeded` and
   `no_provider_key` are run-halting (`api.HaltsRun`).
-
 - The agent loop runs every phase from the run pass's instructions bundle:
   the phase's rendered system prompt as one cached block, the bundle's tool
   descriptions, its turn and tool-call caps (the terminal tool is forced for
@@ -44,7 +68,6 @@
   short new pages and duplicate adjacent blocks are warnings.
 - `read_file`, `git_diff` and `read_page` page through long content with
   `offset` and `limit`; `read_page` also takes a `slug`.
-- `run.Options.Debug` keeps each page draft under `.gravity/runs/<runId>/<runPassId>/`.
 - List phases build their result over many calls: `add_pages`/`finish_plan`
   (with `mustCover` and `why`, and `page budget reached (<n>)` past
   `maxPages`), `add_release_items`/`finish_release_notes` (grouped by section

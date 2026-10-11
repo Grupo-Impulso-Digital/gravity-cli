@@ -374,6 +374,9 @@ func (s *runState) loadBundles(ctx context.Context) error {
 		if m.Fallback != nil {
 			s.env.Log.Warn("model_fallback", fmt.Sprintf("%s: %s replaces %s (%s)", mp.pp.pass.Name, firstOf(m.Label, m.ID), m.Fallback.From, m.Fallback.Reason))
 		}
+		if m.Quality == api.QualityNotRecommended && s.env.Confirm == nil {
+			s.env.Log.Warn("model_not_recommended", NotRecommended(mp.pp.pass.Name, firstOf(m.Label, m.ID), m.QualityNote))
+		}
 		for _, w := range b.Warnings {
 			s.env.Log.Warn("instructions_warning", mp.pp.pass.Name+": "+w)
 		}
@@ -403,7 +406,7 @@ func (s *runState) bundle(ctx context.Context, runPassID string) (*api.Instructi
 	if b := s.cachedBundle(runPassID); b != nil {
 		return b, nil
 	}
-	b, err := s.env.Client.InstructionsBundle(ctx, api.InstructionsQuery{RunPassID: runPassID})
+	b, err := s.env.Client.InstructionsBundle(ctx, api.InstructionsQuery{RunPassID: runPassID, Model: s.opts.Model, MaxOutput: s.opts.MaxOutput})
 	if err != nil {
 		return nil, err
 	}
@@ -411,6 +414,23 @@ func (s *runState) bundle(ctx context.Context, runPassID string) (*api.Instructi
 	s.bundles[runPassID] = b
 	s.mu.Unlock()
 	return b, nil
+}
+
+func (s *runState) generation(runPassID string) *api.Generation {
+	b := s.cachedBundle(runPassID)
+	if b == nil {
+		return nil
+	}
+	return &api.Generation{InstructionsVersion: b.Version, Model: b.Model.ID, Provider: b.Model.Provider}
+}
+
+// NotRecommended is the warning for a pass that runs on a model rated not recommended.
+func NotRecommended(pass, model, note string) string {
+	msg := fmt.Sprintf("%s: %s is rated not recommended for documentation runs", pass, model)
+	if note != "" {
+		msg += " (" + note + ")"
+	}
+	return msg + "; expect more review, or pick another model with --model"
 }
 
 func (s *runState) harness(rp api.RunPass) *agent.Harness {
@@ -451,6 +471,7 @@ func (s *runState) runPass(ctx context.Context, pp preparedPass, rp api.RunPass,
 	rep, err := impl.Run(ctx, in, sink)
 	rep.DurationMs = s.env.now().Sub(started).Milliseconds()
 	rep.Usage = h.Usage()
+	base.Generation = s.generation(rp.RunPassID)
 	for _, phase := range h.Partial() {
 		rep.Warnings = append(rep.Warnings, "partial (forced at cap): "+phase)
 	}
@@ -499,9 +520,7 @@ func (s *runState) report(ctx context.Context, rp api.RunPass, status string, re
 		pr := fitReport(rep.PassReport)
 		req.Report = &pr
 	}
-	if b := s.cachedBundle(rp.RunPassID); b != nil {
-		req.Generation = &api.Generation{InstructionsVersion: b.Version, Model: b.Model.ID, Provider: b.Model.Provider}
-	}
+	req.Generation = s.generation(rp.RunPassID)
 	out, err := s.env.Client.ReportPass(ctx, s.started.Run.ID, rp.RunPassID, req)
 	if err != nil {
 		if api.StopsRun(err) {

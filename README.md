@@ -153,6 +153,29 @@ run reports the same conflicts the real run would hit) and shows the plan:
   * 1 of 2 passes run
 ```
 
+AI passes run on the model configured for their scope in Gravity's AI
+settings, or on `--model <id>`. Under the pass table, the plan names each AI
+pass that runs with its model, the model's quality label (`recommended`,
+`supported`, `not_recommended`, `untested`) and the output language:
+
+```
+  * user-guides model: Claude Sonnet 4.6 - recommended - French (fr)
+```
+
+A model rated `not_recommended` adds a warning (`--yes` still goes ahead), a
+fallback model says which one it replaces, and a model that cannot run (not
+enabled, no provider key, model catalog unreachable) stops the run before you
+are asked, with `model_unavailable` and exit `2`. Once the run has started,
+each AI pass prints its model and the version of the instructions Gravity
+serves for it:
+
+```
+user-guides: Claude Sonnet 4.6 - recommended - French (fr) - instructions 1a2b3c4d
+```
+
+`--debug` keeps those instructions bundles and every page draft under
+`.gravity/runs/<runId>/`.
+
 On a terminal it asks before passes that call a model, unless `--yes`. When
 another run holds the branch, it says at once which one and waits with a
 countdown (`--lease-timeout`, default 20m):
@@ -180,7 +203,9 @@ Dry run finished
 On a terminal it then asks "Send this run to Gravity?". `gravity run --send
 <runId|latest>` replays the recorded changes as a real run without
 recomputing; it refuses (`send_mismatch`) when HEAD or `.gravity.yaml` changed
-since the dry run. A real run prints the change request link and offers to open
+since the dry run. Each recorded AI pass keeps the model, provider and
+instructions version it ran with and its turns and tokens; sending forwards
+them, and `--model` does not apply to `--send`. A real run prints the change request link and offers to open
 it; `gravity review [runId|latest]` opens it later, `gravity runs [--watch]`
 lists recent runs, `gravity runs show <id>` is the authoritative state of one
 run (per-pass status, progress, lease, change request) and
@@ -216,7 +241,7 @@ space, optionally a collection), a kind, triggers, audiences and instructions.
 | ---- | ------ | -- | -------------- |
 | `verbatim` | Markdown/MDX files imported as-is and locked to the repository | no | Developers › Admin |
 | `reference` | API reference pages from OpenAPI documents (deterministic api blocks, optional AI prose) | only with `prose: true` | Developer portal › API |
-| `guides` | Guides kept true to the code: an impact analysis, a page plan, then block-level edits that cite commits | yes | Product docs › Guides |
+| `guides` | Guides kept true to the code: an impact analysis, a page plan, then pages drafted block by block, checked, and cited to commits | yes | Product docs › Guides |
 | `changelog` | Release pages and an Unreleased page, from commits or `CHANGELOG.md` | yes | Product › Changelog |
 | `nucleus` | Facts about the product in Nucleus, the shared memory, tagged with this repository | yes | product namespace |
 | `check` | Nothing: drift, coverage and claim review for pull requests | unless `claims: false` | — |
@@ -229,6 +254,36 @@ from three layers: the languages a site serves, the organization's
 translations setting (off means nothing is machine-translated) and a pass's
 `options.languages`; `gravity show` and `gravity validate` print what each pass
 will really produce, and why.
+
+### How AI passes work
+
+Gravity owns every instruction. For each AI pass of a run, the CLI fetches an
+instructions bundle from Gravity: the system prompt of each phase (rendered
+from the organization, site, space, collection, pass and run layers, the
+glossary and the output language, which is the site's default language), the
+tool descriptions, the model and its real limits, and the loop's caps. The
+CLI runs the conversation and the tools; a model never has to fit a page or a
+list in one reply:
+
+- A page is written in a draft, a few blocks per call (`draft_append`,
+  `draft_replace`, `draft_delete`), then checked: wrong output language, code
+  or JSON in prose, Markdown headings in text, planning voice ("this section
+  should…"), output markers such as `TODO:` and uncovered `mustCover` items
+  are errors the model must fix before `submit_page` succeeds. Only the
+  difference between the draft and the page is sent, as one change. Blocks a
+  person owns, API reference blocks and verbatim imports are locked.
+- Plans, release notes, Nucleus facts, claim reviews and unit maps are built
+  over many calls (`add_*`, then `finish_*`).
+- The loop sizes each reply from the model's output limit and context window,
+  elides old tool results when the context fills, and stops a page that hits a
+  cap, a refusal or the output limit three times in a row; that page sends
+  nothing and the pass fails with the list of failed pages.
+- There is no CLI token budget: the repository's run and month budgets in
+  Gravity apply. `budget_exceeded` and `no_provider_key` halt the whole run,
+  which is finished as failed.
+
+Every pass report records which model, provider and instructions version it
+ran with.
 
 ## `.gravity.yaml`
 
@@ -382,10 +437,10 @@ Gravity does not fence pages per repository.
 | `gravity whoami` | Principal, organization, token kind, scopes, expiry, API URL, profile. |
 | `gravity org [list\|use <slug>]` | Your organizations and their profiles; switch the current one. |
 | `gravity setup` | The guided front door (see Quick start); `--yes`, `--product`, `--site`, `--no-structure`, `--no-run`, `--no-ci`. Never commits or pushes. |
-| `gravity show` | The manifest as a tree, a mapping table and a pass table, with flags, effective languages, estimates and CI; `--pass`. |
+| `gravity show` | The manifest as a tree, a mapping table and a pass table, with flags, effective languages, estimates, the model and output language of each AI pass, and CI; `--pass`, `--model`. |
 | `gravity validate` | Schema, local rules and the platform's checks, grouped with fixes; exits `1` on errors. |
 | `gravity structure plan\|apply\|show` | Draft the structure (`--repo`, `--site`, `--write`), create what is missing (`--dry-run`), print the live tree (`--site`). |
-| `gravity run` | Dry run (`--dry-run`) or real run; `--pass`, `--yes`, `--send <runId>`, `--allow-dirty`, `--note`, `--lease-timeout`; in CI also `--trigger`, `--branch`, `--from`, `--to`, `--parallel`, `--no-comment`, `--annotate`, `--strict`. |
+| `gravity run` | Dry run (`--dry-run`) or real run; `--pass`, `--yes`, `--send <runId>`, `--allow-dirty`, `--note`, `--lease-timeout`, `--model`, `--debug`; in CI also `--trigger`, `--branch`, `--from`, `--to`, `--parallel`, `--no-comment`, `--annotate`, `--strict`. |
 | `gravity review [runId\|latest]` | Open a run's change request (prints the link without a terminal or with `--json`). |
 | `gravity runs [--watch]` | Recent runs; `runs show <id>` per-pass state, `runs cancel <id>`. |
 | `gravity approve [site/space]... [--all]` | List the spaces waiting for a grant and why, grant them (user token). |
@@ -409,6 +464,15 @@ approval links in the app; `runs` reads recent runs from `status`; a real run
 whose local manifest snapshot is refused runs with the passes stored from the
 authoritative branch, with a warning. `structure apply` and `runs cancel` say
 the server cannot do it yet and exit `2`.
+
+### Servers older than 1.2
+
+gravity 1.2 takes every AI instruction from the server's instructions bundle
+(`GET /api/llm/v1/instructions`). Against a server without it, a run whose
+passes call a model fails before any pass starts with "this Gravity server is
+too old for gravity 1.2 (no instructions bundle); upgrade the server or use
+gravity 1.1" (`server_too_old`). Runs without AI passes (verbatim imports,
+the API reference without prose) work as before.
 
 ### Upgrading CI files from 1.0.0-1.0.2
 

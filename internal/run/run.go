@@ -70,6 +70,8 @@ type Options struct {
 	ConnectContext string
 	NoSnapshot     bool
 	Debug          bool
+	Model          string
+	MaxOutput      int
 }
 
 // Env carries the collaborators of a run.
@@ -101,16 +103,18 @@ type LeaseWait struct {
 
 // PlannedPass is one pass of the plan view shown before a run starts.
 type PlannedPass struct {
-	Name     string        `json:"name"`
-	Kind     string        `json:"kind"`
-	Target   string        `json:"target"`
-	Run      bool          `json:"run"`
-	Skip     string        `json:"skip,omitempty"`
-	Commits  int           `json:"commits"`
-	AI       bool          `json:"ai"`
-	Estimate *api.Estimate `json:"estimate,omitempty"`
-	Grant    string        `json:"grant,omitempty"`
-	Why      string        `json:"approvalWhy,omitempty"`
+	Name     string         `json:"name"`
+	Kind     string         `json:"kind"`
+	Target   string         `json:"target"`
+	Run      bool           `json:"run"`
+	Skip     string         `json:"skip,omitempty"`
+	Commits  int            `json:"commits"`
+	AI       bool           `json:"ai"`
+	Estimate *api.Estimate  `json:"estimate,omitempty"`
+	Grant    string         `json:"grant,omitempty"`
+	Why      string         `json:"approvalWhy,omitempty"`
+	Model    *api.PlanModel `json:"model,omitempty"`
+	Language *api.Language  `json:"language,omitempty"`
 }
 
 // PlanView is what a run is about to do.
@@ -152,6 +156,7 @@ type PassResult struct {
 	Grant      string           `json:"grant,omitempty"`
 	Why        string           `json:"approvalWhy,omitempty"`
 	Missing    []string         `json:"missingScopes,omitempty"`
+	Generation *api.Generation  `json:"generation,omitempty"`
 }
 
 // Result is the outcome of a run.
@@ -393,6 +398,9 @@ func Execute(ctx context.Context, env *Env, opts Options) (*Result, error) {
 			return res, err
 		}
 		res.Range, res.Commits, res.HeadSHA = prep.runRange, prep.commits, prep.headSHA
+		if err := checkModels(prep); err != nil {
+			return res, err
+		}
 		res.Handoffs = expectedHandoffs(p, env.Info, Roles(env.Manifest), prep)
 		decisions := make([]plan.Decision, 0, len(prep.passes))
 		for _, pp := range prep.passes {
@@ -506,9 +514,57 @@ func planView(opts Options, prep *prepared, snapshot bool) PlanView {
 		if pp.pass.Estimate != nil {
 			item.AI = pp.pass.Estimate.AI
 		}
+		if passes.UsesModel(pp.pass) {
+			item.Model, item.Language = pp.pass.Model, pp.pass.Language
+		}
 		v.Passes = append(v.Passes, item)
 	}
 	return v
+}
+
+// UnavailableModel is a pass that would run on a model that cannot run.
+type UnavailableModel struct {
+	Pass   string `json:"pass"`
+	Model  string `json:"model"`
+	Reason string `json:"reason"`
+}
+
+// ModelUnavailableError stops a run before it starts because a pass's model cannot run.
+type ModelUnavailableError struct {
+	Passes []UnavailableModel
+}
+
+var modelReasons = map[string]string{
+	api.ModelReasonNotEnabled:         "is not enabled in Gravity's AI settings",
+	api.ModelReasonNoKey:              "has no provider key in Gravity",
+	api.ModelReasonCatalogUnavailable: "cannot be checked because the model catalog is unreachable",
+}
+
+func (e *ModelUnavailableError) Error() string {
+	parts := make([]string, 0, len(e.Passes))
+	for _, p := range e.Passes {
+		why, ok := modelReasons[p.Reason]
+		if !ok {
+			why = "cannot run (" + firstOf(p.Reason, "unavailable") + ")"
+		}
+		parts = append(parts, fmt.Sprintf("pass %s: model %s %s", p.Pass, firstOf(p.Model, "(default)"), why))
+	}
+	return "the run cannot start: " + strings.Join(parts, "; ") + "; choose another model with --model, or fix the model in Gravity's AI settings"
+}
+
+func checkModels(prep *prepared) error {
+	var out []UnavailableModel
+	for _, pp := range prep.passes {
+		m := pp.pass.Model
+		if !pp.decision.Run || m == nil || m.Unavailable == nil || !passes.UsesModel(pp.pass) {
+			continue
+		}
+		out = append(out, UnavailableModel{Pass: pp.pass.Name, Model: firstOf(m.Label, m.ID), Reason: m.Unavailable.Reason})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return &ModelUnavailableError{Passes: out}
 }
 
 func grantOf(p api.PlanPass, skip string) (string, string) {
@@ -544,7 +600,7 @@ func leaseHolder(err error) *api.LeaseHolder {
 }
 
 func fetchPlan(ctx context.Context, env *Env, opts Options, snapshot bool) (*api.Plan, error) {
-	q := api.PlanQuery{Repo: opts.RepoParam, Trigger: opts.Trigger, Branch: opts.Branch, Passes: opts.Passes, Mode: opts.Mode, Stats: opts.Stats}
+	q := api.PlanQuery{Repo: opts.RepoParam, Trigger: opts.Trigger, Branch: opts.Branch, Passes: opts.Passes, Mode: opts.Mode, Stats: opts.Stats, Model: opts.Model}
 	switch opts.Trigger {
 	case config.TriggerPR:
 		if opts.PR != nil && opts.PR.TargetBranch != "" {

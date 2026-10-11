@@ -8,6 +8,7 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/passes"
 	engine "github.com/Grupo-Impulso-Digital/gravity-cli/internal/run"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/ui"
 )
@@ -27,21 +28,23 @@ type showRepo struct {
 }
 
 type showPass struct {
-	Name               string        `json:"name"`
-	Kind               string        `json:"kind"`
-	Target             string        `json:"target"`
-	TargetStatus       string        `json:"targetStatus,omitempty"`
-	Triggers           []string      `json:"triggers"`
-	Branches           []string      `json:"branches"`
-	Audiences          []string      `json:"audiences"`
-	Languages          []string      `json:"languages"`
-	EffectiveLanguages []string      `json:"effectiveLanguages"`
-	I18n               string        `json:"i18n,omitempty"`
-	AI                 bool          `json:"ai"`
-	Enabled            bool          `json:"enabled"`
-	Estimate           *api.Estimate `json:"estimate"`
-	Grant              string        `json:"grant,omitempty"`
-	ApprovalWhy        string        `json:"approvalWhy,omitempty"`
+	Name               string         `json:"name"`
+	Kind               string         `json:"kind"`
+	Target             string         `json:"target"`
+	TargetStatus       string         `json:"targetStatus,omitempty"`
+	Triggers           []string       `json:"triggers"`
+	Branches           []string       `json:"branches"`
+	Audiences          []string       `json:"audiences"`
+	Languages          []string       `json:"languages"`
+	EffectiveLanguages []string       `json:"effectiveLanguages"`
+	I18n               string         `json:"i18n,omitempty"`
+	AI                 bool           `json:"ai"`
+	Enabled            bool           `json:"enabled"`
+	Estimate           *api.Estimate  `json:"estimate"`
+	Grant              string         `json:"grant,omitempty"`
+	ApprovalWhy        string         `json:"approvalWhy,omitempty"`
+	Model              *api.PlanModel `json:"model,omitempty"`
+	Language           *api.Language  `json:"language,omitempty"`
 }
 
 type ciFileState struct {
@@ -74,14 +77,15 @@ type showData struct {
 
 func newShowCmd(a *app) *cobra.Command {
 	var only []string
+	var modelID string
 	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show what .gravity.yaml declares: structure, verbatim mapping, passes, i18n and CI",
 		Long: "A static view of the local manifest: the structure tree, which repository file becomes which page, every pass with its triggers, audiences and effective languages, and the CI status.\n" +
-			"Signed in, it also marks what already exists in Gravity, the cost estimate of each pass and the languages that will really be produced.",
+			"Signed in, it also marks what already exists in Gravity, the cost estimate of each pass, the languages that will really be produced, and the model, quality label and output language each AI pass would run with (--model previews another model).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			m, err := a.collect(cmd.Context(), modelOptions{server: true, plan: true})
+			m, err := a.collect(cmd.Context(), modelOptions{server: true, plan: true, model: strings.TrimSpace(modelID)})
 			if err != nil {
 				return err
 			}
@@ -95,6 +99,7 @@ func newShowCmd(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringSliceVar(&only, "pass", nil, "show only these passes")
+	cmd.Flags().StringVar(&modelID, "model", "", "show the AI passes as they would run on this model")
 	return cmd
 }
 
@@ -165,6 +170,9 @@ func (a *app) showData(m *model, only []string) showData {
 			sp.Estimate = pp.Estimate
 			if pp.Target.Status == api.TargetUnapproved {
 				sp.Grant, sp.ApprovalWhy = pp.Target.GrantKey(), api.ApprovalWhy(pp.Kind, pp.Target.Reasons)
+			}
+			if passes.UsesModel(pp) {
+				sp.Model, sp.Language = pp.Model, pp.Language
 			}
 		}
 		d.Passes = append(d.Passes, sp)
@@ -416,6 +424,21 @@ func renderPasses(p *ui.Printer, list []showPass) {
 				why = " (" + sp.ApprovalWhy + ")"
 			}
 			p.Note("  ", ui.MarkWarn, "%s needs a grant for %s%s: gravity approve %s", sp.Name, sp.Grant, why, sp.Grant)
+		}
+		if m := sp.Model; m != nil {
+			mark := ui.MarkInfo
+			line := modelLine(m, sp.Language)
+			switch {
+			case m.Unavailable != nil:
+				mark = ui.MarkFail
+				line += " · cannot run: " + strings.ReplaceAll(firstNonEmpty(m.Unavailable.Reason, "unavailable"), "_", " ")
+			case m.Fallback != nil:
+				mark = ui.MarkWarn
+				line += " · replaces " + m.Fallback.From + " (" + m.Fallback.Reason + ")"
+			case m.Quality == api.QualityNotRecommended:
+				mark = ui.MarkWarn
+			}
+			p.Note("  ", mark, "%s model: %s", sp.Name, line)
 		}
 	}
 }

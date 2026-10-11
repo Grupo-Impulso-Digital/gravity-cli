@@ -241,7 +241,14 @@ to `debug.ReadBuildInfo`.
   (`modelFor`), the plan view through `engine.Env.Confirm`, lease waits through
   `Env.OnLease`, then the result report. Dry runs are recorded with
   `engine.NewRecording`/`SaveRecording` and sent with `engine.Replay`. CI runs
-  keep the 1.0 output (`printRun`) and never prompt.
+  keep the 1.0 output (`printRun`) and never prompt. `--model` reaches the
+  plan query, `POST /runs` and every bundle request (`Options.Model`); the
+  hidden `--max-output` only the bundle request (`Options.MaxOutput`);
+  `--debug` sets `Options.Debug`. A pass that will run and call a model whose
+  plan `model.unavailable` is set stops the run before the plan view
+  (`engine.ModelUnavailableError`, `model_unavailable`). The plan view
+  (`renderPlanView`) and `show` print one model line per AI pass;
+  `not_recommended` and fallbacks are warnings.
 - **Manifest** (`internal/config`): YAML is decoded to a generic tree, checked
   for tokens, validated by friendly Go rules and the embedded JSON
   Schema (byte-identical to the spec's, pinned by sha256 in
@@ -325,7 +332,13 @@ to `debug.ReadBuildInfo`.
   partial. Kickoffs are tagged data; Go owns no instruction text.
 - **Bundles are fetched at launch**: `run` fetches every model pass's bundle
   right after the run starts and before ingest, and fails the run on any
-  error; `api.HaltsRun` errors halt the run (`run.ErrHalted`).
+  error; `api.HaltsRun` errors halt the run (`run.ErrHalted`). Pass results,
+  pass reports and recordings carry `generation`; recordings also keep
+  `usage` (turns, input and output tokens), and `--send` forwards
+  `generation`.
+- **`show` renders models from the plan**, not from the platform's
+  `passes.render`: that procedure is tRPC only and needs a run pass, and the
+  CLI talks REST.
 - **Pages are written through a draft** (`agent.Draft`): write phases seed it
   from the page, edit it with the draft tools and map the diff to one change
   at `submit_page`, which refuses error findings of the deterministic checks.
