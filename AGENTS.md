@@ -211,8 +211,12 @@ to `debug.ReadBuildInfo`.
   retried once without it.
 - **Retries** (`internal/api`): `429` and `5xx` get up to three attempts with
   exponential backoff from 1 s, honoring `Retry-After`; network errors are
-  retried for GET only. `lease_lost` and `run_not_running` stop a run without a
-  finish call (`api.StopsRun`).
+  retried for GET and model calls only. Calls have a 120 s deadline; model
+  calls get 15 min per attempt and retry `429`, `5xx` and network errors until
+  30 min in total (`LLMTimeout`, `LLMRetryCap`). `lease_lost` and
+  `run_not_running` stop a run without a finish call (`api.StopsRun`);
+  `budget_exceeded` and `no_provider_key` halt it, then finish it as failed
+  (`api.HaltsRun`).
 - **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
   all human output on stderr. With `CI=true` or without a terminal, output is
   plain ASCII and nothing prompts. There is no global `--ci` flag in 1.x

@@ -204,8 +204,15 @@ func TestNetworkErrorRetriesGetsAndModelCalls(t *testing.T) {
 		t.Fatalf("POST: err=%v sleeps=%v", err, rec.d)
 	}
 	rec.d = nil
-	if _, err := c.Messages(context.Background(), api.MessagesRequest{}); err == nil || len(rec.d) != 2 {
+	if _, err := c.Messages(context.Background(), api.MessagesRequest{}); err == nil || len(rec.d) <= 2 {
 		t.Fatalf("messages: err=%v sleeps=%v", err, rec.d)
+	}
+	var waited time.Duration
+	for _, d := range rec.d {
+		waited += d
+	}
+	if waited >= api.DefaultLLMRetryCap {
+		t.Fatalf("messages waited %s", waited)
 	}
 }
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.2.0 — Unreleased
+
+### Added
+
+- API client for the harness v2 contract: the `gravity.instructions/1`
+  bundle (`GET /api/llm/v1/instructions`, with `model` and `maxOutput`),
+  checked for its schema and tool contract majors; an older server fails with
+  "this Gravity server is too old for gravity 1.2 (no instructions bundle);
+  upgrade the server or use gravity 1.1".
+- Plans and run starts carry a requested `model`; plan passes report their
+  resolved `model` (label, quality, limits, fallback, unavailable reason) and
+  output `language`. Pass reports can carry `generation` (instructions
+  version, model, provider).
+- Model calls can send `system` as cached text blocks, cache breakpoints on
+  message parts, `context.instructionsVersion` and `context.phase`, and read
+  cache token usage and the `x-gravity-model`, `x-gravity-provider` and
+  `x-gravity-fallback` headers.
+- Error codes `model_unavailable` (with its reason), `model_conflict`,
+  `bundle_required`, `context_too_large` and `provider_bad_request`, with
+  hints; object-shaped error `details` are decoded. `budget_exceeded` and
+  `no_provider_key` are run-halting (`api.HaltsRun`).
+
+### Changed
+
+- Model calls get a 15 min deadline per attempt (other calls keep 120 s) and
+  retry `429`, `5xx` and network errors, honoring `Retry-After`, for up to
+  30 min in total instead of three attempts.
+
 ## v1.1.1 — Unreleased
 
 ### Fixed

@@ -589,7 +589,7 @@ func TestRunner_ForcedToolChoiceRejectedUpstreamFallsBack(t *testing.T) {
 	}))
 	defer srv.Close()
 	client := api.New(srv.URL, "test-token")
-	client.Retry = api.RetryPolicy{Attempts: 1}
+	client.LLMRetryCap = time.Millisecond
 	runner := &agent.Runner{Client: client, MaxIterations: 1, System: "base", Tools: []agent.Tool{agent.ReportFindingsTool()}}
 	res, err := runner.Run(context.Background(), "go")
 	if err != nil || res.TerminalTool != agent.ToolReportFindings || len(reqs) != 2 {

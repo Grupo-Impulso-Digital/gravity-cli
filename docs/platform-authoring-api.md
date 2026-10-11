@@ -32,12 +32,18 @@ command is cobra's usage error.
   version also travels as `cli.version` on connect (what `status` shows as the
   last CLI) and on `POST /runs`. Release builds are stamped by GoReleaser; an
   unstamped build reports `dev+<commit>`.
-- **Retries.** A `429` or `5xx` is tried up to three times in all, waiting
+- **Retries and deadlines.** A `429` or `5xx` is tried up to three times in all, waiting
   `Retry-After` (or the envelope's `retryAfter`) when given, else 1 s doubling,
   capped at 60 s. A network error is retried for `GET` and for model calls (`POST /api/llm/v1/messages`); other writes fail on the first one.
+  Every call has a 120 s deadline except model calls: each attempt of a model
+  call may take 15 min (`api.DefaultLLMTimeout`), and its `429`, `5xx` and
+  network errors are retried, honoring `Retry-After`, until the next wait would
+  take the call past 30 min in total (`api.DefaultLLMRetryCap`).
 - **Error envelope.** A non-2xx body is
   `{"error":{"code","message","details":[{path,code,message}],"module","retryAfter","holder"}}`,
-  decoded into `*api.APIError`. A body that is not the envelope (an HTML gateway
+  decoded into `*api.APIError`. `details` may instead be an object (the model
+  errors send `{reason, param, requested}`); it is kept in `APIError.Fields`
+  and read with `Reason()`, `Param()` and `Requested()`. A body that is not the envelope (an HTML gateway
   page, plain text) is summarized to its status and page title or first line.
   `errors.Is` matches the sentinels `ErrLeaseLost`, `ErrRunNotRunning`,
   `ErrLeaseHeld`, `ErrPlanStale`, `ErrNotConnected` (by envelope code) and
@@ -101,6 +107,7 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | `GET` | `/api/v1/content/resolve`, `/api/v1/content/pages/{pageId}/provenance` | `explain` |
 | `POST` | `/api/v1/nucleus/recall`, `/api/v1/nucleus/memories` | `nucleus` passes, doc tools |
 | `POST` | `/api/llm/v1/messages` | every AI pass |
+| `GET` | `/api/llm/v1/instructions?runPassId=&model=&maxOutput=` | the instructions bundle of an AI run pass (`api.Client.InstructionsBundle`) |
 | `GET` | `/api/llm/v1/prompts/{name}` | every AI pass (hosted prompt, with a baked fallback) |
 
 ## Guided runs (CLI 1.1)
@@ -164,7 +171,7 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
   The answer is the registered repository, the manifest outcome (`accepted`,
   `persisted`, `reason`, the authoritative branch, warnings), the effective
   passes, created targets and siblings.
-- `GET /repos/self/plan?trigger=&branch=&pass=&mode=&manifestHash=&repo=&stats=` returns
+- `GET /repos/self/plan?trigger=&branch=&pass=&mode=&manifestHash=&repo=&stats=&model=` returns
   the passes with `applies` and `skipReason`, targets, watermarks, instruction
   layers, the product inventory and the capabilities. Dry plans send the
   manifest hash so the branch's manifest is overlaid; so do write plans of
@@ -173,6 +180,10 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
   fetches the plan again with one `stats=<pass>:<commits>:<files>[:<bytes>]`
   parameter per pass, so the server can size the estimate (P5); bytes are the
   commit messages plus about 40 bytes per changed line of text files.
+  `model=` (from `--model`) asks the server to resolve that model for every AI
+  pass; each AI pass then carries `model {id, label, quality, limits,
+  fallback, unavailable?: {reason}}` and `language {code, name}`
+  (`Plan.UnavailableModels` lists the passes whose model cannot run).
 - `GET /repos/self/status?runs=N` feeds `gravity status`.
 
 ## A run
@@ -186,7 +197,8 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
    skip must advance a watermark.
 3. `POST /runs` carries the trigger, mode, origin, branch, head and base, the
    pull request or release, the CI context, the plan hash, the manifest hash
-   (dry runs, and write runs on servers that accept it) and one entry per pass with its range kind, base, the watermark it
+   (dry runs, and write runs on servers that accept it), the `model` asked
+   with `--model` (omitted otherwise) and one entry per pass with its range kind, base, the watermark it
    saw and its skip reason. `409 lease_held` is retried after its `retryAfter`
    (clamped to 5-60 s) until `--lease-timeout`, and every wait is announced with
    the holder (`GET /runs/{holder}` for its trigger, branch and start);
@@ -200,7 +212,8 @@ with Azure SSH remotes (`ssh.dev.azure.com/v3/…`) mapped to
    batches of 2,000 followed by a closing `entries` call. A complete ingest
    deactivates this repository's contributions it no longer lists.
 6. Each pass reports `running`, then `succeeded`, `skipped` or `failed` with its
-   report; writes go through `changes`, `verbatim`, `assets` and `hints`. Asset
+   report, plus `generation {instructionsVersion, model, provider}` when it ran
+   with an instructions bundle; writes go through `changes`, `verbatim`, `assets` and `hints`. Asset
    uploads name their pass run with `X-Gravity-Run-Pass-Id`. Dry runs record the
    would-be requests instead of sending them.
 7. `POST /runs/{id}/finish` returns the advanced watermarks and the bundle to
@@ -249,6 +262,39 @@ has no LLM key; the AI pass fails with that error. Hosted prompts come from
 baked into the binary, except a licence refusal, a run-stopping error
 (`lease_lost`, `run_not_running` or a `401`) or a cancelled context, which fail
 the pass.
+
+### Harness v2 surface (CLI 1.2)
+
+- `GET /api/llm/v1/instructions?runPassId=<id>[&model=<id>][&maxOutput=<n>]`
+  returns the `gravity.instructions/1` bundle (`api.InstructionsBundle`):
+  `version`, `toolContract`, `model {provider, id, label, requested,
+  fallback, limits {maxOutputTokens, contextWindow, known}, features
+  {forcedToolChoice}, quality, qualityNote}`, `language`, `audiences`,
+  `harness {maxTurns, maxToolCalls, stepTokens, maxContinueNudges}`, `blocks`,
+  `checks`, `phases`, `rendered.system[<phase>]`, `tools` and `warnings`. A
+  `404` without an envelope code (or a `405`), or a schema whose major is not
+  `1`, is `api.ErrServerTooOld`: "this Gravity server is too old for gravity
+  1.2 (no instructions bundle); upgrade the server or use gravity 1.1". A tool
+  contract whose major is not `gravity.tools/1` is `api.ErrToolContract`. A
+  `404 not_found` is a missing run pass.
+- A v2 model call sends `context.instructionsVersion` and `context.phase`,
+  the top-level `model`, `system` as text blocks (`MessagesRequest.SystemBlocks`,
+  `api.CachedSystem` marks it `cache_control: {type: "ephemeral"}`) and one
+  cache breakpoint on the last content part of the last message
+  (`api.WithCacheBreakpoint`). Without `SystemBlocks`, `system` stays a string.
+- Responses carry `usage.cache_read_input_tokens` and
+  `usage.cache_creation_input_tokens` (`Usage.PromptTokens` sums them with
+  `input_tokens`) and the headers `x-gravity-model`, `x-gravity-provider` and
+  `x-gravity-fallback: 0|1` (`MessagesResponse.Attribution`). Stop reasons add
+  `max_tokens` and `refusal`.
+- Error codes: `409 model_unavailable` (`details.reason`: `not_enabled`,
+  `no_key` or `catalog_unavailable`; `details.requested`), `409
+  model_conflict`, `409 bundle_required`, `413 context_too_large`, `400
+  provider_bad_request` (`details.param`), `429 rate_limited`, `402
+  budget_exceeded` and `402 no_provider_key`. `api.HaltsRun` is true for
+  `budget_exceeded` and `no_provider_key`: the run halts and is finished as
+  failed. `api.StopsRun` stays reserved for errors where the server already
+  ended the run.
 
 ## Nucleus
 

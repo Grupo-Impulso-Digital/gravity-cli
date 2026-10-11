@@ -75,6 +75,7 @@ type StartRunRequest struct {
 	PlanHash     string         `json:"planHash"`
 	ManifestHash *string        `json:"manifestHash"`
 	Passes       []RunPassStart `json:"passes"`
+	Model        string         `json:"model,omitempty"`
 }
 
 // PassRange is the resolved range of a pass run.
@@ -300,12 +301,20 @@ type PassReport struct {
 	DurationMs      int64     `json:"durationMs,omitempty"`
 }
 
+// Generation names the instructions bundle and model a pass ran with.
+type Generation struct {
+	InstructionsVersion string `json:"instructionsVersion"`
+	Model               string `json:"model"`
+	Provider            string `json:"provider"`
+}
+
 // PassReportRequest is the body of POST /api/v1/runs/{runId}/passes/{runPassId}.
 type PassReportRequest struct {
 	Status     string      `json:"status"`
 	SkipReason *string     `json:"skipReason"`
 	Error      *string     `json:"error"`
 	Report     *PassReport `json:"report,omitempty"`
+	Generation *Generation `json:"generation,omitempty"`
 }
 
 // PassRunResult is the passRun section of a pass report response.

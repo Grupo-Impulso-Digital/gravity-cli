@@ -444,6 +444,23 @@ type PlanPass struct {
 	Hints         []PlanHint     `json:"hints,omitempty"`
 	DetachedPaths []string       `json:"detachedPaths,omitempty"`
 	Estimate      *Estimate      `json:"estimate,omitempty"`
+	Model         *PlanModel     `json:"model,omitempty"`
+	Language      *Language      `json:"language,omitempty"`
+}
+
+// PlanModel is the model a plan resolved for an AI pass.
+type PlanModel struct {
+	ID          string            `json:"id"`
+	Label       string            `json:"label"`
+	Quality     string            `json:"quality"`
+	Limits      ModelLimits       `json:"limits"`
+	Fallback    *ModelFallback    `json:"fallback,omitempty"`
+	Unavailable *ModelUnavailable `json:"unavailable,omitempty"`
+}
+
+// ModelUnavailable is why a requested or configured model cannot run.
+type ModelUnavailable struct {
+	Reason string `json:"reason"`
 }
 
 // PlanRepo is the repository section of a plan.
@@ -550,6 +567,20 @@ type Plan struct {
 	Warnings     []Warning     `json:"warnings"`
 }
 
+// UnavailableModels lists the passes whose model cannot run.
+func (p *Plan) UnavailableModels() []PlanPass {
+	if p == nil {
+		return nil
+	}
+	var out []PlanPass
+	for _, pp := range p.Passes {
+		if pp.Model != nil && pp.Model.Unavailable != nil {
+			out = append(out, pp)
+		}
+	}
+	return out
+}
+
 // PassByName returns the plan pass with that name.
 func (p *Plan) PassByName(name string) (*PlanPass, bool) {
 	if p == nil {
@@ -578,6 +609,7 @@ type PlanQuery struct {
 	Mode         string
 	ManifestHash string
 	Stats        []PassStats
+	Model        string
 }
 
 // PassStats is the size of one pass's change set, sent so the plan can estimate its cost.
@@ -605,6 +637,9 @@ func (q PlanQuery) values() url.Values {
 	}
 	if q.ManifestHash != "" {
 		v.Set("manifestHash", q.ManifestHash)
+	}
+	if q.Model != "" {
+		v.Set("model", q.Model)
 	}
 	for _, st := range q.Stats {
 		if st.Bytes > 0 {
