@@ -255,6 +255,7 @@ func Replay(ctx context.Context, env *Env, opts Options, rec *Recording) (*Resul
 
 func replayRequest(env *Env, opts Options, p *api.Plan, rec *Recording) api.StartRunRequest {
 	req := api.StartRunRequest{
+		Harness:   api.HarnessVersion,
 		ClientKey: env.key(), Trigger: opts.Trigger, Mode: api.ModeWrite, Origin: firstOf(opts.Origin, api.OriginLocal),
 		Branch: opts.Branch, HeadSHA: rec.HeadSHA, CI: opts.CI, Note: firstOf(opts.Note, "sent from dry run "+rec.RunID),
 		CLI: api.CLIInfo{Version: strings.TrimPrefix(env.Generator, "gravity-cli/")}, PlanHash: p.PlanHash,

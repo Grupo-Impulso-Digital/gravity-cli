@@ -230,6 +230,7 @@ func clip(s string, n int) string {
 
 func startRequest(env *Env, opts Options, p *api.Plan, prep *prepared) api.StartRunRequest {
 	req := api.StartRunRequest{
+		Harness:   api.HarnessVersion,
 		ClientKey: env.key(), Trigger: opts.Trigger, Mode: opts.Mode, Origin: firstOf(opts.Origin, api.OriginLocal),
 		Branch: opts.Branch, HeadSHA: prep.headSHA, PR: opts.PR, CI: opts.CI,
 		CLI: api.CLIInfo{Version: strings.TrimPrefix(env.Generator, "gravity-cli/")}, Note: opts.Note, PlanHash: p.PlanHash, Model: opts.Model,

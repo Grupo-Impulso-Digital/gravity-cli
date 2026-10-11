@@ -57,6 +57,9 @@ type RunPassStart struct {
 	Skip          string  `json:"skip,omitempty"`
 }
 
+// HarnessVersion is sent on run start so the server checks every AI pass's model before creating the run.
+const HarnessVersion = 2
+
 // StartRunRequest is the body of POST /api/v1/runs.
 type StartRunRequest struct {
 	ClientKey    string         `json:"clientKey"`
@@ -76,6 +79,7 @@ type StartRunRequest struct {
 	ManifestHash *string        `json:"manifestHash"`
 	Passes       []RunPassStart `json:"passes"`
 	Model        string         `json:"model,omitempty"`
+	Harness      int            `json:"harness,omitempty"`
 }
 
 // PassRange is the resolved range of a pass run.
