@@ -119,12 +119,16 @@ if [[ -z "$repo_id" ]]; then
   echo "registered repository $key"
 fi
 
+space_id=$(mcp spaces_list "$(jq -cn --arg id "$site_id" '{siteId: $id}')" | jq -r --arg s "$space_slug" '[.items[] | select(.slug == $s)][0].id')
+# A dry run of a repository with no stored passes reads its target only through a read grant.
+mcp repos_grantRead "$(jq -cn --arg r "$repo_id" --arg s "$space_id" '{repoId: $r, spaceId: $s}')" >/dev/null
+
 org_header=()
 if [[ -n "$org" ]]; then
   org_header=(-H "X-Gravity-Organization: $org")
 fi
 minted=$(curl -sS --fail-with-body -H "Authorization: Bearer $GRAVITY_TOKEN" -H "Content-Type: application/json" ${org_header[@]+"${org_header[@]}"} \
-  -d '{"name":"model-eval","expiresInDays":null}' "$api/api/v1/repos/$repo_id/tokens") || {
+  -d '{"name":"model-eval","expiresInDays":null,"scopes":["repo:connect","runs:write","content:read","inventory:write","content:propose","nucleus:read","llm"]}' "$api/api/v1/repos/$repo_id/tokens") || {
   echo "setup.sh: minting the repository token failed: $minted" >&2
   exit 1
 }
