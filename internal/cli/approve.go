@@ -73,6 +73,7 @@ func (a *app) approve(ctx context.Context, args []string, all bool) error {
 	if pending.Granted != nil {
 		d.Granted = pending.Granted
 	}
+	d.Pending = append(d.Pending, a.manifestPending(ctx, s, d.Pending)...)
 	repoName := firstNonEmpty(pending.Repo.Name, s.info.name)
 	p := a.ui
 	if len(args) == 0 && !all {
@@ -99,6 +100,9 @@ func (a *app) approve(ctx context.Context, args []string, all bool) error {
 	targets := map[string]bool{}
 	for _, pa := range d.Pending {
 		targets[pa.Target] = true
+		if all && pa.FromManifest {
+			req.Spaces = append(req.Spaces, pa.Target)
+		}
 	}
 	for _, arg := range args {
 		if strings.Contains(arg, "/") || targets[arg] {
@@ -131,6 +135,36 @@ func (a *app) approve(ctx context.Context, args []string, all bool) error {
 		return &ExitError{Code: CodeFindings, ErrCode: "approval_refused", Err: errors.New(msg)}
 	}
 	return a.ui.Result(d)
+}
+
+// manifestPending lists targets of local manifest passes that wait for a grant but that the server's
+// approval list cannot see yet, because those passes are not stored until a run sends them.
+func (a *app) manifestPending(ctx context.Context, s *session, known []api.PendingApproval) []api.PendingApproval {
+	if s.manifest == nil {
+		return nil
+	}
+	q := api.PlanQuery{Repo: repoParam(s.who, s.info), Trigger: config.TriggerManual, Branch: firstNonEmpty(s.info.branch, s.info.defaultBranch), Mode: api.ModeDry, ManifestHash: s.manifest.Hash}
+	plan, err := s.client.Plan(ctx, q)
+	if err != nil {
+		a.ui.Debugf("approve plan: %v", err)
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, pa := range known {
+		seen[pa.Target] = true
+	}
+	var out []api.PendingApproval
+	for _, pp := range plan.Passes {
+		key := pp.Target.GrantKey()
+		// A user's own plan marks the targets they may grant as approved for that plan only (source "auto").
+		autoOnly := pp.Target.Status == api.TargetOK && pp.Target.Approval != nil && pp.Target.Approval.Source == "auto"
+		if (pp.Target.Status != api.TargetUnapproved && !autoOnly) || key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, api.PendingApproval{Target: key, Passes: []string{pp.Name}, Reasons: pp.Target.Reasons, ApproveURL: pp.Target.ApproveURL, MayApprove: true, FromManifest: true})
+	}
+	return out
 }
 
 func (a *app) approveFallback(ctx context.Context, s *session) error {
