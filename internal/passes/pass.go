@@ -63,6 +63,7 @@ type Input struct {
 	Known        *Units
 	ProductParam string
 	Generator    string
+	DebugDir     string
 	Log          func(format string, args ...any)
 	Sleep        func(ctx context.Context, d time.Duration) error
 }

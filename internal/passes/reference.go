@@ -360,19 +360,27 @@ func summaryLine(c Counts, target string) string {
 	return line + " in " + target
 }
 
-func referencePage(ctx context.Context, in Input, out Sink, rep *Report, p *refPage, headKeys map[string]string, removed []string) (bool, error) {
+func apiBlocks(in Input, p *refPage) ([]api.ChangeBlock, []string, error) {
 	blocks := make([]api.ChangeBlock, 0, len(p.ops))
 	var pageUnits []string
 	for _, op := range p.ops {
 		b, err := docs.APIBlock(op, in.Generator)
 		if err != nil {
-			return false, err
+			return nil, nil, err
 		}
 		b.Audiences = in.Audiences()
 		b.Units = in.Known.Filter(b.Units)
 		pageUnits = append(pageUnits, b.Units...)
 		b.Rationale = &api.Rationale{Summary: "Generated from " + p.spec, SourceRefs: []string{p.spec + "#/paths/" + pointerEscape(op.Path) + "/" + strings.ToLower(op.Method)}}
 		blocks = append(blocks, b)
+	}
+	return blocks, pageUnits, nil
+}
+
+func referencePage(ctx context.Context, in Input, out Sink, rep *Report, p *refPage, headKeys map[string]string, removed []string) (bool, error) {
+	blocks, pageUnits, err := apiBlocks(in, p)
+	if err != nil {
+		return false, err
 	}
 	existing, err := in.Client.PageBySlug(ctx, in.SpaceID(), p.slug, api.PageQuery{State: "draft", Format: "json"})
 	if err != nil && !notFound(err) {
@@ -495,58 +503,47 @@ func referenceProse(ctx context.Context, in Input, out Sink, rep *Report, p *ref
 	if in.Harness == nil {
 		return errors.New("no AI harness for this pass")
 	}
-	var ops strings.Builder
-	for _, op := range p.ops {
-		fmt.Fprintf(&ops, "- %s %s %s\n", strings.ToUpper(op.Method), op.Path, op.Summary)
-	}
-	pageText := ""
-	existing, err := in.Client.PageBySlug(ctx, in.SpaceID(), p.slug, api.PageQuery{Format: "text"})
-	if err == nil {
-		pageText = firstOf(existing.Text, agent.ComposePageText(existing))
-	}
-	kickoff := passHeader(in) + fmt.Sprintf("\nPage %s (%s) documents these operations of %s:\n%s\n", p.slug, p.title, p.spec, ops.String())
-	if pageText != "" {
-		kickoff += "\nCurrent page:\n" + pageText
-	}
-	tools := append(agent.RepoTools(in.Repo, agent.Range{Base: in.Range.Base, Head: in.Range.Head, WorkingTree: in.Range.Head == ""}), agent.DocTools(in.Client, docScope(in))...)
-	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Phase: api.PhaseReferenceProse, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: tools, Submit: agent.SubmitPageChangesTool()})
+	computed, _, err := apiBlocks(in, p)
 	if err != nil {
 		return err
 	}
-	var blocks []api.ChangeBlock
-	for _, e := range changes.Upserts {
-		if strings.HasPrefix(e.Key, "api:") {
-			continue
-		}
-		blocks = append(blocks, aiBlock(in, e))
+	existing, err := in.Client.PageBySlug(ctx, in.SpaceID(), p.slug, api.PageQuery{State: "draft", Format: "json"})
+	if err != nil && !notFound(err) {
+		return fmt.Errorf("read page %s: %w", p.slug, err)
 	}
-	if len(blocks) == 0 {
+	if notFound(err) {
+		existing = nil
+	}
+	if existing != nil && existing.Page.Lock != nil {
+		return nil
+	}
+	file := "new-" + p.slug
+	if existing != nil {
+		file = existing.Page.ID
+	}
+	d, err := newDraft(ctx, in, draftSpec{mode: agent.DraftReferenceProse, slug: p.slug, keyPrefix: agent.KeyPrefixRef, file: file, page: existing, computed: computed})
+	if err != nil {
+		return err
+	}
+	kickoff := writerKickoff(in, d, kickoffData{mode: agent.DraftReferenceProse, title: p.title, slug: p.slug, collection: p.collection, notes: fmt.Sprintf("%d operations from %s", len(p.ops), p.spec)})
+	if err := runDraft(ctx, in, d, api.PhaseReferenceProse, kickoff); err != nil {
+		return err
+	}
+	summary := firstOf(d.Summary(), "Introduction and usage prose")
+	blocks, remove := draftBlocks(in, d, summary, nil)
+	if len(blocks) == 0 && len(remove) == 0 {
 		return nil
 	}
 	target := api.ChangeTarget{SpaceID: in.SpaceID(), Slug: p.slug}
 	if existing != nil {
 		target = api.ChangeTarget{PageID: existing.Page.ID}
 	}
-	c, err := out.Change(ctx, api.ChangeRequest{Op: api.OpUpdate, Target: target, Summary: firstOf(changes.Summary, "Introduction and usage prose"), Blocks: blocks, Languages: in.Languages()})
+	c, err := out.Change(ctx, api.ChangeRequest{Op: api.OpUpdate, Target: target, Summary: summary, Blocks: blocks, RemoveBlockKeys: remove, Units: in.Known.Filter(changeUnits(blocks)), Languages: in.Languages()})
 	if err != nil {
 		return err
 	}
 	rep.applied(c)
 	return nil
-}
-
-func aiBlock(in Input, e agent.BlockEdit) api.ChangeBlock {
-	content := agent.NormalizeContent(e.Type, e.Content)
-	auds := e.Audiences
-	if len(auds) == 0 {
-		auds = in.Audiences()
-	}
-	return api.ChangeBlock{
-		Key: e.Key, Type: e.Type, Ownership: api.OwnershipHybrid, Content: content,
-		SourceBinding: &api.SourceBinding{Kind: "ai", Ref: in.Pass.Name, Hash: "", Generator: in.Generator},
-		Audiences:     auds, After: e.After, Units: in.Known.Filter(e.Units),
-		Rationale: &api.Rationale{Summary: e.Rationale.Summary, Commits: e.Rationale.Commits, SourceRefs: e.Rationale.SourceRefs},
-	}
 }
 
 func docScope(in Input) agent.DocScope {

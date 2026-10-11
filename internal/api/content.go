@@ -90,6 +90,7 @@ type PageBlock struct {
 	Units         []string         `json:"units,omitempty"`
 	Provenance    *BlockProvenance `json:"provenance,omitempty"`
 	Text          string           `json:"text,omitempty"`
+	Clean         *bool            `json:"clean,omitempty"`
 }
 
 // PageContent is the response of GET /api/v1/content/pages/{pageId}.

@@ -73,72 +73,32 @@ func reachAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.P
 		return nil, nil
 	}
 	ref := api.PageRef{ID: r.PageID, Slug: firstOf(current.Page.Slug, r.Slug), Title: current.Page.Title}
-	units := map[string]bool{}
-	for _, u := range r.Units {
-		units[u] = true
+	d, err := newDraft(ctx, in, draftSpec{mode: agent.DraftReach, slug: ref.Slug, keyPrefix: agent.KeyPrefixGuide, file: r.PageID, page: current, reachUnits: r.Units})
+	if err != nil {
+		return nil, err
 	}
-	allowed := map[string][]string{}
-	var keys []string
-	for _, b := range current.Blocks {
-		if b.Key == "" || b.Ownership == api.OwnershipHuman {
-			continue
-		}
-		for _, u := range b.Units {
-			if units[u] {
-				allowed[b.Key] = b.Units
-				keys = append(keys, b.Key)
-				break
-			}
-		}
-	}
-	if len(keys) == 0 {
+	if len(d.EditableKeys()) == 0 {
 		rep.warn("%s: no block is bound to %s; nothing to update through unit reach", where, strings.Join(r.Units, ", "))
 		rep.Counts.Unchanged++
 		return nil, nil
 	}
-	text, err := agent.PageText(ctx, in.Client, r.PageID, "draft")
-	if err != nil {
-		return nil, fmt.Errorf("read page text: %w", err)
+	bound := map[string][]string{}
+	for _, b := range current.Blocks {
+		bound[b.Key] = b.Units
 	}
-	kickoff := passHeader(in) + fmt.Sprintf("\nAction: update page %s (%s) in %s/%s because %s.\n", ref.Slug, r.PageID, r.Site, r.Space, a.Reason) +
-		fmt.Sprintf("This page is outside the pass target. You may change it only because this repository %s %s, which this change touches. Change only these existing blocks: %s. Add no block and remove no other block. Whichever repository wrote a block last, it is yours to correct when the change makes it untrue.\n\n## Current page (human blocks are read-only)\n%s",
-			firstOf(r.Role, "contributes to"), strings.Join(r.Units, ", "), strings.Join(keys, ", "), text)
-	kickoff += "\n" + UnitDetails(in.Plan, r.Units) + "\n" + ChangeSummary(in.ChangeSet, in.Range)
-	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Phase: api.PhaseReachWrite, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPageChangesTool()})
-	if err != nil {
+	notes := fmt.Sprintf("%s (in %s/%s). This page is outside the pass target; this repository %s %s.", a.Reason, r.Site, r.Space, firstOf(r.Role, "contributes to"), strings.Join(r.Units, ", "))
+	kickoff := writerKickoff(in, d, kickoffData{mode: agent.DraftReach, title: current.Page.Title, slug: ref.Slug, collection: current.Page.CollectionPath, notes: notes, units: r.Units})
+	if err := runDraft(ctx, in, d, api.PhaseReachWrite, kickoff); err != nil {
 		return nil, fmt.Errorf("author: %w", err)
 	}
-	summary := firstOf(changes.Summary, a.Reason)
-	var blocks []api.ChangeBlock
-	for _, e := range changes.Upserts {
-		bound, ok := allowed[e.Key]
-		if !ok {
-			rep.warn("%s: block %s is not bound to %s; dropped", ref.Slug, e.Key, strings.Join(r.Units, ", "))
-			continue
-		}
-		b := aiBlock(in, e)
-		b.After = nil
-		b.Units = in.Known.Filter(append(append([]string{}, bound...), b.Units...))
-		withProvenance(in, &b, summary)
-		blocks = append(blocks, b)
-	}
-	var remove []string
-	for _, k := range changes.RemoveKeys {
-		if _, ok := allowed[k]; !ok {
-			rep.warn("%s: kept block %s, which is not bound to %s", ref.Slug, k, strings.Join(r.Units, ", "))
-			continue
-		}
-		remove = append(remove, k)
-	}
-	hints := make([]api.HintInput, 0, len(changes.Hints))
-	for _, h := range changes.Hints {
-		hints = append(hints, api.HintInput{Kind: firstOf(h.Kind, "contradiction"), UnitKey: h.UnitKey, PageID: r.PageID, BlockKey: h.BlockKey, Claim: h.Claim, Detail: h.Detail, ForRepos: h.ForRepos})
-	}
-	if len(blocks) == 0 && len(remove) == 0 {
+	summary := firstOf(d.Summary(), a.Reason)
+	blocks, _ := draftBlocks(in, d, summary, bound)
+	hints := draftHints(d, r.PageID)
+	if len(blocks) == 0 {
 		rep.Counts.Unchanged++
 		return hints, nil
 	}
-	req := api.ChangeRequest{Op: api.OpUpdate, Target: api.ChangeTarget{PageID: r.PageID}, Summary: summary, Blocks: blocks, RemoveBlockKeys: remove, Units: in.Known.Filter(r.Units), Languages: in.Languages()}
+	req := api.ChangeRequest{Op: api.OpUpdate, Target: api.ChangeTarget{PageID: r.PageID}, Summary: summary, Blocks: blocks, Units: in.Known.Filter(r.Units), Languages: in.Languages()}
 	c, err := out.Change(ctx, req)
 	if err != nil {
 		if reachSkippable(err) {

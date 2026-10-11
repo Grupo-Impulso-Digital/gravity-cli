@@ -235,10 +235,10 @@ func TestRunnerToolOrdering(t *testing.T) {
 		wantError map[string]string
 	}{
 		{name: "terminal listed first runs last", calls: []toolUse{submitFindings("t"), spin("a")}, wantTerm: true, wantRan: []string{"spin"}},
-		{name: "earlier failure blocks terminal", calls: []toolUse{toolUse{"b", "boom", `{}`}, submitFindings("t")}, wantRan: nil, wantError: map[string]string{"b": "exploded", "t": "was not run"}},
-		{name: "unknown tool blocks terminal", calls: []toolUse{toolUse{"u", "nope", `{}`}, submitFindings("t")}, wantError: map[string]string{"u": "unknown tool", "t": "was not run"}},
+		{name: "earlier failure blocks terminal", calls: []toolUse{{"b", "boom", `{}`}, submitFindings("t")}, wantRan: nil, wantError: map[string]string{"b": "exploded", "t": "was not run"}},
+		{name: "unknown tool blocks terminal", calls: []toolUse{{"u", "nope", `{}`}, submitFindings("t")}, wantError: map[string]string{"u": "unknown tool", "t": "was not run"}},
 		{name: "second terminal refused", calls: []toolUse{submitFindings("t1"), submitFindings("t2")}, wantError: map[string]string{"t2": "once per turn", "t1": "was not run"}},
-		{name: "invalid terminal input is a tool error", calls: []toolUse{toolUse{"t", agent.ToolReportFindings, `{"findings":"no"}`}}, wantError: map[string]string{"t": "invalid report_findings input"}},
+		{name: "invalid terminal input is a tool error", calls: []toolUse{{"t", agent.ToolReportFindings, `{"findings":"no"}`}}, wantError: map[string]string{"t": "invalid report_findings input"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

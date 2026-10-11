@@ -31,7 +31,7 @@ cmd/gravity              entrypoint: signal-aware context
        │    └─ internal/passes  Pass interface + guides, reference, verbatim, changelog, nucleus, check, capture;
        │         │              Ownership (product-wide units, roles, claim verdicts), unit reach, provenance
        │         ├─ internal/verbatim  Markdown/MDX -> native blocks, file -> page mapping, link rewriting
-       │         └─ internal/agent     one harness: bundle-driven loop (caps, forced terminal, elision), git + doc tools, submit tools
+       │         └─ internal/agent     one harness: bundle-driven loop (caps, forced terminal, elision), git + doc tools, page drafts + checks, submit tools
        ├─ internal/report     doc-impact comment and run summary; comment upsert on GitHub, GitLab, Bitbucket, Azure;
        │                      GitHub/Azure annotations, GitLab Code Quality; page diffs
        ├─ internal/changeset  range resolution, ChangeSet, OpenAPI diff, symbols, unit mapping
@@ -319,6 +319,11 @@ to `debug.ReadBuildInfo`.
   the report goes to `gravity-report.md`. Jenkins and CircleCI only get the
   file. A comment is created only once a pull request has had impact; after
   that it is updated, down to "No documentation impact".
+- **Pages are written through a draft** (`agent.Draft`): write phases seed it
+  from the page, edit it with the draft tools and map the diff to one change
+  at `submit_page`, which refuses error findings of the deterministic checks.
+  Locks (human, non-authored types, `api`/`verbatim` bindings, person-edited
+  hybrid blocks, unbound blocks under unit reach) live in `lockReason`.
 - **Unit reach is update-only and block-bound**: guides change a page outside
   their target only through existing blocks bound to a touched unit this
   repository declares or implements; the server re-checks reach and a refusal

@@ -568,12 +568,9 @@ func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.
 		rep.impact(ref, api.OpDelete, a.Reason)
 		return nil, nil
 	}
-	var human map[string]bool
+	mode, file := agent.DraftCreate, "new-"+a.Slug
 	var current *api.PageContent
-	kickoff := passHeader(in)
-	if a.Action == agent.ActionCreate {
-		kickoff += fmt.Sprintf("\nAction: create page %q (slug %s, collection %s) because %s.\nWrite the complete page as upserts with keys guide:%s:<section-slug>[:n].\n", a.Title, a.Slug, strings.Join(a.CollectionPath, "/"), a.Reason, a.Slug)
-	} else {
+	if a.Action != agent.ActionCreate {
 		var err error
 		current, err = in.Client.Page(ctx, a.PageID, api.PageQuery{State: "draft", Format: "json"})
 		if err != nil {
@@ -582,64 +579,35 @@ func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.
 		if current.Page.Lock != nil {
 			return nil, fmt.Errorf("page is locked to %s", current.Page.Lock.Path)
 		}
-		human = map[string]bool{}
-		for _, b := range current.Blocks {
-			if b.Ownership == api.OwnershipHuman && b.Key != "" {
-				human[b.Key] = true
-			}
-		}
-		text, err := agent.PageText(ctx, in.Client, a.PageID, "draft")
-		if err != nil {
-			return nil, fmt.Errorf("read page text: %w", err)
-		}
-		verb := "update"
+		mode, file = agent.DraftUpdate, a.PageID
 		if a.Action == agent.ActionDeprecate {
-			verb = "deprecate"
+			mode = agent.DraftDeprecate
 		}
-		kickoff += fmt.Sprintf("\nAction: %s page %s (%s) because %s.\n", verb, a.Slug, a.PageID, a.Reason)
-		if a.Action == agent.ActionDeprecate {
-			kickoff += "The units behind this page were removed. Add a deprecation callout (type callout, variant warning) where the removed behavior is described; do not delete text.\n"
-		}
-		kickoff += "New keys follow guide:" + a.Slug + ":<section-slug>[:n].\n\n## Current page (human blocks are read-only)\n" + text
 	}
-	kickoff += "\n" + UnitDetails(in.Plan, a.Units) + "\n" + ChangeSummary(in.ChangeSet, in.Range)
-	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Phase: api.PhaseGuidesWrite, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPageChangesTool()})
+	d, err := newDraft(ctx, in, draftSpec{mode: mode, slug: a.Slug, keyPrefix: agent.KeyPrefixGuide, file: file, page: current, mustCover: a.MustCover})
 	if err != nil {
+		return nil, err
+	}
+	collection := a.CollectionPath
+	if current != nil {
+		collection = current.Page.CollectionPath
+	}
+	kickoff := writerKickoff(in, d, kickoffData{mode: mode, title: a.Title, slug: a.Slug, collection: collection, mustCover: a.MustCover, notes: a.Reason, units: a.Units})
+	if err := runDraft(ctx, in, d, api.PhaseGuidesWrite, kickoff); err != nil {
 		return nil, fmt.Errorf("author: %w", err)
 	}
-	var blocks []api.ChangeBlock
-	var units []string
-	for _, e := range changes.Upserts {
-		if human[e.Key] {
-			rep.warn("%s: kept human block %s", a.Slug, e.Key)
-			continue
-		}
-		b := aiBlock(in, e)
-		withProvenance(in, &b, firstOf(changes.Summary, a.Reason))
-		blocks = append(blocks, b)
-		units = append(units, b.Units...)
-	}
-	var remove []string
-	for _, k := range changes.RemoveKeys {
-		if human[k] {
-			rep.warn("%s: kept human block %s", a.Slug, k)
-			continue
-		}
-		remove = append(remove, k)
-	}
-	hints := make([]api.HintInput, 0, len(changes.Hints))
-	for _, h := range changes.Hints {
-		hints = append(hints, api.HintInput{Kind: firstOf(h.Kind, "contradiction"), UnitKey: h.UnitKey, PageID: a.PageID, BlockKey: h.BlockKey, Claim: h.Claim, Detail: h.Detail, ForRepos: h.ForRepos})
-	}
+	summary := firstOf(d.Summary(), a.Reason)
+	blocks, remove := draftBlocks(in, d, summary, nil)
+	hints := draftHints(d, a.PageID)
 	if len(blocks) == 0 && len(remove) == 0 {
 		rep.Counts.Unchanged++
 		return hints, nil
 	}
-	units = in.Known.Filter(append(append([]string{}, a.Units...), units...))
-	req := api.ChangeRequest{Summary: firstOf(changes.Summary, a.Reason), Blocks: blocks, RemoveBlockKeys: remove, Units: units, Languages: in.Languages()}
+	units := in.Known.Filter(append(append([]string{}, a.Units...), changeUnits(blocks)...))
+	req := api.ChangeRequest{Summary: summary, Blocks: blocks, RemoveBlockKeys: remove, Units: units, Languages: in.Languages()}
 	if a.Action == agent.ActionCreate {
 		req.Op = api.OpCreate
-		req.Title = firstOf(a.Title, changes.Title)
+		req.Title = a.Title
 		req.Target = api.ChangeTarget{SpaceID: in.SpaceID(), Slug: a.Slug, CollectionPath: createPath(in.CollectionPrefix(), a.CollectionPath)}
 	} else {
 		req.Op = api.OpUpdate

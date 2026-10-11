@@ -30,7 +30,6 @@ const (
 	elideAbovePercent  = 60
 	elideToPercent     = 40
 	bytesPerToken      = 3
-	toolDraftView      = "draft_view"
 	toolFinishUnits    = "finish_units"
 	truncatedText      = "(output truncated)"
 	noOutputText       = "(no output)"
@@ -289,7 +288,7 @@ func (c *conversation) elide(target int) int {
 			case api.PartToolUse:
 				calls[p.ID] = toolCall{name: p.Name, input: p.Input}
 			case api.PartToolResult:
-				if calls[p.ToolUseID].name == toolDraftView {
+				if calls[p.ToolUseID].name == ToolDraftView {
 					latestDraftView = p.ToolUseID
 				}
 			}

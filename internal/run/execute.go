@@ -267,8 +267,15 @@ func (s *runState) input(pp preparedPass, rp api.RunPass) passes.Input {
 		Pass: pp.pass, Plan: s.plan, Manifest: s.env.Manifest, Range: pp.rng, ChangeSet: pp.cs, Builder: s.prep.builder,
 		RunID: s.started.Run.ID, RunPassID: rp.RunPassID, Mode: s.opts.Mode, Trigger: s.opts.Trigger, Preview: s.opts.Preview, Note: s.opts.Note,
 		FailOn: s.opts.FailOn, Repo: s.env.Repo, Info: s.env.Info, Client: s.env.Client, Known: s.known, ProductParam: productParam(s.opts, s.plan),
-		Generator: s.env.Generator, Log: s.env.Log.Debugf, Sleep: s.env.Sleep,
+		Generator: s.env.Generator, DebugDir: s.debugDir(rp.RunPassID), Log: s.env.Log.Debugf, Sleep: s.env.Sleep,
 	}
+}
+
+func (s *runState) debugDir(runPassID string) string {
+	if !s.opts.Debug || s.env.Repo == nil || s.started == nil || runPassID == "" {
+		return ""
+	}
+	return DebugDir(s.env.Repo.Root, s.started.Run.ID, runPassID)
 }
 
 func productParam(opts Options, p *api.Plan) string {

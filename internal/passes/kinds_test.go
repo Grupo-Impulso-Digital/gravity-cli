@@ -58,7 +58,7 @@ func TestVerbatimImportsChangedFilesUploadsImagesAndProposesDeletions(t *testing
 	}
 }
 
-func guidesLLM(t *testing.T, plan agent.PagePlan, changes agent.PageChanges) func(api.MessagesRequest) api.MessagesResponse {
+func guidesLLM(t *testing.T, plan agent.PagePlan, writer ...api.MessagesResponse) func(api.MessagesRequest) api.MessagesResponse {
 	t.Helper()
 	return func(req api.MessagesRequest) api.MessagesResponse {
 		if req.Context == nil || req.Context.RunPassID != "ppr_1" {
@@ -67,8 +67,11 @@ func guidesLLM(t *testing.T, plan agent.PagePlan, changes agent.PageChanges) fun
 		switch lastTool(req) {
 		case agent.ToolSubmitPagePlan:
 			return submit(agent.ToolSubmitPagePlan, plan)
-		case agent.ToolSubmitPageChanges:
-			return submit(agent.ToolSubmitPageChanges, changes)
+		case agent.ToolSubmitPage:
+			if turn := assistantTurns(req); turn < len(writer) {
+				return writer[turn]
+			}
+			return submit(agent.ToolSubmitPage, map[string]any{"summary": "Documents the reason"})
 		}
 		t.Fatalf("unexpected tools %v", req.Tools)
 		return api.MessagesResponse{}
@@ -101,10 +104,12 @@ func TestGuidesAuthorsBlockEditsAndNeverTouchesHumanBlocks(t *testing.T) {
 			{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added in " + head[:7], Units: []string{"feature:refunds"}},
 			{Action: agent.ActionUpdate, PageID: "pg_lock", Slug: "locked", Reason: "nope"},
 		}},
-		agent.PageChanges{Summary: "Documents the reason", Upserts: []agent.BlockEdit{
-			{Key: "guide:refunds:reason", Type: "prose", Content: []byte(`{"text":"Pass a reason."}`), Rationale: agent.Rationale{Summary: "new field", Commits: []string{head}}},
-			{Key: "guide:refunds:human", Type: "prose", Content: []byte(`{"text":"overwrite"}`), Rationale: agent.Rationale{Summary: "x"}},
-		}, RemoveKeys: []string{"guide:refunds:human"}, Hints: []agent.HintDraft{{Kind: "contradiction", Claim: "Gateway retries 5 times", UnitKey: "feature:refunds", ForRepos: []string{"gateway", "github.com/acme/billing-api"}}}},
+		calls(
+			call(agent.ToolDraftAppend, map[string]any{"blocks": []any{map[string]any{"type": "prose", "text": "Pass a reason.", "rationale": map[string]any{"summary": "new field", "commits": []string{head}}}}}),
+			call(agent.ToolDraftReplace, map[string]any{"key": "guide:refunds:human", "block": map[string]any{"type": "prose", "text": "overwrite"}}),
+			call(agent.ToolDraftDelete, map[string]any{"keys": []string{"guide:refunds:human"}}),
+			call(agent.ToolRaiseHint, map[string]any{"kind": "contradiction", "claim": "Gateway retries 5 times", "unitKey": "feature:refunds", "detail": "the code says 3", "forRepos": []string{"gateway", "github.com/acme/billing-api"}}),
+		),
 	)
 	w := &writes{}
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite)
@@ -117,7 +122,7 @@ func TestGuidesAuthorsBlockEditsAndNeverTouchesHumanBlocks(t *testing.T) {
 		t.Fatalf("changes = %+v", w.changes)
 	}
 	c := w.changes[0]
-	if c.Op != api.OpUpdate || c.Target.PageID != "pg_1" || len(c.Blocks) != 1 || c.Blocks[0].Key != "guide:refunds:reason" || len(c.RemoveBlockKeys) != 0 {
+	if c.Op != api.OpUpdate || c.Target.PageID != "pg_1" || len(c.Blocks) != 1 || c.Blocks[0].Key != "guide:refunds:1" || *c.Blocks[0].After != "guide:refunds:human" || len(c.RemoveBlockKeys) != 0 || c.Title != "" {
 		t.Fatalf("change = %+v", c)
 	}
 	b := c.Blocks[0]
@@ -142,7 +147,7 @@ func TestGuidesAuthorsBlockEditsAndNeverTouchesHumanBlocks(t *testing.T) {
 
 func TestGuidesOnPullRequestsReportsImpactWithoutAuthoring(t *testing.T) {
 	r, fake, base, head := guidesFixture(t)
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}}, agent.PageChanges{})
+	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}})
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
 	in.Trigger = config.TriggerPR
 	rec := &passes.Recorder{}
@@ -485,9 +490,10 @@ func TestGuidesDropsHintsNobodyCanReceive(t *testing.T) {
 	r, fake, base, head := guidesFixture(t)
 	fake.llm = guidesLLM(t,
 		agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason", Units: []string{"feature:refunds"}}}},
-		agent.PageChanges{Summary: "Documents the reason", Upserts: []agent.BlockEdit{
-			{Key: "guide:refunds:steps", Type: "list", Content: []byte(`{"text":"Pass a reason.","variant":"unordered"}`), Rationale: agent.Rationale{Summary: "new field", Commits: []string{head}}},
-		}, Hints: []agent.HintDraft{{Kind: "contradiction", Claim: "Retries 5 times", UnitKey: "feature:refunds"}}},
+		calls(
+			call(agent.ToolDraftAppend, map[string]any{"blocks": []any{map[string]any{"type": "list", "text": "Pass a reason.", "variant": "unordered"}}}),
+			call(agent.ToolRaiseHint, map[string]any{"kind": "contradiction", "claim": "Retries 5 times", "unitKey": "feature:refunds", "detail": "x"}),
+		),
 	)
 	w := &writes{}
 	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))

@@ -11,7 +11,6 @@ import (
 func TestSubmitToolsAreTerminalAndNamed(t *testing.T) {
 	for name, tool := range map[string]agent.Tool{
 		agent.ToolSubmitPagePlan:     agent.SubmitPagePlanTool(),
-		agent.ToolSubmitPageChanges:  agent.SubmitPageChangesTool(),
 		agent.ToolSubmitReleaseNotes: agent.SubmitReleaseNotesTool(),
 		agent.ToolSubmitAtoms:        agent.SubmitAtomsTool(),
 		agent.ToolReportFindings:     agent.ReportFindingsTool(),
@@ -36,23 +35,6 @@ func TestValidatePagePlan(t *testing.T) {
 		err := agent.ValidatePagePlan(json.RawMessage(in))
 		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
 			t.Errorf("ValidatePagePlan(%s) = %v, want %q", in, err, want)
-		}
-	}
-}
-
-func TestValidatePageChanges(t *testing.T) {
-	ok := `{"summary":"s","upserts":[{"key":"guide:refunds:reasons","type":"prose","content":{"text":"x"},"rationale":{"summary":"added in a1b2c3d","commits":["a1b2c3d"]}}],"removeKeys":["guide:refunds:old"]}`
-	if err := agent.ValidatePageChanges(json.RawMessage(ok)); err != nil {
-		t.Fatal(err)
-	}
-	for in, want := range map[string]string{
-		`{"summary":"s","upserts":[{"key":"k","type":"api","content":{},"rationale":{"summary":"r"}}]}`:                                                                       "type",
-		`{"summary":"s","upserts":[{"key":"k","type":"prose","content":"x","rationale":{"summary":"r"}}]}`:                                                                    "content must be an object",
-		`{"summary":"s","upserts":[{"key":"k","type":"prose","content":{},"rationale":{}}]}`:                                                                                  "rationale.summary",
-		`{"summary":"s","upserts":[{"key":"k","type":"prose","content":{},"rationale":{"summary":"r"}},{"key":"k","type":"prose","content":{},"rationale":{"summary":"r"}}]}`: "twice",
-	} {
-		if err := agent.ValidatePageChanges(json.RawMessage(in)); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("ValidatePageChanges(%s) = %v, want %q", in, err, want)
 		}
 	}
 }
@@ -98,8 +80,9 @@ func TestNormalizeContent(t *testing.T) {
 	}{
 		{"list", `{"text":"a","variant":"unordered"}`, `{"text":"a","variant":"bulleted"}`},
 		{"list", `{"text":"a","variant":"Ordered"}`, `{"text":"a","variant":"numbered"}`},
-		{"list", `{"text":"a","variant":"checklist","checked":"yes"}`, `{"text":"a","variant":"task"}`},
-		{"list", `{"items":["a","b"]}`, `{"text":"a\nb","variant":"bulleted"}`},
+		{"list", `{"text":"a","variant":"checklist","checked":"yes"}`, `{"text":"a","variant":"bulleted"}`},
+		{"list", `{"text":"a","variant":"task","checked":true}`, `{"text":"a","variant":"bulleted"}`},
+		{"list", `{"items":["a","b"]}`, `{"items":["a","b"],"variant":"bulleted"}`},
 		{"list", `{"text":"a","variant":"weird"}`, `{"text":"a","variant":"bulleted"}`},
 		{"heading", `{"text":"T","level":"h4"}`, `{"level":3,"text":"T"}`},
 		{"heading", `{"text":"T","level":0}`, `{"level":1,"text":"T"}`},

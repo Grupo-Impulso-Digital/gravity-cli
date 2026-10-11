@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,7 +41,6 @@ func Decode(raw json.RawMessage, v any) error {
 // Terminal tool names.
 const (
 	ToolSubmitPagePlan     = "submit_page_plan"
-	ToolSubmitPageChanges  = "submit_page_changes"
 	ToolSubmitReleaseNotes = "submit_release_notes"
 	ToolSubmitAtoms        = "submit_atoms"
 	ToolReportFindings     = "report_findings"
@@ -93,13 +91,14 @@ type PagePlan struct {
 
 // PageAction is one planned page decision.
 type PageAction struct {
-	Action         string   `json:"action"`
-	PageID         string   `json:"pageId,omitempty"`
-	Slug           string   `json:"slug"`
-	Title          string   `json:"title,omitempty"`
-	CollectionPath []string `json:"collectionPath,omitempty"`
-	Reason         string   `json:"reason"`
-	Units          []string `json:"units,omitempty"`
+	Action         string      `json:"action"`
+	PageID         string      `json:"pageId,omitempty"`
+	Slug           string      `json:"slug"`
+	Title          string      `json:"title,omitempty"`
+	CollectionPath []string    `json:"collectionPath,omitempty"`
+	Reason         string      `json:"reason"`
+	Units          []string    `json:"units,omitempty"`
+	MustCover      []MustCover `json:"mustCover,omitempty"`
 }
 
 // SlugPattern is the shape of a page slug.
@@ -151,18 +150,7 @@ type Rationale struct {
 	SourceRefs []string `json:"sourceRefs,omitempty"`
 }
 
-// BlockEdit is one block the author adds or replaces.
-type BlockEdit struct {
-	Key       string          `json:"key"`
-	Type      string          `json:"type"`
-	Content   json.RawMessage `json:"content"`
-	After     *string         `json:"after,omitempty"`
-	Units     []string        `json:"units,omitempty"`
-	Audiences []string        `json:"audiences,omitempty"`
-	Rationale Rationale       `json:"rationale"`
-}
-
-// HintDraft is a cross-repository hint the author raises instead of editing.
+// HintDraft is a cross-repository hint the author raises with raise_hint instead of editing.
 type HintDraft struct {
 	Kind     string   `json:"kind"`
 	Claim    string   `json:"claim"`
@@ -172,90 +160,10 @@ type HintDraft struct {
 	ForRepos []string `json:"forRepos,omitempty"`
 }
 
-// PageChanges is the input of submit_page_changes.
-type PageChanges struct {
-	Title      string      `json:"title,omitempty"`
-	Summary    string      `json:"summary"`
-	Upserts    []BlockEdit `json:"upserts"`
-	RemoveKeys []string    `json:"removeKeys,omitempty"`
-	Hints      []HintDraft `json:"hints,omitempty"`
-}
-
-// AuthoredBlockTypes are the block types authors may write.
-var AuthoredBlockTypes = []string{"heading", "prose", "code", "list", "callout", "table", "quote"}
-
-// SubmitPageChangesTool ends an author phase.
-func SubmitPageChangesTool() Tool {
-	rationale := object([]string{"summary"}, map[string]any{
-		"summary":    map[string]any{"type": "string"},
-		"commits":    map[string]any{"type": "array", "items": stringItems, "description": "SHAs that justify the edit."},
-		"sourceRefs": map[string]any{"type": "array", "items": stringItems, "description": "Files (path or path:line) the edit is based on."},
-	})
-	block := object([]string{"key", "type", "content", "rationale"}, map[string]any{
-		"key":       map[string]any{"type": "string", "description": "Existing key to replace a block, or a new guide:<page-slug>:<section-slug>[:n] key."},
-		"type":      enum(AuthoredBlockTypes...),
-		"content":   map[string]any{"type": "object", "description": "heading {text, level: 1|2|3}; prose {text}; code {text, language}; list {text, variant: bulleted|numbered|task} (one item per block); callout {text, variant: info|tip|warning|danger}; table {rows: [[string]], header: boolean}; quote {text}."},
-		"after":     map[string]any{"type": "string", "description": "Key of the block a new block goes after; omit for the end of the page."},
-		"units":     map[string]any{"type": "array", "items": stringItems},
-		"audiences": map[string]any{"type": "array", "items": stringItems},
-		"rationale": rationale,
-	})
-	hint := object([]string{"kind", "claim"}, map[string]any{
-		"kind":     enum("contradiction", "impact"),
-		"claim":    map[string]any{"type": "string"},
-		"unitKey":  map[string]any{"type": "string"},
-		"blockKey": map[string]any{"type": "string"},
-		"detail":   map[string]any{"type": "string"},
-		"forRepos": map[string]any{"type": "array", "items": stringItems, "description": "Remote keys of the repositories that should look at it; empty = the unit's other contributors."},
-	})
-	return terminal(ToolSubmitPageChanges, "Submit the block-level edits of this page. Call exactly once.",
-		object([]string{"summary", "upserts"}, map[string]any{
-			"title":      map[string]any{"type": "string", "description": "Page title (new pages only)."},
-			"summary":    map[string]any{"type": "string", "description": "One sentence for reviewers: what changed on the page and why."},
-			"upserts":    map[string]any{"type": "array", "items": block},
-			"removeKeys": map[string]any{"type": "array", "items": stringItems},
-			"hints":      map[string]any{"type": "array", "items": hint},
-		}), ValidatePageChanges)
-}
-
-// ValidatePageChanges checks a submit_page_changes input.
-func ValidatePageChanges(raw json.RawMessage) error {
-	var in PageChanges
-	if err := Decode(raw, &in); err != nil {
-		return fmt.Errorf("upserts must be an array of block objects: %w", err)
-	}
-	allowed := map[string]bool{}
-	for _, t := range AuthoredBlockTypes {
-		allowed[t] = true
-	}
-	seen := map[string]bool{}
-	for i, b := range in.Upserts {
-		switch {
-		case strings.TrimSpace(b.Key) == "":
-			return fmt.Errorf("upserts[%d] needs a key", i)
-		case seen[b.Key]:
-			return fmt.Errorf("upserts[%d]: key %q appears twice", i, b.Key)
-		case !allowed[b.Type]:
-			return fmt.Errorf("upserts[%d] (%s): type %q must be one of %s", i, b.Key, b.Type, strings.Join(AuthoredBlockTypes, ", "))
-		case !isObject(b.Content):
-			return fmt.Errorf("upserts[%d] (%s): content must be an object", i, b.Key)
-		case strings.TrimSpace(b.Rationale.Summary) == "":
-			return fmt.Errorf("upserts[%d] (%s): rationale.summary is required; cite the commits behind the edit", i, b.Key)
-		}
-		seen[b.Key] = true
-	}
-	return nil
-}
-
-func isObject(raw json.RawMessage) bool {
-	t := bytes.TrimSpace(raw)
-	return len(t) > 0 && t[0] == '{'
-}
-
 var listVariants = map[string]string{
 	"bulleted": "bulleted", "bullet": "bulleted", "bullets": "bulleted", "unordered": "bulleted", "ul": "bulleted", "disc": "bulleted", "dash": "bulleted",
 	"numbered": "numbered", "number": "numbered", "numbers": "numbered", "ordered": "numbered", "ol": "numbered", "decimal": "numbered",
-	"task": "task", "tasks": "task", "todo": "task", "checklist": "task", "checkbox": "task", "check": "task",
+	"task": "bulleted", "tasks": "bulleted", "todo": "bulleted", "checklist": "bulleted", "checkbox": "bulleted", "check": "bulleted",
 }
 
 // NormalizeContent maps common model variations of authored block content onto the shapes the platform accepts.
@@ -272,23 +180,7 @@ func NormalizeContent(blockType string, raw json.RawMessage) any {
 			variant = "bulleted"
 		}
 		m["variant"] = variant
-		if items, ok := m["items"].([]any); ok {
-			if text, _ := m["text"].(string); strings.TrimSpace(text) == "" {
-				lines := make([]string, 0, len(items))
-				for _, it := range items {
-					if s, ok := it.(string); ok {
-						lines = append(lines, s)
-					}
-				}
-				m["text"] = strings.Join(lines, "\n")
-			}
-			delete(m, "items")
-		}
-		if c, ok := m["checked"]; ok {
-			if _, isBool := c.(bool); !isBool {
-				delete(m, "checked")
-			}
-		}
+		delete(m, "checked")
 	case "heading":
 		level := 2
 		switch l := m["level"].(type) {

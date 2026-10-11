@@ -351,11 +351,18 @@ func TestMessagesUsageAndAttribution(t *testing.T) {
 		prompt   int
 		cacheHit int
 	}{
-		{"attributed", map[string]string{"x-gravity-model": "anthropic/claude-sonnet-4-6", "x-gravity-provider": "origin", "x-gravity-fallback": "1"},
+		{
+			"attributed",
+			map[string]string{"x-gravity-model": "anthropic/claude-sonnet-4-6", "x-gravity-provider": "origin", "x-gravity-fallback": "1"},
 			api.Attribution{Model: "anthropic/claude-sonnet-4-6", Provider: "origin", Fallback: true},
-			`{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":900,"cache_creation_input_tokens":100}`, 1010, 900},
-		{"no fallback", map[string]string{"x-gravity-model": "gpt-4o", "x-gravity-provider": "openai", "x-gravity-fallback": "0"},
-			api.Attribution{Model: "gpt-4o", Provider: "openai"}, `{"input_tokens":10,"output_tokens":5}`, 10, 0},
+			`{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":900,"cache_creation_input_tokens":100}`, 1010, 900,
+		},
+		{
+			"no fallback",
+			map[string]string{"x-gravity-model": "gpt-4o", "x-gravity-provider": "openai", "x-gravity-fallback": "0"},
+			api.Attribution{Model: "gpt-4o", Provider: "openai"},
+			`{"input_tokens":10,"output_tokens":5}`, 10, 0,
+		},
 		{"legacy server", nil, api.Attribution{}, `{"input_tokens":3,"output_tokens":1}`, 3, 0},
 	}
 	for _, tc := range cases {
@@ -408,7 +415,7 @@ func TestLLMRetriesUntilTotalCap(t *testing.T) {
 	}{
 		{"recovers after more than three attempts", 503, "", 30 * time.Minute, 5, 6, false, time.Second},
 		{"gives up at the cap", 503, "", 2 * time.Minute, 1000, 7, true, time.Second},
-		{"honours long retry-after", 429, "120", 30 * time.Minute, 2, 3, false, 120 * time.Second},
+		{"honors long retry-after", 429, "120", 30 * time.Minute, 2, 3, false, 120 * time.Second},
 		{"retry-after beyond the cap", 429, "600", 5 * time.Minute, 1000, 1, true, 0},
 		{"client errors are final", 413, "", 30 * time.Minute, 1000, 1, true, 0},
 	}

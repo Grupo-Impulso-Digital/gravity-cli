@@ -30,15 +30,37 @@
   after `413 context_too_large`, and handling of the `max_tokens`
   (`output_limit` after three in a row), `end_turn` (continue nudges, then
   `no_submit`) and `refusal` stop reasons.
+- Pages are written incrementally in a draft workspace: the write phases
+  (`guides.write`, `reach.write`, `reference.prose`) seed the draft from the
+  page (human, non-authored, `api`/`verbatim`-bound, person-edited hybrid
+  and, for unit reach, unbound blocks are locked), edit it with `draft_view`,
+  `draft_append`, `draft_replace`, `draft_delete`, `check_page` and
+  `raise_hint`, and end with `submit_page`, which maps the draft diff to one
+  change (upserts chained with `after`, `"^"` for the top, removed keys, new
+  keys `guide:<slug>:<n>` or `ref:<slug>:<n>`).
+- Deterministic page checks on new and changed blocks: wrong output language,
+  code or JSON in prose, markdown headings in text, planning voice, output
+  markers and uncovered `mustCover` tokens are errors `submit_page` refuses;
+  short new pages and duplicate adjacent blocks are warnings.
+- `read_file`, `git_diff` and `read_page` page through long content with
+  `offset` and `limit`; `read_page` also takes a `slug`.
+- `run.Options.Debug` keeps each page draft under `.gravity/runs/<runId>/<runPassId>/`.
 
 ### Changed
 
+- The doc tools `recall_nucleus` and `product_inventory` are now `recall` and
+  `inventory` (`gravity.tools/1`).
+- The writer kickoff carries data only and no longer inlines the current page.
+- List blocks hold one item: an `items` array is no longer joined into one
+  block, and the `task` variant becomes `bulleted`. Callout variants are
+  `info`, `success`, `warning` and `danger`.
 - Model calls get a 15 min deadline per attempt (other calls keep 120 s) and
   retry `429`, `5xx` and network errors, honoring `Retry-After`, for up to
   30 min in total instead of three attempts.
 
 ### Removed
 
+- The `submit_page_changes` tool: pages are built through the draft tools.
 - The prompts baked into the binary and the hosted prompt resolver
   (`GET /api/llm/v1/prompts/{name}`): the instructions bundle is the only
   instruction source.

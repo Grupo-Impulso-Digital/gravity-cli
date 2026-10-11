@@ -86,6 +86,21 @@ func RecordingPath(root, runID string) string {
 	return filepath.Join(root, filepath.FromSlash(RecordingDir), runID+".json")
 }
 
+// DebugDir is where --debug keeps a run pass's draft workspaces: .gravity/runs/<runId>/<runPassId>.
+func DebugDir(root, runID, runPassID string) string {
+	ensureIgnored(root)
+	return filepath.Join(root, filepath.FromSlash(RecordingDir), runID, runPassID)
+}
+
+func ensureIgnored(root string) {
+	ignore := filepath.Join(root, ".gravity", ".gitignore")
+	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
+		if os.MkdirAll(filepath.Dir(ignore), 0o755) == nil {
+			_ = os.WriteFile(ignore, []byte("*\n"), 0o644)
+		}
+	}
+}
+
 // SaveRecording writes the recording under the repository root and returns its path.
 func SaveRecording(root string, rec *Recording) (string, error) {
 	if rec.RunID == "" {
@@ -95,10 +110,7 @@ func SaveRecording(root string, rec *Recording) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", fmt.Errorf("create %s: %w", filepath.Dir(p), err)
 	}
-	ignore := filepath.Join(root, ".gravity", ".gitignore")
-	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
-		_ = os.WriteFile(ignore, []byte("*\n"), 0o644)
-	}
+	ensureIgnored(root)
 	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("encode recording: %w", err)

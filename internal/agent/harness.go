@@ -88,6 +88,11 @@ func (h *Harness) bundle(ctx context.Context) (*api.InstructionsBundle, error) {
 	return h.Bundle, nil
 }
 
+// LoadBundle returns the run pass's instructions bundle, fetching it on first use.
+func (h *Harness) LoadBundle(ctx context.Context) (*api.InstructionsBundle, error) {
+	return h.bundle(ctx)
+}
+
 func (h *Harness) describe(b *api.InstructionsBundle, tools []Tool) []Tool {
 	out := make([]Tool, len(tools))
 	for i, t := range tools {

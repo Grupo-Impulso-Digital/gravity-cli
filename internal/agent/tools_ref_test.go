@@ -128,3 +128,29 @@ func TestModelRefsCannotInjectGitOptions(t *testing.T) {
 		t.Errorf("a plain ref still works: %q, %v", got, err)
 	}
 }
+
+func TestReadFileAndGitDiffPageByLines(t *testing.T) {
+	repo := twoVersionRepo(t)
+	tools := RepoTools(repo, Range{Base: "v1", Head: "HEAD"})
+	byName := map[string]Tool{}
+	for _, tl := range tools {
+		byName[tl.Def.Name] = tl
+	}
+	cases := []struct {
+		tool, input, want string
+	}{
+		{"read_file", `{"path":"api.go"}`, "release two\n"},
+		{"read_file", `{"path":"api.go","ref":"v1","offset":1,"limit":1}`, "release one\n"},
+		{"git_diff", `{"limit":2}`, "[lines 1–2 of "},
+		{"git_diff", `{"offset":5}`, "+release two\n[lines 5–"},
+	}
+	for _, tc := range cases {
+		got, err := byName[tc.tool].Run(context.Background(), json.RawMessage(tc.input))
+		if err != nil || !strings.Contains(got, tc.want) {
+			t.Errorf("%s %s = %q, %v; want %q", tc.tool, tc.input, got, err, tc.want)
+		}
+	}
+	if _, err := byName["read_file"].Run(context.Background(), json.RawMessage(`{"path":"api.go","offset":3}`)); err == nil || !strings.Contains(err.Error(), "past the end of the file (1 lines)") {
+		t.Errorf("offset past the end = %v", err)
+	}
+}

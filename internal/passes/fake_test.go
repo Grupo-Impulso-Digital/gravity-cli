@@ -180,6 +180,28 @@ func submit(name string, input any) api.MessagesResponse {
 	}
 }
 
+func call(name string, input any) api.ContentPart {
+	data, _ := json.Marshal(input)
+	return api.ContentPart{Type: api.PartToolUse, Name: name, Input: data}
+}
+
+func calls(parts ...api.ContentPart) api.MessagesResponse {
+	for i := range parts {
+		parts[i].ID = fmt.Sprintf("tu_%d", i+1)
+	}
+	return api.MessagesResponse{StopReason: api.StopToolUse, Usage: api.Usage{InputTokens: 100, OutputTokens: 10}, Content: parts}
+}
+
+func assistantTurns(req api.MessagesRequest) int {
+	n := 0
+	for _, m := range req.Messages {
+		if m.Role == api.RoleAssistant {
+			n++
+		}
+	}
+	return n
+}
+
 func lastTool(req api.MessagesRequest) string {
 	for _, t := range req.Tools {
 		if strings.HasPrefix(t.Name, "submit_") || t.Name == agent.ToolReportFindings {

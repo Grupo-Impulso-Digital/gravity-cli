@@ -11,9 +11,10 @@ import (
 )
 
 type fakeDocs struct {
-	search api.SearchRequest
-	recall api.RecallRequest
-	inv    api.InventoryQuery
+	slugSpace string
+	search    api.SearchRequest
+	recall    api.RecallRequest
+	inv       api.InventoryQuery
 }
 
 func (f *fakeDocs) Page(_ context.Context, id string, q api.PageQuery) (*api.PageContent, error) {
@@ -24,6 +25,13 @@ func (f *fakeDocs) Page(_ context.Context, id string, q api.PageQuery) (*api.Pag
 			{Type: "prose", Ownership: "human", Position: 1, Content: json.RawMessage(`{"text":"Refunds take 5 days."}`)},
 		},
 	}, nil
+}
+
+func (f *fakeDocs) PageBySlug(ctx context.Context, spaceID, slug string, q api.PageQuery) (*api.PageContent, error) {
+	f.slugSpace = spaceID
+	pc, _ := f.Page(ctx, "pg_"+slug, q)
+	pc.Page.Slug = slug
+	return pc, nil
 }
 
 func (f *fakeDocs) Search(_ context.Context, req api.SearchRequest) ([]api.SearchHit, error) {
@@ -70,13 +78,13 @@ func TestDocTools(t *testing.T) {
 	if err != nil || !strings.Contains(out, "Webhooks") || len(d.search.SpaceIDs) != 1 || !d.search.IncludeDrafts {
 		t.Fatalf("search_docs = %q, %v, %+v", out, err, d.search)
 	}
-	out, err = tool(t, tools, "recall_nucleus").Run(ctx, json.RawMessage(`{"query":"retries"}`))
+	out, err = tool(t, tools, "recall").Run(ctx, json.RawMessage(`{"query":"retries"}`))
 	if err != nil || !strings.Contains(out, "repo github.com/acme/gateway") || d.recall.Namespace != "product:acme" || d.recall.IncludeShared == nil || !*d.recall.IncludeShared {
-		t.Fatalf("recall_nucleus = %q, %v, %+v", out, err, d.recall)
+		t.Fatalf("recall = %q, %v, %+v", out, err, d.recall)
 	}
-	out, err = tool(t, tools, "product_inventory").Run(ctx, json.RawMessage(`{"unit":"api:post:/v1/refunds"}`))
+	out, err = tool(t, tools, "inventory").Run(ctx, json.RawMessage(`{"unit":"api:post:/v1/refunds"}`))
 	if err != nil || !strings.Contains(out, "gateway declares: routes/billing.ts") || d.inv.Product != "acme" {
-		t.Fatalf("product_inventory = %q, %v", out, err)
+		t.Fatalf("inventory = %q, %v", out, err)
 	}
 	out, err = tool(t, tools, "list_target").Run(ctx, json.RawMessage(`{}`))
 	if err != nil || !strings.Contains(out, "locked=docs/rotation.md") {
@@ -84,5 +92,40 @@ func TestDocTools(t *testing.T) {
 	}
 	if _, err := tool(t, tools, "read_page").Run(ctx, json.RawMessage(`{}`)); err == nil {
 		t.Fatal("read_page without pageId succeeded")
+	}
+}
+
+func TestReadPagePagesBySlugAndOffset(t *testing.T) {
+	d := &fakeDocs{}
+	tools := agent.DocTools(d, agent.DocScope{SpaceID: "sp_1"})
+	ctx := context.Background()
+	cases := []struct {
+		name, input, want, absent string
+		wantErr                   bool
+	}{
+		{"by slug", `{"slug":"refunds"}`, "page pg_refunds", "lines ", false},
+		{"first line", `{"pageId":"pg_9","limit":1}`, "[lines 1–1 of 7; call again with offset=2]", "Refunds take", false},
+		{"from line 5", `{"pageId":"pg_9","offset":5}`, "Refunds take 5 days.\n\n[lines 5–7 of 7]", "# Refunds", false},
+		{"past the end", `{"pageId":"pg_9","offset":40}`, "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := tool(t, tools, "read_page").Run(ctx, json.RawMessage(tc.input))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("read_page %s = %q, want an error", tc.input, out)
+				}
+				return
+			}
+			if err != nil || !strings.Contains(out, tc.want) || tc.absent != "" && strings.Contains(out, tc.absent) {
+				t.Fatalf("read_page %s = %q, %v", tc.input, out, err)
+			}
+		})
+	}
+	if d.slugSpace != "sp_1" {
+		t.Fatalf("slug lookups read the target space, got %q", d.slugSpace)
+	}
+	if _, err := tool(t, agent.DocTools(d, agent.DocScope{}), "read_page").Run(ctx, json.RawMessage(`{"slug":"refunds"}`)); err == nil {
+		t.Fatal("a slug without a target space must be refused")
 	}
 }

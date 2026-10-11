@@ -235,12 +235,68 @@ audiences?, after?, units?, rationale? }`.
 - `reference` writes `api` blocks with `ownership: machine` and an `endpoint`
   binding whose hash is the canonical JSON of the operation; `check` compares
   that hash with the pull request's base and head.
-- AI passes write `heading`, `prose`, `code`, `list`, `callout`, `table` and
-  `quote` blocks as `hybrid` with an `ai` binding and a rationale (a summary,
-  and the commits and files behind the edit). The CLI normalizes common model variations before sending: list
-  variants map to `bulleted`, `numbered` or `task`, and heading levels are
-  clamped to 1-3.
+- AI passes write the bundle's `blocks.types` (`heading`, `prose`, `list`,
+  `code`, `table`, `callout`, `quote`, `divider`) as `hybrid` with an `ai`
+  binding and a rationale (a summary, and the commits and files behind the
+  edit). Content per type: prose and quote `{text}`, heading `{text, level}`,
+  code `{text, language}`, callout `{text, variant}`, list `{text, variant}`
+  (one item per block, `bulleted` or `numbered`; `task` maps to `bulleted`),
+  table `{rows, header}` (header defaults to true), divider `{}`.
 - Human blocks and locked pages are never changed by AI passes.
+
+## Page drafts (CLI 1.2)
+
+The write phases (`guides.write`, `reach.write`, `reference.prose`) build a
+page in an in-memory draft (`agent.Draft`) through tools, then map it to one
+change at a successful `submit_page`.
+
+- Seeding: update pages start from `GET /api/v1/content/pages/{pageId}?state=draft&format=json`;
+  new pages start empty; reference prose starts from the existing page merged
+  with the run's computed `api` blocks. A block is editable only when its
+  ownership is not `human`, its type is in `blocks.types`, its
+  `sourceBinding.kind` is not `api`, `endpoint` or `verbatim`, a `hybrid`
+  block carries `clean: true`, and, for unit reach, it is bound to a reached
+  unit. Every other block is locked (the draft names the reason).
+- Tools: `draft_view`, `draft_append {after?: key|"^", rationale?, blocks}`,
+  `draft_replace {key, block}`, `draft_delete {keys}`, `check_page`,
+  `raise_hint {kind, claim, unitKey?, blockKey?, detail, forRepos?}` and the
+  terminal `submit_page {summary, uncovered?: [{token, reason}]}`. Unit reach
+  gets `draft_view`, `draft_replace`, `check_page`, `raise_hint` and
+  `submit_page` only. A `Block` is flat: `{type, text?, level?, language?,
+  variant?, rows?, header?, audiences?, units?, rationale?}`; audiences are
+  the pass audience keys. Invalid blocks are refused with the reason per
+  block, and nothing of the call is applied.
+- Checks (`check_page`, and `submit_page`, which refuses any error) run on
+  new and changed blocks only: E1 another supported language (en, fr, es,
+  de, pt) clearly dominates the site language over 150 words or more (a
+  warning below that or when unclear); E2 a fenced block, a JSON value of 20
+  characters or more, or three indented lines in prose, list, callout or
+  quote text; E3 a markdown heading or a bold-only text (a short line without
+  a period is a warning); E4 planning voice ("this section should describe",
+  "the planner", French equivalents); E5 a `checks.outputMarkers` marker; E7 a
+  planner `mustCover` token missing from the page text (case and backticks
+  ignored, `{param}` matches `:param`) and not declared in `uncovered`. W1 a
+  new page under 120 words; W2 two identical adjacent blocks.
+- Mapping: blocks whose normalized type, content, audiences or units differ
+  from the seed, and new blocks, are upserts whose `after` is the key of the
+  block before them in the draft (`"^"` for the first); deleted editable seed
+  keys go to `removeBlockKeys`. A new page is `op: create` with `{spaceId,
+  slug, collectionPath}` and its title; an update targets `{pageId}` and keeps
+  the title. An empty diff sends nothing (the page counts as unchanged). A
+  page task that fails sends nothing for that page.
+- New keys are `guide:<slug>:<n>` (`ref:<slug>:<n>` for reference prose),
+  `n` continuing after the highest such key on the seed page, deleted keys
+  included; the slug part is cut so a key stays within 128 characters.
+- The writer kickoff is data only: `<task mode="create|update|deprecate|reach|reference-prose">`
+  (page, target, editable keys), `<must_cover>`, `<planner_notes>`, `<units>`
+  and `<change_summary>`. The page itself is read with `draft_view`.
+- `read_file {path, ref?, offset?, limit?}`, `git_diff {from?, to?, path?,
+  offset?, limit?}` and `read_page {pageId|slug, state?, offset?, limit?}`
+  return line ranges; a partial reply ends with `[lines a–b of N; call again
+  with offset=<b+1>]`. The doc tools are `read_page`, `search_docs`, `recall`,
+  `inventory` and `list_target`.
+- With `run.Options.Debug`, each draft is kept at
+  `.gravity/runs/<runId>/<runPassId>/<pageId|new-<slug>>.json`.
 - Before updating a page whose open change request carries pipeline changes,
   guides reads `openProposal.pending` (`repoId`, `remoteKey`, `pass`, `runId`)
   from the space tree: a change from another repository or pass is reported
@@ -337,6 +393,6 @@ the server for CLI 1.1).
 
 `POST /nucleus/recall` (`query`, `limit`, `spaceId`, `kinds`, `tags`,
 `minConfidence`, `namespace`, `includeShared`, `repo`) serves the
-`recall_nucleus` doc tool and the `nucleus` pass. `POST /nucleus/memories`
+`recall` doc tool and the `nucleus` pass. `POST /nucleus/memories`
 writes atoms with `namespace`, `runId`, the kind (unknown kinds are sent as
 `other`) and `sources` that reference the repository, commits and units.

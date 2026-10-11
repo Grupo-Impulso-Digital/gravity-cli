@@ -238,7 +238,7 @@ func HasCode(err error, code string) bool {
 	return errors.As(err, &e) && e.Code == code
 }
 
-// HaltsRun reports whether err must halt the whole run: no new task or pass starts, in-flight work is cancelled, and the run is finished as failed.
+// HaltsRun reports whether err must halt the whole run: no new task or pass starts, in-flight work is canceled, and the run is finished as failed.
 func HaltsRun(err error) bool {
 	return HasCode(err, CodeBudgetExceeded) || HasCode(err, CodeNoProviderKey)
 }

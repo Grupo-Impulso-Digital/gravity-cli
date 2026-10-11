@@ -64,6 +64,64 @@ func truncate(s string, limit int, label string) string {
 	return s[:limit] + fmt.Sprintf("\n\n... [truncated %d of %d bytes of %s] ...", len(s)-limit, len(s), label)
 }
 
+// PageLines returns lines offset..offset+limit-1 (1-based; limit 0 for no limit) within maxBytes, stating the range whenever the reply is not the whole text.
+func PageLines(text string, offset, limit, maxBytes int, label string) (string, error) {
+	lines := strings.SplitAfter(text, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	total := len(lines)
+	if total == 0 {
+		return "", nil
+	}
+	if offset <= 0 {
+		offset = 1
+	}
+	if offset > total {
+		return "", fmt.Errorf("offset %d is past the end of the %s (%d lines)", offset, label, total)
+	}
+	var b strings.Builder
+	last := offset - 1
+	cut := false
+	for i := offset - 1; i < total; i++ {
+		if limit > 0 && i-(offset-1) >= limit {
+			break
+		}
+		line := lines[i]
+		if b.Len()+len(line) > maxBytes {
+			if b.Len() == 0 {
+				b.WriteString(line[:maxBytes])
+				cut = true
+				last = i + 1
+			}
+			break
+		}
+		b.WriteString(line)
+		last = i + 1
+	}
+	out := b.String()
+	if offset == 1 && last == total && !cut {
+		return out, nil
+	}
+	if !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	note := fmt.Sprintf("[lines %d–%d of %d", offset, last, total)
+	if cut {
+		note += fmt.Sprintf("; line %d is cut at %d bytes", last, maxBytes)
+	}
+	if last < total {
+		note += fmt.Sprintf("; call again with offset=%d", last+1)
+	}
+	return out + note + "]", nil
+}
+
+func pagingProps(props map[string]any) map[string]any {
+	props["offset"] = map[string]any{"type": "integer", "description": "First line to return (1-based)."}
+	props["limit"] = map[string]any{"type": "integer", "description": "Number of lines to return."}
+	return props
+}
+
 // Range is the commit range the git tools default to; an empty Head with WorkingTree reads the working tree.
 type Range struct {
 	Base        string
@@ -152,21 +210,23 @@ func RepoTools(repo *git.Repo, rng Range) []Tool {
 		{
 			Def: api.Tool{
 				Name:        "git_diff",
-				Description: fmt.Sprintf("Show the diff between two refs, optionally scoped to a path. Defaults to the range under review (%s..%s). Large patches are truncated.", orRoot(rng.Base), rng.headLabel()),
+				Description: fmt.Sprintf("Show the diff between two refs, optionally scoped to a path. Defaults to the range under review (%s..%s). Large patches come in line ranges; page with offset and limit.", orRoot(rng.Base), rng.headLabel()),
 				InputSchema: map[string]any{
 					"type": "object",
-					"properties": map[string]any{
+					"properties": pagingProps(map[string]any{
 						"from": map[string]any{"type": "string", "description": "Start ref. Defaults to the range base."},
 						"to":   map[string]any{"type": "string", "description": "End ref. Defaults to the range head."},
 						"path": map[string]any{"type": "string", "description": "Limit the diff to this repo-relative path. Optional."},
-					},
+					}),
 				},
 			},
 			Run: func(ctx context.Context, input json.RawMessage) (string, error) {
 				var in struct {
-					From string `json:"from"`
-					To   string `json:"to"`
-					Path string `json:"path"`
+					From   string `json:"from"`
+					To     string `json:"to"`
+					Path   string `json:"path"`
+					Offset int    `json:"offset"`
+					Limit  int    `json:"limit"`
 				}
 				_ = json.Unmarshal(input, &in)
 				if err := modelRefs(in.From, in.To); err != nil {
@@ -195,7 +255,7 @@ func RepoTools(repo *git.Repo, rng Range) []Tool {
 				if strings.TrimSpace(out) == "" {
 					return "(no changes)", nil
 				}
-				return truncate(out, maxDiffBytes, "diff"), nil
+				return PageLines(out, in.Offset, in.Limit, maxDiffBytes, "diff")
 			},
 		},
 		{
@@ -260,20 +320,22 @@ func RepoTools(repo *git.Repo, rng Range) []Tool {
 		{
 			Def: api.Tool{
 				Name:        "read_file",
-				Description: fmt.Sprintf("Read a file at %s, the end of the range under review (size-capped). Pass ref to read it at another commit, tag or branch.", rng.headLabel()),
+				Description: fmt.Sprintf("Read a file at %s, the end of the range under review. Large files come in line ranges; page with offset and limit. Pass ref to read it at another commit, tag or branch.", rng.headLabel()),
 				InputSchema: map[string]any{
 					"type": "object",
-					"properties": map[string]any{
+					"properties": pagingProps(map[string]any{
 						"path": map[string]any{"type": "string", "description": "Repo-relative path to the file."},
 						"ref":  map[string]any{"type": "string", "description": "Optional git ref to read the file at instead of the range head."},
-					},
+					}),
 					"required": []any{"path"},
 				},
 			},
 			Run: func(ctx context.Context, input json.RawMessage) (string, error) {
 				var in struct {
-					Path string `json:"path"`
-					Ref  string `json:"ref"`
+					Path   string `json:"path"`
+					Ref    string `json:"ref"`
+					Offset int    `json:"offset"`
+					Limit  int    `json:"limit"`
 				}
 				_ = json.Unmarshal(input, &in)
 				if err := modelRefs(in.Ref); err != nil {
@@ -295,7 +357,10 @@ func RepoTools(repo *git.Repo, rng Range) []Tool {
 				if err != nil {
 					return "", err
 				}
-				return truncate(out, maxFileBytes, "file"), nil
+				if out == "" {
+					return "(empty file)", nil
+				}
+				return PageLines(out, in.Offset, in.Limit, maxFileBytes, "file")
 			},
 		},
 		{

@@ -69,6 +69,7 @@ type Options struct {
 	RepoParam      string
 	ConnectContext string
 	NoSnapshot     bool
+	Debug          bool
 }
 
 // Env carries the collaborators of a run.
