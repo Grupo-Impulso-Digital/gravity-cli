@@ -1,0 +1,4 @@
+work/
+.env
+results/*.log
+results/*.log.json

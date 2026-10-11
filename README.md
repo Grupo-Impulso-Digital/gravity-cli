@@ -570,6 +570,10 @@ make build   # ./bin/gravity
 make test    # go test ./...
 make lint    # golangci-lint (pinned in go.mod) incl. the format check
 make ci      # lint + test + build
+make eval MODEL=<id> [MAX_OUTPUT=<n>]   # score a model on the eval fixture
 ```
+
+`make eval` needs a Gravity server seeded by `testdata/eval/setup.sh`; see
+[docs/model-eval.md](docs/model-eval.md).
 
 Contributor standards and the architecture live in [AGENTS.md](AGENTS.md).

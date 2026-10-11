@@ -49,6 +49,7 @@ cmd/gravity              entrypoint: signal-aware context
        ├─ internal/version    the single version variable (ldflags stamp, else build info)
        └─ internal/pathsafe   repo-root path validation (leaf, stdlib-only)
 
+internal/eval            model quality eval: fixture endpoints, recording scorer (cmd/score), JSON + Markdown results
 internal/distribution    tests only: install.sh (major resolution, checksum), the GitHub action, ci/ templates, workflows
 ci/                      the GitHub action (ci/github/action.yml) and the CI templates `ci setup` writes, per provider
 plugin/                  the Claude Code plugin (skill, commands, MCP server); package plugin embeds skills/ for `agent install`
@@ -68,6 +69,7 @@ make test    # go test ./...
 make lint    # go tool golangci-lint run  (govet + staticcheck + the curated set)
 make fmt     # go tool golangci-lint fmt  (gofumpt + goimports)
 make ci      # lint + test + build  — what CI runs
+make eval MODEL=<id> [MAX_OUTPUT=<n>]  # model quality eval (docs/model-eval.md)
 ```
 
 The linter is pinned via the go.mod `tool` directive, so `make lint` uses the
@@ -300,6 +302,10 @@ to `debug.ReadBuildInfo`.
   reach is `internal/passes/reach.go`; expected handoffs and the `documents`
   role are `internal/run/handoffs.go`. Cover rule changes in the table test of
   `internal/passes/ownership_test.go`.
+- **Change the eval fixture**: edit `testdata/eval/make-fixture.sh` and
+  `eval.FixtureEndpoints` together; `TestMakeFixtureMatchesTheScorer`
+  generates the fixture and compares its OpenAPI operations with the list.
+  The scorer reuses the page checks through `agent.CheckBlocks`.
 - **Change the installer or the action**: `internal/distribution` runs
   `install.sh` against a fake `curl` and runs the action's `gravity` step with a
   fake binary; keep both green.

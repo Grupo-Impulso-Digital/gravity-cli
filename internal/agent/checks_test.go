@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -96,5 +97,33 @@ func TestChecksSkipUntouchedSeedBlocks(t *testing.T) {
 	}
 	if got := findingCodes(d.Check(nil)); got != "E4:error,E5:error" {
 		t.Fatalf("a changed block is checked: %s", got)
+	}
+}
+
+func TestCheckBlocks(t *testing.T) {
+	tests := []struct {
+		name   string
+		mode   string
+		blocks []api.ChangeBlock
+		want   []string
+	}{
+		{name: "clean create page is short", mode: agent.DraftCreate, blocks: []api.ChangeBlock{{Key: "k1", Type: agent.BlockHeading, Content: map[string]any{"text": "Topics", "level": 2}}, {Key: "k2", Type: agent.BlockProse, Content: map[string]any{"text": "Topics group posts."}}}, want: []string{agent.CheckShortPage}},
+		{name: "update skips the short page warning", mode: agent.DraftUpdate, blocks: []api.ChangeBlock{{Key: "k1", Type: agent.BlockProse, Content: map[string]any{"text": "Topics group posts."}}}},
+		{name: "errors on change blocks", mode: agent.DraftUpdate, blocks: []api.ChangeBlock{
+			{Key: "k1", Type: agent.BlockProse, Content: map[string]any{"text": "## Topics"}},
+			{Key: "k2", Type: agent.BlockProse, Content: map[string]any{"text": "TODO: finish."}},
+			{Key: "k3", Type: agent.BlockCode, Content: map[string]any{"text": `{"a": 1}`, "language": "json"}},
+		}, want: []string{agent.CheckMarkdownHead, agent.CheckOutputMarker}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			for _, f := range agent.CheckBlocks(agent.DraftOptions{Mode: tt.mode, Language: "en", Path: filepath.Join(t.TempDir(), "never.json")}, tt.blocks) {
+				got = append(got, f.Code)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("codes = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

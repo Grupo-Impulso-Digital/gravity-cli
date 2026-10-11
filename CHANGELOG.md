@@ -19,6 +19,13 @@
 - `gravity run --debug` keeps each pass's instructions bundle
   (`.gravity/runs/<runId>/<runPassId>.instructions.json`) and page drafts
   (`.gravity/runs/<runId>/<runPassId>/`).
+- Model quality eval kit (`docs/model-eval.md`): `testdata/eval/make-fixture.sh`
+  generates the Topics API fixture (17 endpoints, 3 internal, English and
+  French commits), `testdata/eval/setup.sh` seeds a Gravity server for it,
+  and `make eval MODEL=<id> [MAX_OUTPUT=<n>]` runs a dry run on it and scores
+  the recording (check pass rate, public endpoint coverage n/14, words per
+  endpoint section, internal leaks, turns, tokens, duration) into JSON and
+  Markdown under `testdata/eval/results/`.
 - A hidden `gravity run --max-output <n>` lowers the model's output limit for
   model evaluation (sent as the bundle's `maxOutput`).
 - Recorded dry runs keep, per AI pass, `generation` (instructions version,

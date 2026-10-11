@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
 // Check severities.
@@ -237,4 +239,14 @@ func (d *Draft) Check(uncovered []Uncovered) []Finding {
 		}
 	}
 	return findings
+}
+
+// CheckBlocks runs the page checks on change blocks as if every block was authored; opts.Path is ignored.
+func CheckBlocks(opts DraftOptions, blocks []api.ChangeBlock) []Finding {
+	opts.Path = ""
+	d := NewDraft(opts, nil, nil)
+	for _, cb := range blocks {
+		d.blocks = append(d.blocks, &DraftBlock{Key: cb.Key, Type: cb.Type, Content: contentMap(cb.Content), Audiences: cb.Audiences, Units: cb.Units, Origin: OriginNew})
+	}
+	return d.Check(nil)
 }
