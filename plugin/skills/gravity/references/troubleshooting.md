@@ -35,6 +35,21 @@ local rules ran. Say so to the user.
   `--allow-dirty` is accepted only with `--dry-run`.
 - `send_mismatch`: HEAD or `.gravity.yaml` changed since the dry run; dry-run again.
 
+## Models and instructions
+
+- `model_unavailable` (exit `2`, before anything starts): an AI pass's model is not enabled
+  (`not_enabled`), has no provider key (`no_key`) or the model catalog is unreachable
+  (`catalog_unavailable`). Ask the user to fix it in Gravity's AI settings, or pick another enabled
+  model with `--model <id>`. `gravity show --model <id> --json` previews `passes[].model` first.
+- Warning `model_not_recommended`: the model is rated not recommended for documentation; tell the user
+  before passing `--yes`.
+- `model_conflict`: the run pass already recorded another model; start a new run.
+- `server_too_old`: the server has no instructions bundle; upgrade it or use gravity 1.1.
+- `budget_exceeded` / `no_provider_key`: the whole run halts and is finished as failed; nothing else to
+  retry until the budget or key is fixed in Gravity.
+- `--debug` keeps each pass's instructions bundle and page drafts under `.gravity/runs/<runId>/` for
+  diagnosis.
+
 ## Lease waits
 
 `waiting for run <id> (<trigger> on <branch>, started <ago>) - timeout <t>`: another run holds the

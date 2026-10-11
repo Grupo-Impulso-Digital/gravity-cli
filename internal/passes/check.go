@@ -14,7 +14,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/glob"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // Finding categories of a check pass.
@@ -698,23 +697,28 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 		byID[p.id] = p
 		bySlug[p.slug] = p
 		writers[p.id] = blockWriters(ctx, in, p.id)
-		label := "claims"
+		attrs := fmt.Sprintf("id=%q slug=%q category=%q", p.id, p.slug, "claims")
 		if p.verbatim {
-			label = "verbatim (locked to this repository; a contradiction is a finding against the repository)"
+			attrs = fmt.Sprintf("id=%q slug=%q category=%q source=%q", p.id, p.slug, "verbatim", p.path)
 		}
-		fmt.Fprintf(&b, "\n## Page %s (%s) — category %s\n%s\n", p.id, p.slug, label, clip(text, 24*1024))
+		fmt.Fprintf(&b, "<page %s>\n%s\n</page>\n", attrs, strings.TrimRight(clip(text, 24*1024), "\n"))
 	}
 	if len(byID) == 0 {
 		return nil
 	}
-	kickoff := passHeader(in) + "\nReview the claims of these pages against this repository at the head of the range.\n\n" + ChangeSummary(in.ChangeSet, in.Range) + UnitDetails(in.Plan, touchedKeys(in)) + b.String()
-	res, err := agent.Submit[agent.FindingsInput](ctx, in.Harness, agent.Task{Prompt: prompts.PassCheck, Purpose: api.PurposeCheck, Kickoff: kickoff, Tools: toolset(in), Submit: agent.ReportFindingsTool()})
-	if err != nil {
+	var k strings.Builder
+	fmt.Fprintf(&k, "<task phase=%q>\n", api.PhaseCheckReview)
+	k.WriteString(passHeader(in))
+	fmt.Fprintf(&k, "Head: %s\n</task>\n<pages>\n%s</pages>\n", firstOf(short(in.Range.Head), "working tree"), b.String())
+	dataSections(&k, in, touchedKeys(in), in.ChangeSet)
+	review := agent.NewReview()
+	task := agent.Task{Phase: api.PhaseCheckReview, Purpose: api.PurposeCheck, Kickoff: k.String(), Tools: append(toolset(in), review.AddTool()), Submit: review.FinishTool()}
+	if _, err := in.Harness.Run(ctx, task); err != nil {
 		return fmt.Errorf("claims: %w", err)
 	}
 	own := NewOwnership(in.Plan, in.Info)
 	var hints []api.HintInput
-	for _, f := range res.Findings {
+	for _, f := range review.Findings() {
 		p, ok := byID[f.PageID]
 		if !ok {
 			p, ok = bySlug[f.PageSlug]

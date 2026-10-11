@@ -21,6 +21,7 @@ const (
 // DocsAPI is the content surface the doc tools read.
 type DocsAPI interface {
 	Page(ctx context.Context, pageID string, q api.PageQuery) (*api.PageContent, error)
+	PageBySlug(ctx context.Context, spaceID, slug string, q api.PageQuery) (*api.PageContent, error)
 	Search(ctx context.Context, req api.SearchRequest) ([]api.SearchHit, error)
 	Recall(ctx context.Context, req api.RecallRequest) (*api.RecallResult, error)
 	Inventory(ctx context.Context, q api.InventoryQuery) (*api.Inventory, error)
@@ -35,37 +36,59 @@ type DocScope struct {
 	Namespace string
 }
 
-// DocTools returns read_page, search_docs, recall_nucleus, product_inventory and list_target.
+// Doc tool names (gravity.tools/1).
+const (
+	ToolReadPage   = "read_page"
+	ToolSearchDocs = "search_docs"
+	ToolRecall     = "recall"
+	ToolInventory  = "inventory"
+	ToolListTarget = "list_target"
+)
+
+// DocTools returns read_page, search_docs, recall, inventory and list_target.
 func DocTools(d DocsAPI, s DocScope) []Tool {
 	tools := []Tool{
 		{
 			Def: api.Tool{
-				Name:        "read_page",
-				Description: "Read a documentation page as text: one header line per block (key, type, ownership, audiences, last writer, units), then its text. Human blocks are read-only.",
-				InputSchema: object([]string{"pageId"}, map[string]any{
+				Name:        ToolReadPage,
+				Description: "Read a documentation page as text: one header line per block (key, type, ownership, audiences, last writer, units), then its text. Long pages come in line ranges; page with offset and limit. Human blocks are read-only.",
+				InputSchema: object(nil, pagingProps(map[string]any{
 					"pageId": map[string]any{"type": "string"},
+					"slug":   map[string]any{"type": "string", "description": "Slug of a page in the target space, instead of pageId."},
 					"state":  enum("draft", "published"),
-				}),
+				})),
 			},
 			Run: func(ctx context.Context, input json.RawMessage) (string, error) {
 				var in struct {
 					PageID string `json:"pageId"`
+					Slug   string `json:"slug"`
 					State  string `json:"state"`
+					Offset int    `json:"offset"`
+					Limit  int    `json:"limit"`
 				}
 				_ = json.Unmarshal(input, &in)
-				if strings.TrimSpace(in.PageID) == "" {
-					return "", errors.New("pageId is required")
+				var text string
+				var err error
+				switch {
+				case strings.TrimSpace(in.PageID) != "":
+					text, err = PageText(ctx, d, in.PageID, in.State)
+				case strings.TrimSpace(in.Slug) != "":
+					if s.SpaceID == "" {
+						return "", errors.New("this pass has no target space; pass pageId")
+					}
+					text, err = PageTextBySlug(ctx, d, s.SpaceID, in.Slug, in.State)
+				default:
+					return "", errors.New("pageId or slug is required")
 				}
-				text, err := PageText(ctx, d, in.PageID, in.State)
 				if err != nil {
 					return "", err
 				}
-				return truncate(text, maxPageBytes, "page"), nil
+				return PageLines(text, in.Offset, in.Limit, maxPageBytes, "page")
 			},
 		},
 		{
 			Def: api.Tool{
-				Name:        "search_docs",
+				Name:        ToolSearchDocs,
 				Description: "Search the documentation (published and draft) for pages and blocks matching a query.",
 				InputSchema: object([]string{"query"}, map[string]any{
 					"query":     map[string]any{"type": "string"},
@@ -99,7 +122,7 @@ func DocTools(d DocsAPI, s DocScope) []Tool {
 		},
 		{
 			Def: api.Tool{
-				Name:        "recall_nucleus",
+				Name:        ToolRecall,
 				Description: "Recall facts from the product's shared memory (Nucleus), including facts other repositories recorded.",
 				InputSchema: object([]string{"query"}, map[string]any{
 					"query": map[string]any{"type": "string"},
@@ -128,7 +151,7 @@ func DocTools(d DocsAPI, s DocScope) []Tool {
 		},
 		{
 			Def: api.Tool{
-				Name:        "product_inventory",
+				Name:        ToolInventory,
 				Description: "Look up the product's units: their contributing repositories and roles (declares, implements, documents), the pages bound to them and detected handoffs. Use it before minting a unit key or before contradicting another repository.",
 				InputSchema: object(nil, map[string]any{
 					"q":    map[string]any{"type": "string", "description": "Text to match in keys and titles."},
@@ -154,7 +177,7 @@ func DocTools(d DocsAPI, s DocScope) []Tool {
 	if s.SpaceID != "" {
 		tools = append(tools, Tool{
 			Def: api.Tool{
-				Name:        "list_target",
+				Name:        ToolListTarget,
 				Description: "List the target space: its collections and pages (id, slug, title, status, units, lock, last writer).",
 				InputSchema: object(nil, map[string]any{}),
 			},
@@ -173,6 +196,18 @@ func DocTools(d DocsAPI, s DocScope) []Tool {
 // PageText reads a page in the LLM-friendly text format, composing it from blocks when the server sends none.
 func PageText(ctx context.Context, d DocsAPI, pageID, state string) (string, error) {
 	pc, err := d.Page(ctx, pageID, api.PageQuery{State: state, Format: "text"})
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(pc.Text) != "" {
+		return pc.Text, nil
+	}
+	return ComposePageText(pc), nil
+}
+
+// PageTextBySlug reads a page of a space by slug in the LLM-friendly text format.
+func PageTextBySlug(ctx context.Context, d DocsAPI, spaceID, slug, state string) (string, error) {
+	pc, err := d.PageBySlug(ctx, spaceID, slug, api.PageQuery{State: state, Format: "text"})
 	if err != nil {
 		return "", err
 	}

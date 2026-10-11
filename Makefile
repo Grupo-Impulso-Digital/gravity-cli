@@ -42,6 +42,10 @@ lint: ## Run golangci-lint (govet, staticcheck, + curated set) and the format ch
 tidy: ## Tidy go.mod/go.sum
 	go mod tidy
 
+.PHONY: eval
+eval: build ## Score a model on the eval fixture: make eval MODEL=<id> [MAX_OUTPUT=<n>]
+	MODEL="$(MODEL)" MAX_OUTPUT="$(MAX_OUTPUT)" GRAVITY="$(CURDIR)/bin/$(BINARY)" testdata/eval/run.sh
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf bin

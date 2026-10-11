@@ -63,8 +63,15 @@ type Input struct {
 	Known        *Units
 	ProductParam string
 	Generator    string
+	DebugDir     string
 	Log          func(format string, args ...any)
 	Sleep        func(ctx context.Context, d time.Duration) error
+}
+
+func (in Input) logf(format string, args ...any) {
+	if in.Log != nil {
+		in.Log(format, args...)
+	}
 }
 
 // Dry reports whether the pass must not write.
@@ -331,5 +338,17 @@ func For(kind string) (Pass, bool) {
 	return nil, false
 }
 
-// AIKinds are the pass kinds that call the LLM gateway.
-var AIKinds = map[string]bool{config.KindGuides: true, config.KindChangelog: true, config.KindNucleus: true, config.KindCheck: true}
+// UsesModel reports whether a pass calls the LLM gateway from the CLI, so its run pass needs an instructions bundle.
+func UsesModel(p api.PlanPass) bool {
+	switch p.Kind {
+	case config.KindGuides, config.KindChangelog, config.KindNucleus:
+		return true
+	case config.KindCheck:
+		v, ok := p.Options["claims"].(bool)
+		return !ok || v
+	case config.KindReference:
+		v, _ := p.Options["prose"].(bool)
+		return v
+	}
+	return false
+}

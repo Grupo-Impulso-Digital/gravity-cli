@@ -56,6 +56,7 @@ func newRunCmd(a *app) *cobra.Command {
 			"DRY RUN (--dry-run): the whole run, model calls and conversion included, but nothing is written to Gravity. The result is shown here and recorded in .gravity/runs/<runId>.json; `gravity run --send <runId>` (or answering yes at the end) sends exactly that result without recomputing.\n" +
 			"REAL RUN: from any branch, with the local .gravity.yaml, the changes land in one change request reviewed in the app, like a CI run.\n\n" +
 			"Before starting, outside CI: git fetch, and a refusal when the branch is behind or diverged from its upstream or tracked files are uncommitted (--allow-dirty, dry runs only); then the manifest is validated (a dry run reports the same conflicts the real run would hit) and the plan is shown with its estimate. On a terminal you confirm before passes that call a model, unless --yes.\n" +
+			"AI passes run on the model configured in Gravity, or on --model: the plan shows each one's model, quality label and output language, warns about a model rated not recommended, and stops before anything starts when a model cannot run. Each pass then prints its model and instructions version; --debug keeps the instructions bundles and page drafts under .gravity/runs/<runId>/.\n" +
 			"A run reads committed history only. While another run holds the branch, gravity says which one and waits (--lease-timeout); Ctrl-C finishes the run as canceled.\n\n" +
 			"In CI the trigger comes from the event; elsewhere it is manual: passes triggered on manual, push or schedule run, and `--pass <name>` runs a pass whatever its triggers.",
 		Args: cobra.NoArgs,
@@ -64,6 +65,9 @@ func newRunCmd(a *app) *cobra.Command {
 				return err
 			}
 			if f.send != "" {
+				if f.model != "" || f.maxOutput > 0 {
+					return Failf(CodeError, "--model and --max-output do not apply to --send: a recorded dry run is sent as computed, with the model it ran on")
+				}
 				return a.sendRun(cmd.Context(), f)
 			}
 			if f.allowDirty && !f.dryRun {
@@ -88,6 +92,10 @@ func newRunCmd(a *app) *cobra.Command {
 	fl.BoolVar(&f.noComment, "no-comment", false, "do not post the pull request comment")
 	fl.BoolVar(&f.strict, "strict", false, "treat unapproved targets, missing scopes and unlicensed modules as failures")
 	fl.StringVar(&f.annotate, "annotate", "auto", "finding annotations: auto, github, gitlab, azure or none")
+	fl.StringVar(&f.model, "model", "", "run the AI passes on this model (an id enabled in Gravity's AI settings) instead of the configured one")
+	fl.BoolVar(&f.debug, "debug", false, "keep each pass's instructions bundle and page drafts under .gravity/runs/<runId>/")
+	fl.IntVar(&f.maxOutput, "max-output", 0, "lower the model's output limit to this many tokens (development)")
+	_ = fl.MarkHidden("max-output")
 	return cmd
 }
 

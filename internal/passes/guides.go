@@ -9,9 +9,9 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/changeset"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // PR preview modes of AI passes.
@@ -343,37 +343,73 @@ func appendUnique(list []string, vals ...string) []string {
 	return list
 }
 
-func (imp *Impact) render() string {
-	var b strings.Builder
-	b.WriteString("\n## Candidate pages\n")
+func (imp *Impact) render(b *strings.Builder) {
+	b.WriteString("<candidate_pages>\n")
 	if len(imp.Candidates) == 0 {
 		b.WriteString("(none found by unit bindings or search)\n")
 	}
 	for _, c := range imp.Candidates {
-		fmt.Fprintf(&b, "- %s %s %q: %s\n", c.PageID, c.Slug, c.Title, strings.Join(c.Reasons, "; "))
+		fmt.Fprintf(b, "- %s %s %q: %s\n", c.PageID, c.Slug, c.Title, strings.Join(c.Reasons, "; "))
 	}
+	b.WriteString("</candidate_pages>\n")
 	if len(imp.Reach) > 0 {
-		b.WriteString("\n## Pages outside the target bound to units this repository contributes to (update their bound blocks only)\n")
+		b.WriteString("<reach_pages>\n")
 		for _, r := range imp.Reach {
-			fmt.Fprintf(&b, "- %s %s/%s/%s: units %s (this repository %s them)\n", r.PageID, r.Site, r.Space, r.Slug, strings.Join(r.Units, ", "), firstOf(r.Role, "contributes to"))
+			fmt.Fprintf(b, "- %s %s/%s/%s: units %s; this repository %s them; editable: blocks bound to these units\n", r.PageID, r.Site, r.Space, r.Slug, strings.Join(r.Units, ", "), firstOf(r.Role, "contributes to"))
 		}
+		b.WriteString("</reach_pages>\n")
 	}
 	if len(imp.Undocumented) > 0 {
-		b.WriteString("\n## Units without a page in the target\n")
+		b.WriteString("<undocumented_units>\n")
 		for _, u := range imp.Undocumented {
-			fmt.Fprintf(&b, "- %s (%s) %s\n", u.Key, u.Kind, u.Title)
+			fmt.Fprintf(b, "- %s (%s) %s\n", u.Key, u.Kind, u.Title)
 		}
+		b.WriteString("</undocumented_units>\n")
 	}
 	if len(imp.Hints) > 0 {
-		b.WriteString("\n## Open hints from other repositories\n")
+		b.WriteString("<open_hints>\n")
 		for _, h := range imp.Hints {
 			from := ""
 			if h.RaisedBy != nil {
 				from = " from " + h.RaisedBy.Repo
 			}
-			fmt.Fprintf(&b, "- %s %s%s: %s (unit %s, block %s)\n", h.ID, h.Kind, from, h.Claim, h.UnitKey, h.BlockKey)
+			fmt.Fprintf(b, "- %s %s%s: %s (unit %s, block %s)\n", h.ID, h.Kind, from, h.Claim, h.UnitKey, h.BlockKey)
 		}
+		b.WriteString("</open_hints>\n")
 	}
+}
+
+func targetPath(in Input, collection []string) string {
+	target := firstOf(in.SpaceSlug(), "-")
+	if len(collection) > 0 {
+		target += "/" + strings.Join(collection, "/")
+	}
+	return target
+}
+
+func dataSections(b *strings.Builder, in Input, units []string, cs *changeset.ChangeSet) {
+	if u := strings.TrimSpace(UnitDetails(in.Plan, units)); u != "" {
+		fmt.Fprintf(b, "<units>\n%s\n</units>\n", u)
+	}
+	fmt.Fprintf(b, "<change_summary>\n%s</change_summary>\n", ChangeSummary(cs, in.Range))
+}
+
+func planKickoff(in Input, imp *Impact, maxPages int, createPages, deprecate bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<task phase=%q>\n", api.PhaseGuidesPlan)
+	b.WriteString(passHeader(in))
+	fmt.Fprintf(&b, "Target: %s\n", targetPath(in, in.CollectionPrefix()))
+	newPages, removed := "not allowed", "deleted"
+	if createPages {
+		newPages = "allowed"
+	}
+	if deprecate {
+		removed = "kept with a deprecation notice"
+	}
+	fmt.Fprintf(&b, "Page budget: %d · New pages: %s · Deprecated pages: %s\n", maxPages, newPages, removed)
+	b.WriteString("</task>\n")
+	imp.render(&b)
+	dataSections(&b, in, touchedKeys(in), in.ChangeSet)
 	return b.String()
 }
 
@@ -423,12 +459,13 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	maxPages := in.IntOption("maxPages", 25)
 	createPages := in.BoolOption("createPages", true)
 	deprecate := in.BoolOption("deprecate", true)
-	kickoff := passHeader(in) + fmt.Sprintf("Page budget: %d actions. New pages allowed: %v. Deprecations as callouts: %v.\n\n", maxPages, createPages, deprecate) +
-		ChangeSummary(in.ChangeSet, in.Range) + UnitDetails(in.Plan, touchedKeys(in)) + imp.render() +
-		"\nDecide the page actions now. Read pages with read_page before deciding when the reason is unclear."
-	plan, err := agent.Submit[agent.PagePlan](ctx, in.Harness, agent.Task{Prompt: prompts.PassImpact, Purpose: api.PurposePlan, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPagePlanTool()})
-	if err != nil {
+	list := agent.NewPlanList(maxPages)
+	task := agent.Task{Phase: api.PhaseGuidesPlan, Purpose: api.PurposePlan, Kickoff: planKickoff(in, imp, maxPages, createPages, deprecate), Tools: append(toolset(in), list.AddTool()), Submit: list.FinishTool()}
+	if _, err := in.Harness.Run(ctx, task); err != nil {
 		return rep, fmt.Errorf("plan: %w", err)
+	}
+	if summary := list.Summary(); summary != "" {
+		in.logf("plan: %s", summary)
 	}
 	pages := map[string]api.TreePage{}
 	bySlug := map[string]api.TreePage{}
@@ -443,10 +480,7 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	pending := map[string]bool{}
 	viaUnit := map[string]bool{}
 	var actions []agent.PageAction
-	for _, a := range plan.Actions {
-		if a.Action == agent.ActionNone {
-			continue
-		}
+	for _, a := range list.Pages() {
 		if a.PageID == "" && a.Action != agent.ActionCreate {
 			if p, ok := bySlug[a.Slug]; ok {
 				a.PageID = p.ID
@@ -497,7 +531,7 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	}
 	if out.Dry() && mode == PreviewImpact {
 		for _, a := range actions {
-			reason := a.Reason
+			reason := a.Why
 			if viaUnit[a.PageID] {
 				reason = reachReason(reach[a.PageID], reason)
 			}
@@ -518,7 +552,7 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			h, err = guidesAction(ctx, in, out, &rep, a, deprecate)
 		}
 		if err != nil {
-			if api.StopsRun(err) || api.IsLicenseError(err) || errors.Is(err, context.Canceled) {
+			if endsPass(err) {
 				return rep, err
 			}
 			failures = append(failures, fmt.Sprintf("%s: %v", a.Slug, err))
@@ -547,6 +581,19 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	return rep, nil
 }
 
+func withWhy(summary, why string) string {
+	why = strings.TrimSpace(why)
+	if why == "" || strings.Contains(summary, why) {
+		return summary
+	}
+	return summary + "\n\nWhy: " + why
+}
+
+// endsPass reports an error that ends the pass instead of failing one page: the run stopped or halted, a license refusal, or a cancellation.
+func endsPass(err error) bool {
+	return api.StopsRun(err) || api.HaltsRun(err) || api.IsLicenseError(err) || errors.Is(err, context.Canceled)
+}
+
 func impactLine(n int, target string) string {
 	switch n {
 	case 0:
@@ -560,21 +607,18 @@ func impactLine(n int, target string) string {
 func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.PageAction, deprecate bool) ([]api.HintInput, error) {
 	ref := api.PageRef{ID: a.PageID, Slug: a.Slug, Title: a.Title}
 	if a.Action == agent.ActionDeprecate && !deprecate {
-		c, err := out.Change(ctx, api.ChangeRequest{Op: api.OpDelete, Target: api.ChangeTarget{PageID: a.PageID}, Summary: a.Reason})
+		c, err := out.Change(ctx, api.ChangeRequest{Op: api.OpDelete, Target: api.ChangeTarget{PageID: a.PageID}, Summary: a.Why})
 		if err != nil {
 			return nil, err
 		}
 		rep.Counts.Deleted++
 		rep.applied(c)
-		rep.impact(ref, api.OpDelete, a.Reason)
+		rep.impact(ref, api.OpDelete, a.Why)
 		return nil, nil
 	}
-	var human map[string]bool
+	mode, file := agent.DraftCreate, "new-"+a.Slug
 	var current *api.PageContent
-	kickoff := passHeader(in)
-	if a.Action == agent.ActionCreate {
-		kickoff += fmt.Sprintf("\nAction: create page %q (slug %s, collection %s) because %s.\nWrite the complete page as upserts with keys guide:%s:<section-slug>[:n].\n", a.Title, a.Slug, strings.Join(a.CollectionPath, "/"), a.Reason, a.Slug)
-	} else {
+	if a.Action != agent.ActionCreate {
 		var err error
 		current, err = in.Client.Page(ctx, a.PageID, api.PageQuery{State: "draft", Format: "json"})
 		if err != nil {
@@ -583,64 +627,35 @@ func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.
 		if current.Page.Lock != nil {
 			return nil, fmt.Errorf("page is locked to %s", current.Page.Lock.Path)
 		}
-		human = map[string]bool{}
-		for _, b := range current.Blocks {
-			if b.Ownership == api.OwnershipHuman && b.Key != "" {
-				human[b.Key] = true
-			}
-		}
-		text, err := agent.PageText(ctx, in.Client, a.PageID, "draft")
-		if err != nil {
-			return nil, fmt.Errorf("read page text: %w", err)
-		}
-		verb := "update"
+		mode, file = agent.DraftUpdate, a.PageID
 		if a.Action == agent.ActionDeprecate {
-			verb = "deprecate"
+			mode = agent.DraftDeprecate
 		}
-		kickoff += fmt.Sprintf("\nAction: %s page %s (%s) because %s.\n", verb, a.Slug, a.PageID, a.Reason)
-		if a.Action == agent.ActionDeprecate {
-			kickoff += "The units behind this page were removed. Add a deprecation callout (type callout, variant warning) where the removed behavior is described; do not delete text.\n"
-		}
-		kickoff += "New keys follow guide:" + a.Slug + ":<section-slug>[:n].\n\n## Current page (human blocks are read-only)\n" + text
 	}
-	kickoff += "\n" + UnitDetails(in.Plan, a.Units) + "\n" + ChangeSummary(in.ChangeSet, in.Range)
-	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Prompt: prompts.PassGuides, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPageChangesTool()})
+	d, err := newDraft(ctx, in, draftSpec{mode: mode, slug: a.Slug, keyPrefix: agent.KeyPrefixGuide, file: file, page: current, mustCover: a.MustCover})
 	if err != nil {
+		return nil, err
+	}
+	collection := a.CollectionPath
+	if current != nil {
+		collection = current.Page.CollectionPath
+	}
+	kickoff := writerKickoff(in, d, kickoffData{mode: mode, title: a.Title, slug: a.Slug, collection: collection, mustCover: a.MustCover, notes: a.Why, units: a.Units})
+	if err := runDraft(ctx, in, d, api.PhaseGuidesWrite, kickoff); err != nil {
 		return nil, fmt.Errorf("author: %w", err)
 	}
-	var blocks []api.ChangeBlock
-	var units []string
-	for _, e := range changes.Upserts {
-		if human[e.Key] {
-			rep.warn("%s: kept human block %s", a.Slug, e.Key)
-			continue
-		}
-		b := aiBlock(in, e)
-		withProvenance(in, &b, firstOf(changes.Summary, a.Reason))
-		blocks = append(blocks, b)
-		units = append(units, b.Units...)
-	}
-	var remove []string
-	for _, k := range changes.RemoveKeys {
-		if human[k] {
-			rep.warn("%s: kept human block %s", a.Slug, k)
-			continue
-		}
-		remove = append(remove, k)
-	}
-	hints := make([]api.HintInput, 0, len(changes.Hints))
-	for _, h := range changes.Hints {
-		hints = append(hints, api.HintInput{Kind: firstOf(h.Kind, "contradiction"), UnitKey: h.UnitKey, PageID: a.PageID, BlockKey: h.BlockKey, Claim: h.Claim, Detail: h.Detail, ForRepos: h.ForRepos})
-	}
+	summary := firstOf(d.Summary(), a.Why)
+	blocks, remove := draftBlocks(in, d, summary, nil)
+	hints := draftHints(d, a.PageID)
 	if len(blocks) == 0 && len(remove) == 0 {
 		rep.Counts.Unchanged++
 		return hints, nil
 	}
-	units = in.Known.Filter(append(append([]string{}, a.Units...), units...))
-	req := api.ChangeRequest{Summary: firstOf(changes.Summary, a.Reason), Blocks: blocks, RemoveBlockKeys: remove, Units: units, Languages: in.Languages()}
+	units := in.Known.Filter(append(append([]string{}, a.Units...), changeUnits(blocks)...))
+	req := api.ChangeRequest{Summary: withWhy(summary, a.Why), Blocks: blocks, RemoveBlockKeys: remove, Units: units, Languages: in.Languages()}
 	if a.Action == agent.ActionCreate {
 		req.Op = api.OpCreate
-		req.Title = firstOf(a.Title, changes.Title)
+		req.Title = a.Title
 		req.Target = api.ChangeTarget{SpaceID: in.SpaceID(), Slug: a.Slug, CollectionPath: createPath(in.CollectionPrefix(), a.CollectionPath)}
 	} else {
 		req.Op = api.OpUpdate

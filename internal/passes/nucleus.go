@@ -9,7 +9,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // Nucleus distills repository-tagged facts into the product's Nucleus namespace.
@@ -67,28 +66,13 @@ func (Nucleus) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			rep.warn("recall: %v", err)
 		}
 	}
-	kickoff := passHeader(in) + fmt.Sprintf("\nNamespace: %s. At most %d atoms.", firstOf(ns, "(organization)"), maxAtoms)
-	if len(kinds) > 0 {
-		kickoff += " Allowed kinds: " + strings.Join(kinds, ", ") + "."
-	}
-	kickoff += "\n\n## Already known (reuse a title to revise an atom)\n" + firstOf(known, "(nothing recalled)") + "\n\n" + ChangeSummary(in.ChangeSet, in.Range) + UnitDetails(in.Plan, touchedKeys(in))
-	atoms, err := agent.Submit[agent.AtomsInput](ctx, in.Harness, agent.Task{Prompt: prompts.PassNucleus, Purpose: api.PurposeDistill, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitAtomsTool()})
-	if err != nil {
+	list := agent.NewAtomList(maxAtoms, kinds)
+	task := agent.Task{Phase: api.PhaseNucleusDistill, Purpose: api.PurposeDistill, Kickoff: nucleusKickoff(in, ns, maxAtoms, kinds, known), Tools: append(toolset(in), list.AddTool()), Submit: list.FinishTool()}
+	if _, err := in.Harness.Run(ctx, task); err != nil {
 		return rep, fmt.Errorf("distill: %w", err)
 	}
-	allowed := map[string]bool{}
-	for _, k := range kinds {
-		allowed[k] = true
-	}
-	written := 0
-	for _, a := range atoms.Atoms {
-		if written == maxAtoms {
-			break
-		}
+	for _, a := range list.Atoms() {
 		kind := agent.MemoryKind(a.Kind)
-		if len(allowed) > 0 && !allowed[kind] {
-			continue
-		}
 		sources := []api.MemorySource{}
 		if in.Info.ID != "" {
 			sources = append(sources, api.MemorySource{Type: api.SourceRepo, ID: in.Info.ID})
@@ -106,7 +90,6 @@ func (Nucleus) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			}
 			return rep, fmt.Errorf("write atom %q: %w", a.Title, err)
 		}
-		written++
 		switch res.Outcome {
 		case api.OutcomeQueuedForReview:
 			rep.Counts.Queued++
@@ -119,6 +102,20 @@ func (Nucleus) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	rep.UnitsTouched = touchedKeys(in)
 	rep.Summary = summaryLine(rep.Counts, firstOf(ns, "organization memory"))
 	return rep, nil
+}
+
+func nucleusKickoff(in Input, ns string, maxAtoms int, kinds []string, known string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<task phase=%q>\n", api.PhaseNucleusDistill)
+	b.WriteString(passHeader(in))
+	fmt.Fprintf(&b, "Namespace: %s\nAtom budget: %d\n", firstOf(ns, "(organization)"), maxAtoms)
+	if len(kinds) > 0 {
+		fmt.Fprintf(&b, "Kinds: %s\n", strings.Join(kinds, ", "))
+	}
+	b.WriteString("</task>\n")
+	fmt.Fprintf(&b, "<known_atoms>\n%s\n</known_atoms>\n", firstOf(strings.TrimSpace(known), "(nothing recalled)"))
+	dataSections(&b, in, touchedKeys(in), in.ChangeSet)
+	return b.String()
 }
 
 func clip(s string, n int) string {

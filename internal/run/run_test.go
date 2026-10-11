@@ -249,11 +249,14 @@ func TestPartialFailureAndFindingsExitCodes(t *testing.T) {
 	guides := refPass("guides", "")
 	guides.Kind = config.KindGuides
 	p.plan.Passes = []api.PlanPass{refPass("developer-api", ""), guides}
+	p.llm = func(map[string]any) any {
+		return map[string]any{"stop_reason": "refusal", "usage": map[string]any{"input_tokens": 10, "output_tokens": 1}, "content": []any{map[string]any{"type": "text", "text": "I can't help with that."}}}
+	}
 	res, err := run.Execute(context.Background(), newEnv(t, p, r, manifest(t, "")).Env, pushOpts())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Passes[1].Status != api.StatusFailed || !strings.Contains(res.Passes[1].Error, "no_provider_key") {
+	if res.Passes[1].Status != api.StatusFailed || !strings.Contains(res.Passes[1].Error, "refusal: I can't help with that. (model anthropic/claude-test)") {
 		t.Fatalf("guides = %+v", res.Passes[1])
 	}
 	if fin := p.find("POST", "/finish")[0].Body; fin["status"] != "partial" || res.ExitCode(false) != 2 {

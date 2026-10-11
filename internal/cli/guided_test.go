@@ -508,6 +508,21 @@ func TestApproveListsApprovesAndFallsBack(t *testing.T) {
 	}
 }
 
+func TestApproveAllGrantsTargetsOnlyTheLocalManifestNames(t *testing.T) {
+	h := guidedHarness(t)
+	h.platform.json("GET /api/v1/repos/self/approvals", 200, `{"repo":{"id":"cr_1","name":"polaris"},"canApprove":true,"pending":[],"granted":[]}`)
+	expectCode(t, h, h.run("approve"), 0)
+	if out := h.stdout.String(); !strings.Contains(out, "polaris/guides") || !strings.Contains(out, "user-guides") {
+		t.Fatalf("stdout lacks the manifest target:\n%s", out)
+	}
+	h.platform.json("POST /api/v1/repos/self/approvals", 200, `{"approved":[{"target":"polaris/guides","passes":[]}],"refused":[]}`)
+	expectCode(t, h, h.run("approve", "--all", "--json"), 0)
+	body := h.platform.find("POST", "/api/v1/repos/self/approvals")[0].Body
+	if spaces, _ := body["spaces"].([]any); len(spaces) != 1 || spaces[0] != "polaris/guides" || body["all"] != true {
+		t.Fatalf("body = %v", body)
+	}
+}
+
 func TestAgentInstallWritesThePluginSkill(t *testing.T) {
 	h := newHarness(t)
 	expectCode(t, h, h.run("agent", "install"), 0)

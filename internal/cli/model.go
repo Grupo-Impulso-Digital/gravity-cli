@@ -75,6 +75,7 @@ type verbatimMap struct {
 type modelOptions struct {
 	server bool
 	plan   bool
+	model  string
 }
 
 type model struct {
@@ -215,7 +216,7 @@ func (a *app) serverChecks(ctx context.Context, m *model, o modelOptions) {
 		}
 	}
 	if o.plan {
-		q := api.PlanQuery{Repo: m.repoParam(), Trigger: config.TriggerManual, Branch: firstNonEmpty(m.info.branch, m.info.defaultBranch), Mode: api.ModeDry, ManifestHash: m.manifest.Hash}
+		q := api.PlanQuery{Repo: m.repoParam(), Trigger: config.TriggerManual, Branch: firstNonEmpty(m.info.branch, m.info.defaultBranch), Mode: api.ModeDry, ManifestHash: m.manifest.Hash, Model: o.model}
 		if p, err := m.client.Plan(ctx, q); err == nil {
 			m.plan = p
 		} else {

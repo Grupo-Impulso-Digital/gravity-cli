@@ -29,7 +29,7 @@ func ChangeSummary(cs *changeset.ChangeSet, rng changeset.Range) string {
 		return b.String()
 	}
 	if cs.Truncated {
-		b.WriteString("The change set was truncated; use git_log and git_diff for the rest.\n")
+		b.WriteString("Truncated: yes (git_log and git_diff cover the whole range)\n")
 	}
 	if len(cs.Commits) > 0 {
 		fmt.Fprintf(&b, "\n## Commits (%d)\n", len(cs.Commits))

@@ -71,10 +71,11 @@ func TestSettleAppliesTheClaimVerdictRules(t *testing.T) {
 func reachFixture(t *testing.T) (*repoT, *fakeAPI, string, string) {
 	t.Helper()
 	r, fake, base, head := guidesFixture(t)
+	clean := true
 	fake.inventory[0].Bindings = append(fake.inventory[0].Bindings, api.UnitBinding{PageID: "pg_ext", PageSlug: "refund-flows", SiteSlug: "product", SpaceSlug: "guides"})
 	fake.addPage("sp_2", &api.PageContent{Page: api.PageInfo{ID: "pg_ext", Slug: "refund-flows", Title: "Refund flows"}, Blocks: []api.PageBlock{
-		{Key: "guide:refund-flows:limits", Type: "prose", Ownership: api.OwnershipHybrid, Units: []string{"feature:refunds"}, Text: "At most 5 refunds.", Provenance: &api.BlockProvenance{Repo: "gateway", CommitSHA: "9f8e7d6"}},
-		{Key: "guide:refund-flows:other", Type: "prose", Ownership: api.OwnershipHybrid, Text: "Unrelated."},
+		{Key: "guide:refund-flows:limits", Type: "prose", Ownership: api.OwnershipHybrid, Clean: &clean, Units: []string{"feature:refunds"}, Text: "At most 5 refunds.", Provenance: &api.BlockProvenance{Repo: "gateway", CommitSHA: "9f8e7d6"}},
+		{Key: "guide:refund-flows:other", Type: "prose", Ownership: api.OwnershipHybrid, Clean: &clean, Text: "Unrelated."},
 	}})
 	return r, fake, base, head
 }
@@ -82,14 +83,14 @@ func reachFixture(t *testing.T) (*repoT, *fakeAPI, string, string) {
 func TestGuidesUpdatesBlocksAnotherRepositoryWroteThroughUnitReach(t *testing.T) {
 	r, fake, base, head := reachFixture(t)
 	fake.llm = guidesLLM(t,
-		agent.PagePlan{Actions: []agent.PageAction{
-			{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Reason: "reason added", Units: []string{"feature:refunds"}},
-			{Action: agent.ActionDeprecate, PageID: "pg_ext", Slug: "refund-flows", Reason: "no"},
+		pagePlan{Actions: []agent.PageAction{
+			{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Why: "reason added", Units: []string{"feature:refunds"}},
 		}},
-		agent.PageChanges{Summary: "Mentions the reason", Upserts: []agent.BlockEdit{
-			{Key: "guide:refund-flows:limits", Type: "prose", Content: []byte(`{"text":"At most 5 refunds, each with a reason."}`), Rationale: agent.Rationale{Summary: "reason field"}},
-			{Key: "guide:refund-flows:new", Type: "prose", Content: []byte(`{"text":"new"}`), Rationale: agent.Rationale{Summary: "x"}},
-		}, RemoveKeys: []string{"guide:refund-flows:other"}},
+		calls(
+			call(agent.ToolDraftReplace, map[string]any{"key": "guide:refund-flows:limits", "block": map[string]any{"type": "prose", "text": "At most 5 refunds, each with a reason."}}),
+			call(agent.ToolDraftReplace, map[string]any{"key": "guide:refund-flows:other", "block": map[string]any{"type": "prose", "text": "x"}}),
+		),
+		calls(call(agent.ToolDraftAppend, map[string]any{"blocks": []any{map[string]any{"type": "prose", "text": "new"}}})),
 	)
 	w := &writes{}
 	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))
@@ -110,16 +111,47 @@ func TestGuidesUpdatesBlocksAnotherRepositoryWroteThroughUnitReach(t *testing.T)
 	if rep.Counts.ViaUnit != 1 || rep.Counts.Updated != 1 || len(rep.Impact) != 1 || !strings.Contains(rep.Impact[0].Reason, "unit reach (implements feature:refunds)") {
 		t.Fatalf("counts=%+v impact=%+v", rep.Counts, rep.Impact)
 	}
-	warnings := strings.Join(rep.Warnings, "\n")
-	if !strings.Contains(warnings, "only its bound blocks") || !strings.Contains(warnings, "guide:refund-flows:new") || !strings.Contains(warnings, "guide:refund-flows:other") {
-		t.Fatalf("warnings = %v", rep.Warnings)
+	var results []string
+	for _, req := range fake.requests {
+		if lastTool(req) != agent.ToolSubmitPage {
+			continue
+		}
+		for _, tl := range req.Tools {
+			if tl.Name == agent.ToolDraftAppend || tl.Name == agent.ToolDraftDelete {
+				t.Fatalf("reach writers only replace bound blocks: %v", req.Tools)
+			}
+		}
+		for _, m := range req.Messages {
+			for _, p := range m.Content {
+				if p.IsError {
+					results = append(results, p.Content)
+				}
+			}
+		}
+	}
+	errs := strings.Join(results, "\n")
+	if !strings.Contains(errs, "guide:refund-flows:other is locked: it is not bound to feature:refunds") || !strings.Contains(errs, `unknown tool "draft_append"`) {
+		t.Fatalf("tool errors = %s", errs)
+	}
+}
+
+func TestGuidesSkipsDeprecatingAPageOutsideTheTarget(t *testing.T) {
+	r, fake, base, head := reachFixture(t)
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionDeprecate, PageID: "pg_ext", Slug: "refund-flows", Why: "no"}}})
+	w := &writes{}
+	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.changes) != 0 || !strings.Contains(strings.Join(rep.Warnings, "\n"), "only its bound blocks") {
+		t.Fatalf("changes=%+v warnings=%v", w.changes, rep.Warnings)
 	}
 }
 
 func TestGuidesDoesNotReachUnitsThisRepositoryOnlyDocuments(t *testing.T) {
 	r, fake, base, head := reachFixture(t)
 	fake.inventory[0].Contributors[0].Role = api.RoleDocuments
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Reason: "x"}}}, agent.PageChanges{})
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Why: "x"}}})
 	w := &writes{}
 	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))
 	if err != nil {
@@ -133,10 +165,10 @@ func TestGuidesDoesNotReachUnitsThisRepositoryOnlyDocuments(t *testing.T) {
 func TestGuidesPreviewFlagsPagesWithAnotherRunsOpenProposal(t *testing.T) {
 	r, fake, base, head := reachFixture(t)
 	fake.trees["sp_1"].Pages[0].OpenProposal = &api.OpenProposal{ID: "prop_9", Status: "open", PipelineRunID: "prun_gateway"}
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{
-		{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"},
-		{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Reason: "reason added"},
-	}}, agent.PageChanges{})
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{
+		{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason added"},
+		{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Why: "reason added"},
+	}})
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
 	in.Trigger = config.TriggerPR
 	rep, err := passes.Guides{}.Run(context.Background(), in, &passes.Recorder{})
@@ -157,7 +189,7 @@ func TestGuidesPreviewSupersedesItsOwnPendingChange(t *testing.T) {
 	for i := range fake.pages["pg_1"].Blocks {
 		fake.pages["pg_1"].Blocks[i].Provenance = &api.BlockProvenance{Repo: "billing-api", Pass: "guides", RunID: "prun_earlier"}
 	}
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}}, agent.PageChanges{})
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason added"}}})
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
 	in.Trigger = config.TriggerPR
 	rep, err := passes.Guides{}.Run(context.Background(), in, &passes.Recorder{})
@@ -185,7 +217,7 @@ func TestGuidesPreviewReadsThePendingList(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, fake, base, head := reachFixture(t)
 			fake.trees["sp_1"].Pages[0].OpenProposal = &api.OpenProposal{ID: "prop_9", Status: "open", PipelineRunID: "prun_old", Pending: tc.pending}
-			fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}}, agent.PageChanges{})
+			fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason added"}}})
 			in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
 			in.Trigger = config.TriggerPR
 			rep, err := passes.Guides{}.Run(context.Background(), in, &passes.Recorder{})

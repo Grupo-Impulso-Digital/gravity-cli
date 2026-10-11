@@ -58,17 +58,20 @@ func TestVerbatimImportsChangedFilesUploadsImagesAndProposesDeletions(t *testing
 	}
 }
 
-func guidesLLM(t *testing.T, plan agent.PagePlan, changes agent.PageChanges) func(api.MessagesRequest) api.MessagesResponse {
+func guidesLLM(t *testing.T, plan pagePlan, writer ...api.MessagesResponse) func(api.MessagesRequest) api.MessagesResponse {
 	t.Helper()
 	return func(req api.MessagesRequest) api.MessagesResponse {
 		if req.Context == nil || req.Context.RunPassID != "ppr_1" {
 			t.Errorf("gateway call without the run context: %+v", req.Context)
 		}
 		switch lastTool(req) {
-		case agent.ToolSubmitPagePlan:
-			return submit(agent.ToolSubmitPagePlan, plan)
-		case agent.ToolSubmitPageChanges:
-			return submit(agent.ToolSubmitPageChanges, changes)
+		case agent.ToolFinishPlan:
+			return listTurn(req, agent.ToolAddPages, "pages", plan.Actions, agent.ToolFinishPlan, map[string]any{"summary": "plan"})
+		case agent.ToolSubmitPage:
+			if turn := assistantTurns(req); turn < len(writer) {
+				return writer[turn]
+			}
+			return submit(agent.ToolSubmitPage, map[string]any{"summary": "Documents the reason"})
 		}
 		t.Fatalf("unexpected tools %v", req.Tools)
 		return api.MessagesResponse{}
@@ -97,14 +100,16 @@ func guidesFixture(t *testing.T) (*repoT, *fakeAPI, string, string) {
 func TestGuidesAuthorsBlockEditsAndNeverTouchesHumanBlocks(t *testing.T) {
 	r, fake, base, head := guidesFixture(t)
 	fake.llm = guidesLLM(t,
-		agent.PagePlan{Actions: []agent.PageAction{
-			{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added in " + head[:7], Units: []string{"feature:refunds"}},
-			{Action: agent.ActionUpdate, PageID: "pg_lock", Slug: "locked", Reason: "nope"},
+		pagePlan{Actions: []agent.PageAction{
+			{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason added in " + head[:7], Units: []string{"feature:refunds"}},
+			{Action: agent.ActionUpdate, PageID: "pg_lock", Slug: "locked", Why: "nope"},
 		}},
-		agent.PageChanges{Summary: "Documents the reason", Upserts: []agent.BlockEdit{
-			{Key: "guide:refunds:reason", Type: "prose", Content: []byte(`{"text":"Pass a reason."}`), Rationale: agent.Rationale{Summary: "new field", Commits: []string{head}}},
-			{Key: "guide:refunds:human", Type: "prose", Content: []byte(`{"text":"overwrite"}`), Rationale: agent.Rationale{Summary: "x"}},
-		}, RemoveKeys: []string{"guide:refunds:human"}, Hints: []agent.HintDraft{{Kind: "contradiction", Claim: "Gateway retries 5 times", UnitKey: "feature:refunds", ForRepos: []string{"gateway", "github.com/acme/billing-api"}}}},
+		calls(
+			call(agent.ToolDraftAppend, map[string]any{"blocks": []any{map[string]any{"type": "prose", "text": "Pass a reason.", "rationale": map[string]any{"summary": "new field", "commits": []string{head}}}}}),
+			call(agent.ToolDraftReplace, map[string]any{"key": "guide:refunds:human", "block": map[string]any{"type": "prose", "text": "overwrite"}}),
+			call(agent.ToolDraftDelete, map[string]any{"keys": []string{"guide:refunds:human"}}),
+			call(agent.ToolRaiseHint, map[string]any{"kind": "contradiction", "claim": "Gateway retries 5 times", "unitKey": "feature:refunds", "detail": "the code says 3", "forRepos": []string{"gateway", "github.com/acme/billing-api"}}),
+		),
 	)
 	w := &writes{}
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite)
@@ -117,7 +122,7 @@ func TestGuidesAuthorsBlockEditsAndNeverTouchesHumanBlocks(t *testing.T) {
 		t.Fatalf("changes = %+v", w.changes)
 	}
 	c := w.changes[0]
-	if c.Op != api.OpUpdate || c.Target.PageID != "pg_1" || len(c.Blocks) != 1 || c.Blocks[0].Key != "guide:refunds:reason" || len(c.RemoveBlockKeys) != 0 {
+	if c.Op != api.OpUpdate || c.Target.PageID != "pg_1" || len(c.Blocks) != 1 || c.Blocks[0].Key != "guide:refunds:1" || *c.Blocks[0].After != "guide:refunds:human" || len(c.RemoveBlockKeys) != 0 || c.Title != "" {
 		t.Fatalf("change = %+v", c)
 	}
 	b := c.Blocks[0]
@@ -142,7 +147,7 @@ func TestGuidesAuthorsBlockEditsAndNeverTouchesHumanBlocks(t *testing.T) {
 
 func TestGuidesOnPullRequestsReportsImpactWithoutAuthoring(t *testing.T) {
 	r, fake, base, head := guidesFixture(t)
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}}, agent.PageChanges{})
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason added"}}})
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
 	in.Trigger = config.TriggerPR
 	rec := &passes.Recorder{}
@@ -150,7 +155,7 @@ func TestGuidesOnPullRequestsReportsImpactWithoutAuthoring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.requests) != 1 || len(rec.Recorded().Changes) != 0 {
+	if len(fake.requests) != 2 || len(rec.Recorded().Changes) != 0 {
 		t.Fatalf("impact mode runs only the plan: %d calls, %d changes", len(fake.requests), len(rec.Recorded().Changes))
 	}
 	if len(rep.Impact) != 1 || rep.Impact[0].Page.Slug != "refunds" || rep.Impact[0].Action != "update" {
@@ -168,7 +173,7 @@ func TestChangelogReleaseAndUnreleasedPages(t *testing.T) {
 	fake := newFakeAPI()
 	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_unrel", Slug: "unreleased", Title: "Unreleased"}, Blocks: []api.PageBlock{{Key: "changelog:unreleased:added:1", Type: "list", Ownership: api.OwnershipHybrid}}})
 	fake.llm = func(req api.MessagesRequest) api.MessagesResponse {
-		return submit(agent.ToolSubmitReleaseNotes, agent.ReleaseNotesInput{Summary: "Refund reasons.", Sections: []agent.ReleaseSection{{Heading: "Added", Items: []agent.ReleaseItem{{Text: "Refund reasons", Commits: []string{head}}}}}})
+		return listTurn(req, agent.ToolAddReleaseItems, "items", []agent.ReleaseItem{{Section: "Added", Text: "Refund reasons", Commits: []string{head}}}, agent.ToolFinishReleaseNotes, map[string]any{"summary": "Refund reasons."})
 	}
 	pp := planPass(config.KindChangelog, "changelog", map[string]any{"audience": "internal"})
 	in := input(t, r, fake, pp, manifest(), base, head, api.ModeWrite)
@@ -210,11 +215,11 @@ func TestNucleusWritesNamespacedRepoTaggedAtoms(t *testing.T) {
 	head := r.commit("feat: caps retries at 3", map[string]string{"a.txt": "2"})
 	fake := newFakeAPI()
 	fake.inventory = []api.Unit{{Key: "feature:retries", Kind: "feature"}}
-	fake.llm = func(api.MessagesRequest) api.MessagesResponse {
-		return submit(agent.ToolSubmitAtoms, agent.AtomsInput{Atoms: []agent.Atom{
+	fake.llm = func(req api.MessagesRequest) api.MessagesResponse {
+		return listTurn(req, agent.ToolAddAtoms, "atoms", []agent.Atom{
 			{Title: "Retries", Body: "Webhooks retry 3 times.", Commits: []string{head}, Units: []string{"feature:retries", "feature:unknown"}},
 			{Title: "Decision", Body: "x", Kind: "decision"},
-		}})
+		}, agent.ToolFinishAtoms, map[string]any{})
 	}
 	w := &writes{}
 	in := input(t, r, fake, planPass(config.KindNucleus, "memory", map[string]any{"kinds": []any{"fact"}}), manifest(), base, head, api.ModeWrite)
@@ -250,13 +255,13 @@ func TestCheckFindsDriftCoverageAndContradictions(t *testing.T) {
 		{Key: "feature:webhooks", Kind: "feature", Contributors: []api.Contributor{{Repo: api.RepoRef{RemoteKey: "github.com/acme/billing-api"}, Role: api.RoleImplements}}},
 		{Key: "feature:gateway", Kind: "feature", Contributors: []api.Contributor{{Repo: api.RepoRef{RemoteKey: "github.com/acme/billing-api"}, Role: api.RoleDeclares}, {Repo: api.RepoRef{RemoteKey: "github.com/acme/gateway"}, Role: api.RoleImplements}}},
 	}
-	fake.llm = func(api.MessagesRequest) api.MessagesResponse {
-		return submit(agent.ToolReportFindings, agent.FindingsInput{Findings: []agent.ClaimFinding{
+	fake.llm = func(req api.MessagesRequest) api.MessagesResponse {
+		return listTurn(req, agent.ToolAddFindings, "findings", []agent.ClaimFinding{
 			{Verdict: api.VerdictContradicted, Title: "Refunds says 5 retries", UnitKey: "api:post:/v1/refunds", PageID: "pg_ref", File: "src/webhooks.ts", Line: 1},
 			{Verdict: api.VerdictContradicted, Title: "Gateway timeout", UnitKey: "feature:gateway", PageID: "pg_ref"},
 			{Verdict: api.VerdictUnverifiable, Title: "Daily limit", PageID: "pg_ref"},
 			{Verdict: api.VerdictTrueElsewhere, Title: "Auth", Repo: "github.com/acme/gateway"},
-		}})
+		}, agent.ToolFinishReview, map[string]any{"summary": "reviewed"})
 	}
 	pp := planPass(config.KindCheck, "gate", map[string]any{"coverageMin": 1.0, "require": []any{"feature"}})
 	in := input(t, r, fake, pp, manifest(), base, head, api.ModeDry)
@@ -484,10 +489,11 @@ func TestBuiltInCoverageFollowsNewOperations(t *testing.T) {
 func TestGuidesDropsHintsNobodyCanReceive(t *testing.T) {
 	r, fake, base, head := guidesFixture(t)
 	fake.llm = guidesLLM(t,
-		agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason", Units: []string{"feature:refunds"}}}},
-		agent.PageChanges{Summary: "Documents the reason", Upserts: []agent.BlockEdit{
-			{Key: "guide:refunds:steps", Type: "list", Content: []byte(`{"text":"Pass a reason.","variant":"unordered"}`), Rationale: agent.Rationale{Summary: "new field", Commits: []string{head}}},
-		}, Hints: []agent.HintDraft{{Kind: "contradiction", Claim: "Retries 5 times", UnitKey: "feature:refunds"}}},
+		pagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason", Units: []string{"feature:refunds"}}}},
+		calls(
+			call(agent.ToolDraftAppend, map[string]any{"blocks": []any{map[string]any{"type": "list", "text": "Pass a reason.", "variant": "unordered"}}}),
+			call(agent.ToolRaiseHint, map[string]any{"kind": "contradiction", "claim": "Retries 5 times", "unitKey": "feature:refunds", "detail": "x"}),
+		),
 	)
 	w := &writes{}
 	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))
@@ -509,7 +515,7 @@ func TestCheckReviewsAChangedVerbatimFileAsItWillBeImported(t *testing.T) {
 	fake := newFakeAPI()
 	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_lim", Slug: "limits", Title: "Limits", Lock: &api.PageLock{Pass: "handbook", Path: "docs/limits.md", Repo: &api.RepoRef{RemoteKey: "github.com/acme/billing-api"}}}, Blocks: []api.PageBlock{{Key: "doc:limits", Type: "prose", Ownership: api.OwnershipMachine, Text: "Retries: 5."}}})
 	fake.llm = func(api.MessagesRequest) api.MessagesResponse {
-		return submit(agent.ToolReportFindings, agent.FindingsInput{})
+		return submit(agent.ToolFinishReview, map[string]any{"summary": "no claims"})
 	}
 	pp := planPass(config.KindCheck, "gate", nil)
 	verbatim := planPass(config.KindVerbatim, "handbook", map[string]any{"files": []any{map[string]any{"include": "docs/**/*.md"}}})
@@ -570,7 +576,7 @@ func TestCheckReviewsChangedVerbatimPagesFirst(t *testing.T) {
 		fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_" + n, Slug: n, Title: n, Lock: &api.PageLock{Pass: "handbook", Path: "docs/" + n + ".md", Repo: &api.RepoRef{RemoteKey: "github.com/acme/billing-api"}}}, Blocks: []api.PageBlock{{Key: "doc:" + n, Type: "prose", Ownership: api.OwnershipMachine, Text: "old text " + n}}})
 	}
 	fake.llm = func(api.MessagesRequest) api.MessagesResponse {
-		return submit(agent.ToolReportFindings, agent.FindingsInput{})
+		return submit(agent.ToolFinishReview, map[string]any{"summary": "no claims"})
 	}
 	pp := planPass(config.KindCheck, "gate", nil)
 	verbatim := planPass(config.KindVerbatim, "handbook", map[string]any{"files": []any{map[string]any{"include": "docs/**/*.md"}}})
@@ -581,7 +587,7 @@ func TestCheckReviewsChangedVerbatimPagesFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	kickoff, _ := json.Marshal(fake.requests[0].Messages)
-	if !strings.Contains(string(kickoff), "new text z") || strings.Count(string(kickoff), "## Page ") != 4 {
+	if !strings.Contains(string(kickoff), "new text z") || strings.Count(string(kickoff), "\\u003cpage id=") != 4 {
 		t.Fatalf("the changed page is among the 4 reviewed: %s", kickoff)
 	}
 }

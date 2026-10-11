@@ -124,8 +124,8 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, 200, p.llm(body))
-	case strings.HasPrefix(path, "/api/llm/v1/prompts/"):
-		apiErr(w, 404, "not_found", nil)
+	case path == "/api/llm/v1/instructions":
+		reply(w, 200, testBundle())
 	default:
 		apiErr(w, 404, "not_found", map[string]any{"message": "no route " + path})
 	}
@@ -277,4 +277,19 @@ func manifest(t *testing.T, extra string) *config.Manifest {
 		t.Fatal(err)
 	}
 	return m
+}
+
+func testBundle() map[string]any {
+	system := map[string]any{}
+	for _, phase := range []string{api.PhaseGuidesPlan, api.PhaseGuidesWrite, api.PhaseReachWrite, api.PhaseReferenceProse, api.PhaseChangelogWrite, api.PhaseNucleusDistill, api.PhaseCheckReview, api.PhaseUnitsMap} {
+		system[phase] = "system for " + phase
+	}
+	return map[string]any{
+		"schema": api.InstructionsSchema, "version": "sha256:test", "toolContract": api.ToolContract,
+		"model":    map[string]any{"id": "anthropic/claude-test", "label": "Claude Test", "quality": "recommended", "provider": "anthropic", "limits": map[string]any{"maxOutputTokens": 16000, "contextWindow": 200000, "known": true}, "features": map[string]any{"forcedToolChoice": true}},
+		"language": map[string]any{"code": "en", "name": "English"},
+		"harness":  map[string]any{"maxTurns": 80, "maxToolCalls": 200, "stepTokens": 4000, "maxContinueNudges": 4},
+		"rendered": map[string]any{"system": system},
+		"tools":    map[string]any{},
+	}
 }

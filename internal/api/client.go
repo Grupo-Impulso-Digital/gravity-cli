@@ -28,25 +28,38 @@ type RetryPolicy struct {
 // DefaultRetry is three attempts with exponential backoff from one second.
 var DefaultRetry = RetryPolicy{Attempts: 3, Base: time.Second, Max: 60 * time.Second}
 
+// Request deadlines.
+const (
+	DefaultTimeout     = 120 * time.Second
+	DefaultLLMTimeout  = 15 * time.Minute
+	DefaultLLMRetryCap = 30 * time.Minute
+)
+
 // Client talks to the Gravity platform.
 type Client struct {
-	BaseURL    string
-	Token      string
-	HTTPClient *http.Client
-	UserAgent  string
-	Retry      RetryPolicy
-	Sleep      func(ctx context.Context, d time.Duration) error
+	BaseURL     string
+	Token       string
+	HTTPClient  *http.Client
+	UserAgent   string
+	Retry       RetryPolicy
+	Sleep       func(ctx context.Context, d time.Duration) error
+	LLMTimeout  time.Duration
+	LLMRetryCap time.Duration
+	Now         func() time.Time
 }
 
 // New constructs a Client.
 func New(baseURL, token string) *Client {
 	return &Client{
-		BaseURL:    strings.TrimRight(baseURL, "/"),
-		Token:      token,
-		UserAgent:  version.UserAgent(),
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
-		Retry:      DefaultRetry,
-		Sleep:      sleepContext,
+		BaseURL:     strings.TrimRight(baseURL, "/"),
+		Token:       token,
+		UserAgent:   version.UserAgent(),
+		HTTPClient:  &http.Client{Timeout: DefaultTimeout},
+		Retry:       DefaultRetry,
+		Sleep:       sleepContext,
+		LLMTimeout:  DefaultLLMTimeout,
+		LLMRetryCap: DefaultLLMRetryCap,
+		Now:         time.Now,
 	}
 }
 
@@ -70,6 +83,8 @@ type request struct {
 	contentType string
 	headers     map[string]string
 	idempotent  bool
+	llm         bool
+	respHeader  *http.Header
 }
 
 func (c *Client) do(ctx context.Context, r request, out any) error {
@@ -84,10 +99,13 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		}
 		payload = buf
 	}
+	if r.llm {
+		return c.doLLM(ctx, r, payload, out)
+	}
 	attempts := max(c.Retry.Attempts, 1)
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		status, data, header, err := c.send(ctx, r, payload)
+		status, data, header, err := c.send(ctx, r, payload, 0)
 		if err != nil {
 			lastErr = err
 			if (r.method != http.MethodGet && !r.idempotent) || attempt == attempts || ctx.Err() != nil {
@@ -99,12 +117,7 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 			continue
 		}
 		if status >= 200 && status < 300 {
-			if out != nil && len(data) > 0 {
-				if err := json.Unmarshal(data, out); err != nil {
-					return fmt.Errorf("decode response of %s %s: %w", r.method, r.path, err)
-				}
-			}
-			return nil
+			return c.decodeOK(r, header, data, out)
 		}
 		apiErr := decodeError(status, header, data)
 		apiErr.Method, apiErr.Path = r.method, r.path
@@ -119,7 +132,73 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 	return lastErr
 }
 
-func (c *Client) send(ctx context.Context, r request, payload []byte) (int, []byte, http.Header, error) {
+func (c *Client) doLLM(ctx context.Context, r request, payload []byte, out any) error {
+	now := c.Now
+	if now == nil {
+		now = time.Now
+	}
+	limit := c.LLMRetryCap
+	if limit <= 0 {
+		limit = DefaultLLMRetryCap
+	}
+	perCall := c.LLMTimeout
+	if perCall <= 0 {
+		perCall = DefaultLLMTimeout
+	}
+	var spent time.Duration
+	for attempt := 1; ; attempt++ {
+		sent := now()
+		status, data, header, err := c.send(ctx, r, payload, min(perCall, max(limit-spent, time.Second)))
+		spent += max(now().Sub(sent), 0)
+		var failure error
+		retryAfter := 0
+		switch {
+		case err != nil:
+			if ctx.Err() != nil {
+				return err
+			}
+			failure = err
+		case status >= 200 && status < 300:
+			return c.decodeOK(r, header, data, out)
+		default:
+			apiErr := decodeError(status, header, data)
+			apiErr.Method, apiErr.Path = r.method, r.path
+			if !retryable(status) {
+				return classifyLicense(apiErr)
+			}
+			failure, retryAfter = apiErr, apiErr.RetryAfter
+		}
+		wait := c.llmBackoff(attempt, retryAfter)
+		if spent+wait >= limit {
+			return failure
+		}
+		if serr := c.wait(ctx, wait); serr != nil {
+			return serr
+		}
+		spent += wait
+	}
+}
+
+func (c *Client) llmBackoff(attempt, retryAfter int) time.Duration {
+	if retryAfter > 0 {
+		return time.Duration(retryAfter) * time.Second
+	}
+	return c.backoff(attempt, 0)
+}
+
+func (c *Client) decodeOK(r request, header http.Header, data []byte, out any) error {
+	if r.respHeader != nil {
+		*r.respHeader = header
+	}
+	if out != nil && len(data) > 0 {
+		if err := json.Unmarshal(data, out); err != nil {
+			return fmt.Errorf("decode response of %s %s: %w", r.method, r.path, err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) send(ctx context.Context, r request, payload []byte, timeout time.Duration) (int, []byte, http.Header, error) {
 	u := c.BaseURL + r.path
 	if len(r.query) > 0 {
 		u += "?" + r.query.Encode()
@@ -151,6 +230,11 @@ func (c *Client) send(ctx context.Context, r request, payload []byte) (int, []by
 	httpClient := c.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
+	}
+	if timeout > 0 {
+		hc := *httpClient
+		hc.Timeout = timeout
+		httpClient = &hc
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -210,18 +294,18 @@ func decodeError(status int, header http.Header, data []byte) *APIError {
 	e := &APIError{StatusCode: status}
 	var env struct {
 		Error struct {
-			Code       string        `json:"code"`
-			Message    string        `json:"message"`
-			Details    []ErrorDetail `json:"details"`
-			Module     string        `json:"module"`
-			RetryAfter int           `json:"retryAfter"`
-			Holder     *LeaseHolder  `json:"holder"`
+			Code       string          `json:"code"`
+			Message    string          `json:"message"`
+			Details    json.RawMessage `json:"details"`
+			Module     string          `json:"module"`
+			RetryAfter int             `json:"retryAfter"`
+			Holder     *LeaseHolder    `json:"holder"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(data, &env) == nil {
 		e.Code = env.Error.Code
 		e.Message = env.Error.Message
-		e.Details = env.Error.Details
+		e.Details, e.Fields = decodeDetails(env.Error.Details)
 		e.Module = env.Error.Module
 		e.RetryAfter = env.Error.RetryAfter
 		e.Holder = env.Error.Holder
@@ -235,6 +319,21 @@ func decodeError(status int, header http.Header, data []byte) *APIError {
 		e.Message = summarizeBody(status, header.Get("Content-Type"), data)
 	}
 	return e
+}
+
+func decodeDetails(raw json.RawMessage) ([]ErrorDetail, map[string]any) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var list []ErrorDetail
+	if json.Unmarshal(raw, &list) == nil {
+		return list, nil
+	}
+	var fields map[string]any
+	if json.Unmarshal(raw, &fields) == nil {
+		return nil, fields
+	}
+	return nil, nil
 }
 
 const maxErrorSummary = 200

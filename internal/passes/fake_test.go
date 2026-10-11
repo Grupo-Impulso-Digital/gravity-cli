@@ -93,6 +93,7 @@ type fakeAPI struct {
 	recall    []api.RecallHit
 	runs      []*api.Run
 	llm       func(req api.MessagesRequest) api.MessagesResponse
+	llmErr    func(req api.MessagesRequest) error
 	requests  []api.MessagesRequest
 }
 
@@ -165,6 +166,11 @@ func (f *fakeAPI) Messages(_ context.Context, req api.MessagesRequest) (*api.Mes
 	f.mu.Lock()
 	f.requests = append(f.requests, req)
 	f.mu.Unlock()
+	if f.llmErr != nil {
+		if err := f.llmErr(req); err != nil {
+			return nil, err
+		}
+	}
 	if f.llm == nil {
 		return nil, fmt.Errorf("unexpected LLM call")
 	}
@@ -180,9 +186,42 @@ func submit(name string, input any) api.MessagesResponse {
 	}
 }
 
+func call(name string, input any) api.ContentPart {
+	data, _ := json.Marshal(input)
+	return api.ContentPart{Type: api.PartToolUse, Name: name, Input: data}
+}
+
+func calls(parts ...api.ContentPart) api.MessagesResponse {
+	for i := range parts {
+		parts[i].ID = fmt.Sprintf("tu_%d", i+1)
+	}
+	return api.MessagesResponse{StopReason: api.StopToolUse, Usage: api.Usage{InputTokens: 100, OutputTokens: 10}, Content: parts}
+}
+
+type pagePlan struct {
+	Actions []agent.PageAction
+}
+
+func listTurn(req api.MessagesRequest, add, field string, items any, finish string, done any) api.MessagesResponse {
+	if assistantTurns(req) == 0 {
+		return submit(add, map[string]any{field: items})
+	}
+	return submit(finish, done)
+}
+
+func assistantTurns(req api.MessagesRequest) int {
+	n := 0
+	for _, m := range req.Messages {
+		if m.Role == api.RoleAssistant {
+			n++
+		}
+	}
+	return n
+}
+
 func lastTool(req api.MessagesRequest) string {
 	for _, t := range req.Tools {
-		if strings.HasPrefix(t.Name, "submit_") || t.Name == agent.ToolReportFindings {
+		if strings.HasPrefix(t.Name, "submit_") || strings.HasPrefix(t.Name, "finish_") {
 			return t.Name
 		}
 	}
@@ -216,7 +255,7 @@ func input(t *testing.T, r *repoT, fake *fakeAPI, pp api.PlanPass, m *config.Man
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &agent.Harness{LLM: fake, RunID: "prun_1", RunPassID: "ppr_1"}
+	h := &agent.Harness{LLM: fake, Bundle: testBundle(), RunID: "prun_1", RunPassID: "ppr_1"}
 	return passes.Input{
 		Pass: pp, Plan: p, Manifest: m, Range: rng, ChangeSet: cs, Builder: b, RunID: "prun_1", RunPassID: "ppr_1", Mode: mode, Trigger: "push",
 		Repo: repo, Info: passes.RepoInfo{ID: "cr_1", RemoteKey: "github.com/acme/billing-api", Name: "billing-api", WebURL: "https://github.com/acme/billing-api", Provider: "github", Branch: "main"},
@@ -298,4 +337,17 @@ func (w *writes) WriteMemory(_ context.Context, req api.MemoryWrite) (*api.Memor
 
 func sink(w *writes) *passes.PlatformSink {
 	return &passes.PlatformSink{W: w, RunID: "prun_1", RunPassID: "ppr_1", Assets: passes.NewAssets()}
+}
+
+func testBundle() *api.InstructionsBundle {
+	system := map[string]string{}
+	for _, phase := range []string{api.PhaseGuidesPlan, api.PhaseGuidesWrite, api.PhaseReachWrite, api.PhaseReferenceProse, api.PhaseChangelogWrite, api.PhaseNucleusDistill, api.PhaseCheckReview, api.PhaseUnitsMap} {
+		system[phase] = "system for " + phase
+	}
+	return &api.InstructionsBundle{
+		Schema: api.InstructionsSchema, Version: "sha256:test", ToolContract: api.ToolContract,
+		Model:    api.BundleModel{ID: "anthropic/claude-test", Limits: api.ModelLimits{MaxOutputTokens: 16000, ContextWindow: 200000, Known: true}, Features: api.ModelFeatures{ForcedToolChoice: true}},
+		Harness:  api.HarnessLimits{MaxTurns: 80, MaxToolCalls: 200, StepTokens: 4000, MaxContinueNudges: 4},
+		Rendered: api.RenderedPrompts{System: system},
+	}
 }

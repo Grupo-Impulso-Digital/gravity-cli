@@ -26,15 +26,24 @@ const RecordingDir = ".gravity/runs"
 
 // RecordedPass is one pass of a recorded dry run.
 type RecordedPass struct {
-	Name     string           `json:"name"`
-	Kind     string           `json:"kind"`
-	Target   string           `json:"target"`
-	Range    *changeset.Range `json:"range,omitempty"`
-	Summary  string           `json:"summary,omitempty"`
-	Counts   passes.Counts    `json:"counts"`
-	Warnings []string         `json:"warnings,omitempty"`
-	CostUSD  float64          `json:"costUsd"`
-	Recorded passes.Recorded  `json:"recorded"`
+	Name       string           `json:"name"`
+	Kind       string           `json:"kind"`
+	Target     string           `json:"target"`
+	Range      *changeset.Range `json:"range,omitempty"`
+	Summary    string           `json:"summary,omitempty"`
+	Counts     passes.Counts    `json:"counts"`
+	Warnings   []string         `json:"warnings,omitempty"`
+	CostUSD    float64          `json:"costUsd"`
+	Recorded   passes.Recorded  `json:"recorded"`
+	Generation *api.Generation  `json:"generation,omitempty"`
+	Usage      *RecordedUsage   `json:"usage,omitempty"`
+}
+
+// RecordedUsage is what a recorded pass spent on model calls.
+type RecordedUsage struct {
+	Turns        int `json:"turns"`
+	InputTokens  int `json:"inputTokens"`
+	OutputTokens int `json:"outputTokens"`
 }
 
 // Recording is a dry run saved so it can be sent without recomputing.
@@ -74,7 +83,10 @@ func NewRecording(res *Result, remoteKey, manifestHash string, now time.Time) *R
 		if p.Status != api.StatusSucceeded || p.Report == nil || p.Report.Recorded == nil {
 			continue
 		}
-		rp := RecordedPass{Name: p.Name, Kind: p.Kind, Target: p.Target, Range: p.Range, Summary: p.Report.Summary, Counts: p.Report.Counts, Warnings: p.Report.Warnings, CostUSD: p.CostUSD, Recorded: *p.Report.Recorded}
+		rp := RecordedPass{Name: p.Name, Kind: p.Kind, Target: p.Target, Range: p.Range, Summary: p.Report.Summary, Counts: p.Report.Counts, Warnings: p.Report.Warnings, CostUSD: p.CostUSD, Recorded: *p.Report.Recorded, Generation: p.Generation}
+		if u := p.Report.Usage; u.Calls > 0 || p.Generation != nil {
+			rp.Usage = &RecordedUsage{Turns: u.Calls, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}
+		}
 		rec.CostUSD += p.CostUSD
 		rec.Passes = append(rec.Passes, rp)
 	}
@@ -86,6 +98,27 @@ func RecordingPath(root, runID string) string {
 	return filepath.Join(root, filepath.FromSlash(RecordingDir), runID+".json")
 }
 
+// DebugDir is where --debug keeps a run pass's draft workspaces: .gravity/runs/<runId>/<runPassId>.
+func DebugDir(root, runID, runPassID string) string {
+	ensureIgnored(root)
+	return filepath.Join(root, filepath.FromSlash(RecordingDir), runID, runPassID)
+}
+
+// BundlePath is where --debug stores a run pass's instructions bundle: .gravity/runs/<runId>/<runPassId>.instructions.json.
+func BundlePath(root, runID, runPassID string) string {
+	ensureIgnored(root)
+	return filepath.Join(root, filepath.FromSlash(RecordingDir), runID, runPassID+".instructions.json")
+}
+
+func ensureIgnored(root string) {
+	ignore := filepath.Join(root, ".gravity", ".gitignore")
+	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
+		if os.MkdirAll(filepath.Dir(ignore), 0o755) == nil {
+			_ = os.WriteFile(ignore, []byte("*\n"), 0o644)
+		}
+	}
+}
+
 // SaveRecording writes the recording under the repository root and returns its path.
 func SaveRecording(root string, rec *Recording) (string, error) {
 	if rec.RunID == "" {
@@ -95,10 +128,7 @@ func SaveRecording(root string, rec *Recording) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", fmt.Errorf("create %s: %w", filepath.Dir(p), err)
 	}
-	ignore := filepath.Join(root, ".gravity", ".gitignore")
-	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
-		_ = os.WriteFile(ignore, []byte("*\n"), 0o644)
-	}
+	ensureIgnored(root)
 	data, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("encode recording: %w", err)
@@ -225,6 +255,7 @@ func Replay(ctx context.Context, env *Env, opts Options, rec *Recording) (*Resul
 
 func replayRequest(env *Env, opts Options, p *api.Plan, rec *Recording) api.StartRunRequest {
 	req := api.StartRunRequest{
+		Harness:   api.HarnessVersion,
 		ClientKey: env.key(), Trigger: opts.Trigger, Mode: api.ModeWrite, Origin: firstOf(opts.Origin, api.OriginLocal),
 		Branch: opts.Branch, HeadSHA: rec.HeadSHA, CI: opts.CI, Note: firstOf(opts.Note, "sent from dry run "+rec.RunID),
 		CLI: api.CLIInfo{Version: strings.TrimPrefix(env.Generator, "gravity-cli/")}, PlanHash: p.PlanHash,
@@ -273,7 +304,7 @@ func replay(ctx context.Context, env *Env, started *api.StartedRun, byName map[s
 			return cancelRun(ctx, env, started.Run.ID, res)
 		}
 		out := replayPass(ctx, env, started.Run.ID, rp, recd, rec.HeadSHA, assets)
-		out.Name, out.Kind, out.Target, out.RunPassID, out.Range = base.Name, base.Kind, base.Target, base.RunPassID, base.Range
+		out.Name, out.Kind, out.Target, out.RunPassID, out.Range, out.Generation = base.Name, base.Kind, base.Target, base.RunPassID, base.Range, recd.Generation
 		res.Passes = append(res.Passes, out)
 		emit(env, out)
 	}
@@ -346,7 +377,7 @@ func replayPass(ctx context.Context, env *Env, runID string, rp api.RunPass, rec
 	out.Status = status
 	out.Report = &rep
 	pr := fitReport(rep.PassReport)
-	r, err := env.Client.ReportPass(ctx, runID, rp.RunPassID, api.PassReportRequest{Status: status, Error: msg, Report: &pr})
+	r, err := env.Client.ReportPass(ctx, runID, rp.RunPassID, api.PassReportRequest{Status: status, Error: msg, Report: &pr, Generation: recd.Generation})
 	if err == nil && r != nil {
 		out.CostUSD, out.LLMCalls = recd.CostUSD, r.LLMCalls
 	}

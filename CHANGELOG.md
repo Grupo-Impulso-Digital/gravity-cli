@@ -1,5 +1,135 @@
 # Changelog
 
+## v1.2.0 — Unreleased
+
+### Added
+
+- `gravity run --model <id>` runs the AI passes on that model instead of the
+  one configured in Gravity: it is sent on the plan, the run start and every
+  instructions bundle request.
+- The plan view names each AI pass that runs with its model, quality label
+  and output language (`<pass> model: <label> · <quality> · <language>
+  (<code>)`), warns about a fallback model (`model_fallback`) and a model
+  rated `not_recommended` (`model_not_recommended`; `--yes` still proceeds;
+  in CI the warning is printed at launch), and stops the run before the
+  confirm, with `model_unavailable` and exit `2`, when a model cannot run
+  (not enabled, no provider key, model catalog unreachable).
+- `gravity show` prints the model, quality label and output language of each
+  AI pass from the plan; `gravity show --model <id>` previews another model.
+- `gravity run --debug` keeps each pass's instructions bundle
+  (`.gravity/runs/<runId>/<runPassId>.instructions.json`) and page drafts
+  (`.gravity/runs/<runId>/<runPassId>/`).
+- Model quality eval kit (`docs/model-eval.md`): `testdata/eval/make-fixture.sh`
+  generates the Topics API fixture (17 endpoints, 3 internal, English and
+  French commits), `testdata/eval/setup.sh` seeds a Gravity server for it,
+  and `make eval MODEL=<id> [MAX_OUTPUT=<n>]` runs a dry run on it and scores
+  the recording (check pass rate, public endpoint coverage n/14, words per
+  endpoint section, internal leaks, turns, tokens, duration) into JSON and
+  Markdown under `testdata/eval/results/`.
+- A hidden `gravity run --max-output <n>` lowers the model's output limit for
+  model evaluation (sent as the bundle's `maxOutput`).
+- Recorded dry runs keep, per AI pass, `generation` (instructions version,
+  model, provider) and `usage` (turns, input and output tokens);
+  `gravity run --send` forwards `generation` in the pass reports and refuses
+  `--model` and `--max-output`. `gravity run --json` carries
+  `passes[].generation` and `plan.passes[].model`/`language`.
+- A run whose AI passes need instructions from a server without the bundle
+  endpoint fails with `server_too_old`; an unsupported tool contract fails
+  with `tool_contract_unsupported`.
+- API client for the harness v2 contract: the `gravity.instructions/1`
+  bundle (`GET /api/llm/v1/instructions`, with `model` and `maxOutput`),
+  checked for its schema and tool contract majors; an older server fails with
+  "this Gravity server is too old for gravity 1.2 (no instructions bundle);
+  upgrade the server or use gravity 1.1".
+- Plans and run starts carry a requested `model`; plan passes report their
+  resolved `model` (label, quality, limits, fallback, unavailable reason) and
+  output `language`. Pass reports can carry `generation` (instructions
+  version, model, provider).
+- Model calls can send `system` as cached text blocks, cache breakpoints on
+  message parts, `context.instructionsVersion` and `context.phase`, and read
+  cache token usage and the `x-gravity-model`, `x-gravity-provider` and
+  `x-gravity-fallback` headers.
+- Error codes `model_unavailable` (with its reason), `model_conflict`,
+  `bundle_required`, `context_too_large` and `provider_bad_request`, with
+  hints; object-shaped error `details` are decoded. `budget_exceeded` and
+  `no_provider_key` are run-halting (`api.HaltsRun`).
+- The agent loop runs every phase from the run pass's instructions bundle:
+  the phase's rendered system prompt as one cached block, the bundle's tool
+  descriptions, its turn and tool-call caps (the terminal tool is forced for
+  the last three turns), `max_tokens` sized from the model's output limit and
+  context window, old tool results elided above 60% of the window, one retry
+  after `413 context_too_large`, and handling of the `max_tokens`
+  (`output_limit` after three in a row), `end_turn` (continue nudges, then
+  `no_submit`) and `refusal` stop reasons.
+- Pages are written incrementally in a draft workspace: the write phases
+  (`guides.write`, `reach.write`, `reference.prose`) seed the draft from the
+  page (human, non-authored, `api`/`verbatim`-bound, person-edited hybrid
+  and, for unit reach, unbound blocks are locked), edit it with `draft_view`,
+  `draft_append`, `draft_replace`, `draft_delete`, `check_page` and
+  `raise_hint`, and end with `submit_page`, which maps the draft diff to one
+  change (upserts chained with `after`, `"^"` for the top, removed keys, new
+  keys `guide:<slug>:<n>` or `ref:<slug>:<n>`).
+- Deterministic page checks on new and changed blocks: wrong output language,
+  code or JSON in prose, markdown headings in text, planning voice, output
+  markers and uncovered `mustCover` tokens are errors `submit_page` refuses;
+  short new pages and duplicate adjacent blocks are warnings.
+- `read_file`, `git_diff` and `read_page` page through long content with
+  `offset` and `limit`; `read_page` also takes a `slug`.
+- List phases build their result over many calls: `add_pages`/`finish_plan`
+  (with `mustCover` and `why`, and `page budget reached (<n>)` past
+  `maxPages`), `add_release_items`/`finish_release_notes` (grouped by section
+  by the CLI), `add_atoms`/`finish_atoms` (`maxAtoms` across calls),
+  `add_findings`/`finish_review` and `add_units`/`finish_units`. Invalid items
+  are refused one by one and the valid ones kept.
+- The bundle of every model pass is fetched right after the run starts and
+  before ingest; any error finishes the run as failed before a pass starts.
+  The CLI prints `model · quality · language · instructions <version8>` per
+  pass, keeps the bundle under `--debug`
+  (`.gravity/runs/<runId>/<runPassId>.instructions.json`) and sends
+  `generation` in pass reports.
+- `budget_exceeded` and `no_provider_key` halt the run: no other pass starts,
+  passes in flight are canceled, and the run is finished as failed with the
+  reason.
+
+### Changed
+
+- The doc tools `recall_nucleus` and `product_inventory` are now `recall` and
+  `inventory` (`gravity.tools/1`).
+- The writer kickoff carries data only and no longer inlines the current page.
+- Every kickoff (plan, changelog, nucleus, check, units map) is tagged data
+  with no instructions; the guides plan's `reason` is now `why` and is added
+  to the change request summary.
+- Map-units ingests its units, as a complete list, only after an unforced
+  `finish_units {complete: true}`; otherwise none is ingested.
+- A failed reference prose page fails the pass (it was a warning).
+- Reference prose for a page that is not readable yet (its create still
+  pending) is skipped with a warning instead of sending an update without a
+  page id.
+- On a forced turn, or past the tool-call cap, refused work calls no longer
+  block the terminal tool in the same reply, so a forced list-phase terminal
+  keeps its partial result instead of ending with `cap_reached`.
+- The eval scorer splits each section's words among the endpoints it names
+  before choosing an endpoint's section, so an overview table no longer hides
+  the per-endpoint sections.
+- List blocks hold one item: an `items` array is no longer joined into one
+  block, and the `task` variant becomes `bulleted`. Callout variants are
+  `info`, `success`, `warning` and `danger`.
+- Model calls get a 15 min deadline per attempt (other calls keep 120 s) and
+  retry `429`, `5xx` and network errors, honoring `Retry-After`, for up to
+  30 min in total instead of three attempts.
+
+### Removed
+
+- The `submit_page_changes` tool: pages are built through the draft tools.
+- The one-shot terminals `submit_page_plan`, `submit_release_notes`,
+  `submit_atoms`, `report_findings` and `submit_units`, the plan action
+  `none` and the release notes `title`.
+- The prompts baked into the binary and the hosted prompt resolver
+  (`GET /api/llm/v1/prompts/{name}`): the instructions bundle is the only
+  instruction source.
+- The pass token budget (400k tokens per pass); the server's run and month
+  budgets apply.
+
 ## v1.1.1 — Unreleased
 
 ### Fixed

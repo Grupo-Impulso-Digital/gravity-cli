@@ -1,9 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -46,6 +48,18 @@ const (
 	CodeSourceNotVerbatim    = "source_not_verbatim"
 	CodeSourcePending        = "source_pending_adoption"
 	CodeTranslationTaken     = "translation_taken"
+	CodeModelUnavailable     = "model_unavailable"
+	CodeModelConflict        = "model_conflict"
+	CodeBundleRequired       = "bundle_required"
+	CodeContextTooLarge      = "context_too_large"
+	CodeProviderBadRequest   = "provider_bad_request"
+)
+
+// Reasons of a model_unavailable refusal (details.reason).
+const (
+	ModelReasonNotEnabled         = "not_enabled"
+	ModelReasonNoKey              = "no_key"
+	ModelReasonCatalogUnavailable = "catalog_unavailable"
 )
 
 // Sentinels matched by errors.Is against an *APIError.
@@ -78,6 +92,7 @@ type APIError struct {
 	Code       string
 	Message    string
 	Details    []ErrorDetail
+	Fields     map[string]any
 	Module     string
 	RetryAfter int
 	Holder     *LeaseHolder
@@ -104,6 +119,9 @@ func (e *APIError) Error() string {
 			msg += " (" + strings.Join(parts, "; ") + ")"
 		}
 	}
+	if extra := e.fieldSummary(); extra != "" && !strings.Contains(msg, extra) {
+		msg += " (" + extra + ")"
+	}
 	if hint := e.hint(); hint != "" {
 		msg += "; " + hint
 	}
@@ -113,12 +131,73 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("%s [%d]", msg, e.StatusCode)
 }
 
+// Field returns details.<key> of an object-shaped details envelope as a string.
+func (e *APIError) Field(key string) string {
+	switch v := e.Fields[key].(type) {
+	case string:
+		return v
+	case nil:
+		return ""
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	default:
+		buf, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return string(buf)
+	}
+}
+
+// Reason is details.reason of an object-shaped details envelope.
+func (e *APIError) Reason() string { return e.Field("reason") }
+
+// Param is details.param of an object-shaped details envelope.
+func (e *APIError) Param() string { return e.Field("param") }
+
+// Requested is details.requested of an object-shaped details envelope.
+func (e *APIError) Requested() string { return e.Field("requested") }
+
+func (e *APIError) fieldSummary() string {
+	var parts []string
+	if r := e.Requested(); r != "" {
+		parts = append(parts, "model "+r)
+	}
+	if r := e.Reason(); r != "" {
+		parts = append(parts, "reason: "+r)
+	}
+	if p := e.Param(); p != "" {
+		parts = append(parts, "param: "+p)
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (e *APIError) hint() string {
 	switch e.Code {
 	case CodeTokenExpired:
 		return "run `gravity login` to get a new token"
 	case CodeRepoNotConnected:
 		return "run `gravity setup` to connect this repository"
+	case CodeModelUnavailable:
+		switch e.Reason() {
+		case ModelReasonNoKey:
+			return "add the provider key in Gravity's AI settings, or choose another model with --model"
+		case ModelReasonNotEnabled:
+			return "enable the model in Gravity's AI settings, or choose another model with --model"
+		case ModelReasonCatalogUnavailable:
+			return "the model catalog is unreachable; retry later or pin an enabled model"
+		}
+		return "check Gravity's AI settings, or choose another model with --model"
+	case CodeModelConflict:
+		return "this run pass already uses another model; start a new run to change it"
+	case CodeBundleRequired:
+		return "the instructions bundle must be fetched before the first model call of a run pass"
+	case CodeNoProviderKey:
+		return "add an LLM provider key in Gravity's AI settings"
+	case CodeBudgetExceeded:
+		return "the repository's run or monthly AI budget is spent; raise it in Gravity"
 	}
 	if e.StatusCode == http.StatusUnauthorized && e.Code == "" {
 		return "check the token or run `gravity login`"
@@ -157,6 +236,11 @@ func (e *APIError) IsAuth() bool {
 func HasCode(err error, code string) bool {
 	var e *APIError
 	return errors.As(err, &e) && e.Code == code
+}
+
+// HaltsRun reports whether err must halt the whole run: no new task or pass starts, in-flight work is canceled, and the run is finished as failed.
+func HaltsRun(err error) bool {
+	return HasCode(err, CodeBudgetExceeded) || HasCode(err, CodeNoProviderKey)
 }
 
 // StopsRun reports whether err means the run must stop immediately without calling finish: a lost lease, an ended run or a rejected token.

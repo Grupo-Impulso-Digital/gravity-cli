@@ -102,16 +102,28 @@ func TestWriteRunsKeepAndRecordDocumentsRoles(t *testing.T) {
 		name := ""
 		for _, raw := range tools {
 			n := raw.(map[string]any)["name"].(string)
-			if strings.HasPrefix(n, "submit_") {
+			if strings.HasPrefix(n, "submit_") || strings.HasPrefix(n, "finish_") {
 				name = n
 			}
 		}
 		var input any
-		switch name {
-		case "submit_page_plan":
-			input = map[string]any{"actions": []any{map[string]any{"action": "update", "pageId": "pg_1", "slug": "routing", "reason": "routing explained", "units": []any{"feature:routing"}}}}
+		turns := 0
+		for _, m := range body["messages"].([]any) {
+			if m.(map[string]any)["role"] == "assistant" {
+				turns++
+			}
+		}
+		switch {
+		case name == "finish_plan" && turns == 0:
+			name = "add_pages"
+			input = map[string]any{"pages": []any{map[string]any{"action": "update", "pageId": "pg_1", "slug": "routing", "why": "routing explained", "units": []any{"feature:routing"}}}}
+		case name == "finish_plan":
+			input = map[string]any{"summary": "one page"}
+		case turns == 0:
+			name = "draft_append"
+			input = map[string]any{"blocks": []any{map[string]any{"type": "prose", "text": "Routes go through the gateway.", "units": []any{"feature:routing"}, "rationale": map[string]any{"summary": "docs"}}}}
 		default:
-			input = map[string]any{"summary": "Explains routing", "upserts": []any{map[string]any{"key": "guide:routing:intro", "type": "prose", "content": map[string]any{"text": "Routes go through the gateway."}, "units": []any{"feature:routing"}, "rationale": map[string]any{"summary": "docs"}}}}
+			input = map[string]any{"summary": "Explains routing"}
 		}
 		return map[string]any{"stop_reason": "tool_use", "usage": map[string]any{"input_tokens": 10, "output_tokens": 5}, "content": []any{map[string]any{"type": "tool_use", "id": "tu_1", "name": name, "input": input}}}
 	}

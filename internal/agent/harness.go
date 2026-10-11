@@ -8,123 +8,140 @@ import (
 	"sync"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
-// DefaultPassTokenBudget caps the tokens one pass may spend across all its agent calls.
-const DefaultPassTokenBudget = 400_000
+// ErrNoBundle means the harness has no instructions bundle to run a task with.
+var ErrNoBundle = errors.New("no instructions bundle for this run pass")
 
-// ErrBudgetSpent means the pass has no tokens left for another agent call.
-var ErrBudgetSpent = errors.New("the pass token budget is spent")
-
-// PromptSource resolves kind prompts.
-type PromptSource interface {
-	Get(ctx context.Context, name string) (prompts.Prompt, error)
-}
-
-// Harness runs the agent tasks of one pass run against the gateway with the run context.
+// Harness runs the agent tasks of one run pass against the gateway with the run pass's instructions bundle.
 type Harness struct {
-	LLM         LLM
-	Prompts     PromptSource
-	RunID       string
-	RunPassID   string
-	TokenBudget int
-	Log         io.Writer
+	LLM          LLM
+	Bundle       *api.InstructionsBundle
+	Instructions func(ctx context.Context) (*api.InstructionsBundle, error)
+	RunID        string
+	RunPassID    string
+	Log          io.Writer
 
-	mu     sync.Mutex
-	used   int
-	calls  int
-	inTok  int
-	outTok int
+	mu      sync.Mutex
+	usage   Usage
+	partial []string
 }
 
-// Task is one agent conversation: a kind prompt, a kickoff message, tools and the terminal tool.
+// Task is one agent conversation: a bundle phase, a data-only kickoff message, tools and the terminal tool.
 type Task struct {
-	Prompt        string
-	Purpose       string
-	Kickoff       string
-	Tools         []Tool
-	Submit        Tool
-	MaxTokens     int
-	MaxIterations int
-	MaxToolCalls  int
+	Phase   string
+	Purpose string
+	Kickoff string
+	Tools   []Tool
+	Submit  Tool
 }
 
-// Usage reports the tokens and calls the harness spent.
+// Usage reports the model calls and tokens the harness spent; InputTokens include cache reads and writes.
 type Usage struct {
-	Calls        int `json:"calls"`
-	InputTokens  int `json:"inputTokens"`
-	OutputTokens int `json:"outputTokens"`
+	Calls            int `json:"calls"`
+	InputTokens      int `json:"inputTokens"`
+	OutputTokens     int `json:"outputTokens"`
+	CacheReadTokens  int `json:"cacheReadTokens,omitempty"`
+	CacheWriteTokens int `json:"cacheWriteTokens,omitempty"`
 }
 
 // Usage returns what the harness spent so far.
 func (h *Harness) Usage() Usage {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return Usage{Calls: h.calls, InputTokens: h.inTok, OutputTokens: h.outTok}
+	return h.usage
 }
 
-func (h *Harness) remaining() int {
+// Partial lists the phases whose list terminal was forced at a cap.
+func (h *Harness) Partial() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	budget := h.TokenBudget
-	if budget <= 0 {
-		budget = DefaultPassTokenBudget
-	}
-	return budget - h.used
+	return append([]string(nil), h.partial...)
 }
 
-// Run executes a task and returns its loop result; it fails when the model never submits.
+func (h *Harness) record(phase string, res *Result) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.usage.Calls += res.Turns
+	h.usage.InputTokens += res.InputTokens
+	h.usage.OutputTokens += res.OutputTokens
+	h.usage.CacheReadTokens += res.CacheReadTokens
+	h.usage.CacheWriteTokens += res.CacheWriteTokens
+	if res.Partial {
+		h.partial = append(h.partial, phase)
+	}
+}
+
+func (h *Harness) bundle(ctx context.Context) (*api.InstructionsBundle, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.Bundle == nil && h.Instructions != nil {
+		b, err := h.Instructions(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("instructions bundle: %w", err)
+		}
+		h.Bundle = b
+	}
+	if h.Bundle == nil {
+		return nil, ErrNoBundle
+	}
+	return h.Bundle, nil
+}
+
+// LoadBundle returns the run pass's instructions bundle, fetching it on first use.
+func (h *Harness) LoadBundle(ctx context.Context) (*api.InstructionsBundle, error) {
+	return h.bundle(ctx)
+}
+
+func (h *Harness) describe(b *api.InstructionsBundle, tools []Tool) []Tool {
+	out := make([]Tool, len(tools))
+	for i, t := range tools {
+		if d, ok := b.ToolDescription(t.Def.Name); ok && d != "" {
+			t.Def.Description = d
+		} else if h.Log != nil {
+			fmt.Fprintf(h.Log, "agent: the instructions bundle has no description for tool %s\n", t.Def.Name)
+		}
+		out[i] = t
+	}
+	return out
+}
+
+// Run executes a task and returns its loop result; a task that ends without its terminal tool fails with a TaskError.
 func (h *Harness) Run(ctx context.Context, t Task) (*Result, error) {
 	if h.LLM == nil {
 		return nil, errors.New("no LLM gateway client")
 	}
-	left := h.remaining()
-	if left <= 0 {
-		return nil, ErrBudgetSpent
-	}
-	system := ""
-	if h.Prompts != nil && t.Prompt != "" {
-		p, err := h.Prompts.Get(ctx, t.Prompt)
-		if err != nil {
-			return nil, fmt.Errorf("prompt %s: %w", t.Prompt, err)
-		}
-		system = p.Text
-	}
-	maxTokens := t.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = PhaseMaxTokens
-	}
-	tools := append(append([]Tool{}, t.Tools...), t.Submit)
-	r := &Runner{
-		Client:        h.LLM,
-		System:        system,
-		Tools:         tools,
-		MaxTokens:     maxTokens,
-		MaxIterations: t.MaxIterations,
-		MaxToolCalls:  t.MaxToolCalls,
-		TokenBudget:   left,
-		Context:       &api.MessagesContext{RunID: h.RunID, RunPassID: h.RunPassID, Purpose: t.Purpose},
-		Log:           h.Log,
-	}
-	res, err := r.Run(ctx, t.Kickoff)
-	if res != nil {
-		h.mu.Lock()
-		h.used += res.Tokens()
-		h.calls += res.Iterations
-		h.inTok += res.InputTokens
-		h.outTok += res.OutputTokens
-		h.mu.Unlock()
-	}
+	b, err := h.bundle(ctx)
 	if err != nil {
 		return nil, err
 	}
+	system, err := b.System(t.Phase)
+	if err != nil {
+		return nil, err
+	}
+	r := &Runner{
+		Client:           h.LLM,
+		System:           system,
+		Tools:            h.describe(b, append(append([]Tool{}, t.Tools...), t.Submit)),
+		Model:            b.Model.ID,
+		Limits:           b.Model.Limits,
+		Caps:             b.Harness,
+		ForcedToolChoice: b.Model.Features.ForcedToolChoice,
+		Context: &api.MessagesContext{
+			RunID: h.RunID, RunPassID: h.RunPassID, Purpose: t.Purpose,
+			InstructionsVersion: b.Version, Phase: t.Phase,
+		},
+		Log: h.Log,
+	}
+	res, err := r.Run(ctx, t.Kickoff)
+	if res != nil {
+		h.record(t.Phase, res)
+	}
+	if err != nil {
+		return res, err
+	}
 	if res.TerminalTool != t.Submit.Def.Name {
-		reason := res.StopReason
-		if reason == "" {
-			reason = "it ended its turn"
-		}
-		return res, fmt.Errorf("%w with %s (%s)", ErrNoSubmit, t.Submit.Def.Name, reason)
+		return res, &TaskError{Reason: ErrNoSubmit, Model: res.Model, Detail: "the model never called " + t.Submit.Def.Name}
 	}
 	return res, nil
 }

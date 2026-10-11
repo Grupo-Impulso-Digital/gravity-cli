@@ -15,7 +15,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/glob"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/verbatim"
 )
 
@@ -145,29 +144,20 @@ func releaseNotesBlocks(ctx context.Context, in Input, slug string, cs *changese
 		return nil, errors.New("changelog passes need the LLM gateway")
 	}
 	audience := in.StringOption("audience", "customer")
-	kickoff := passHeader(in) + fmt.Sprintf("\nWrite the release notes for %s. Audience: %s.\n\n", what, audience) + ChangeSummary(cs, in.Range)
-	notes, err := agent.Submit[agent.ReleaseNotesInput](ctx, in.Harness, agent.Task{Prompt: prompts.PassChangelog, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitReleaseNotesTool()})
-	if err != nil {
+	notes := agent.NewReleaseNotes()
+	task := agent.Task{Phase: api.PhaseChangelogWrite, Purpose: api.PurposeAuthor, Kickoff: changelogKickoff(in, what, audience, cs), Tools: append(toolset(in), notes.AddTool()), Submit: notes.FinishTool()}
+	if _, err := in.Harness.Run(ctx, task); err != nil {
 		return nil, fmt.Errorf("release notes: %w", err)
 	}
 	internal := audience == "internal"
-	blocks := []api.ChangeBlock{noteBlock(in, slug, "summary", firstOf(strings.TrimSpace(notes.Summary), "Changes in this release."), nil)}
-	for _, section := range agent.ReleaseSections {
-		var items []agent.ReleaseItem
-		for _, s := range notes.Sections {
-			if s.Heading == section {
-				items = append(items, s.Items...)
-			}
-		}
-		if len(items) == 0 {
-			continue
-		}
-		key := "changelog:" + slug + ":" + docs.Slug(section)
-		h := noteBlock(in, slug, docs.Slug(section), section, nil)
-		h.Key, h.Type, h.Content = key, "heading", map[string]any{"text": section, "level": 2}
+	blocks := []api.ChangeBlock{noteBlock(in, slug, "summary", firstOf(notes.Summary(), "Changes in this release."), nil)}
+	for _, section := range notes.Sections() {
+		key := "changelog:" + slug + ":" + docs.Slug(section.Heading)
+		h := noteBlock(in, slug, docs.Slug(section.Heading), section.Heading, nil)
+		h.Key, h.Type, h.Content = key, "heading", map[string]any{"text": section.Heading, "level": 2}
 		blocks = append(blocks, h)
-		for i, it := range items {
-			text := strings.TrimSpace(it.Text)
+		for i, it := range section.Items {
+			text := it.Text
 			if internal && len(it.Commits) > 0 && !strings.Contains(text, short(it.Commits[0])) {
 				refs := make([]string, 0, len(it.Commits))
 				for _, c := range it.Commits {
@@ -175,13 +165,23 @@ func releaseNotesBlocks(ctx context.Context, in Input, slug string, cs *changese
 				}
 				text += " (" + strings.Join(refs, ", ") + ")"
 			}
-			b := noteBlock(in, slug, docs.Slug(section)+":"+strconv.Itoa(i+1), text, &it)
+			b := noteBlock(in, slug, docs.Slug(section.Heading)+":"+strconv.Itoa(i+1), text, &it)
 			b.Type = "list"
 			b.Content = map[string]any{"text": text, "variant": "bulleted"}
 			blocks = append(blocks, b)
 		}
 	}
 	return blocks, nil
+}
+
+func changelogKickoff(in Input, what, audience string, cs *changeset.ChangeSet) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<task phase=%q>\n", api.PhaseChangelogWrite)
+	b.WriteString(passHeader(in))
+	fmt.Fprintf(&b, "Release notes: %s\nReaders: %s\nSections: %s\n", what, audience, strings.Join(agent.ReleaseSections, ", "))
+	b.WriteString("</task>\n")
+	dataSections(&b, in, nil, cs)
+	return b.String()
 }
 
 func noteBlock(in Input, slug, part, text string, item *agent.ReleaseItem) api.ChangeBlock {

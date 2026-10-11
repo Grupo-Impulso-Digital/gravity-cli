@@ -34,6 +34,9 @@ type pipelineFlags struct {
 	strict       bool
 	failOn       []string
 	annotate     string
+	model        string
+	maxOutput    int
+	debug        bool
 }
 
 type pipelineMode int
@@ -115,7 +118,7 @@ func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipeline
 
 func (a *app) pipelineOptions(s *pipelineSession, mode pipelineMode, f pipelineFlags) (engine.Options, error) {
 	c := s.ci
-	opts := engine.Options{Passes: f.passes, From: f.from, To: f.to, Note: f.note, LeaseTimeout: f.leaseTimeout, Parallel: f.parallel, FailOn: f.failOn, Origin: origin(c)}
+	opts := engine.Options{Passes: f.passes, From: f.from, To: f.to, Note: f.note, LeaseTimeout: f.leaseTimeout, Parallel: f.parallel, FailOn: f.failOn, Origin: origin(c), Model: strings.TrimSpace(f.model), MaxOutput: f.maxOutput, Debug: f.debug}
 	trigger := f.trigger
 	switch mode {
 	case modeCheck:
@@ -134,6 +137,9 @@ func (a *app) pipelineOptions(s *pipelineSession, mode pipelineMode, f pipelineF
 	}
 	if f.parallel > 4 {
 		return opts, Failf(CodeError, "--parallel is at most 4")
+	}
+	if f.maxOutput < 0 {
+		return opts, Failf(CodeError, "--max-output must be a positive number of tokens")
 	}
 	opts.Trigger = trigger
 	if f.dryRun {
@@ -273,7 +279,14 @@ func validAnnotate(v string) error {
 
 func runError(err error) error {
 	var se *engine.SelectionError
+	var mu *engine.ModelUnavailableError
 	switch {
+	case errors.As(err, &mu):
+		return &ExitError{Code: CodeError, ErrCode: api.CodeModelUnavailable, Err: err}
+	case errors.Is(err, api.ErrServerTooOld):
+		return &ExitError{Code: CodeError, ErrCode: "server_too_old", Err: err}
+	case errors.Is(err, api.ErrToolContract):
+		return &ExitError{Code: CodeError, ErrCode: "tool_contract_unsupported", Err: err}
 	case err == nil:
 		return nil
 	case errors.Is(err, engine.ErrInterrupted), errors.Is(err, context.Canceled):

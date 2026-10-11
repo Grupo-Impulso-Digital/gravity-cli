@@ -112,8 +112,10 @@ type PendingApproval struct {
 	Reasons    []string `json:"reasons"`
 	Why        string   `json:"why,omitempty"`
 	MayApprove bool     `json:"mayApprove"`
-	Reason     string   `json:"reason,omitempty"`
-	ApproveURL string   `json:"approveUrl,omitempty"`
+	// FromManifest marks a target found only through the local manifest's plan.
+	FromManifest bool   `json:"fromManifest,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	ApproveURL   string `json:"approveUrl,omitempty"`
 }
 
 // Grant is a site/space the repository may already write to.

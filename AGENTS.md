@@ -31,10 +31,9 @@ cmd/gravity              entrypoint: signal-aware context
        │    └─ internal/passes  Pass interface + guides, reference, verbatim, changelog, nucleus, check, capture;
        │         │              Ownership (product-wide units, roles, claim verdicts), unit reach, provenance
        │         ├─ internal/verbatim  Markdown/MDX -> native blocks, file -> page mapping, link rewriting
-       │         └─ internal/agent     one harness: forced submit, token budget, git + doc tools, submit tools
+       │         └─ internal/agent     one harness: bundle-driven loop (caps, forced terminal, elision), git + doc tools, page drafts + checks, list tools
        ├─ internal/report     doc-impact comment and run summary; comment upsert on GitHub, GitLab, Bitbucket, Azure;
        │                      GitHub/Azure annotations, GitLab Code Quality; page diffs
-       ├─ internal/prompts    hosted pass prompts with baked fallbacks
        ├─ internal/changeset  range resolution, ChangeSet, OpenAPI diff, symbols, unit mapping
        ├─ internal/setup      setup suggestions: product ranking, target site, pass templates, structure drafts and diffs
        │    └─ internal/detect  local repository detection (languages, specs, routes, docs, releases, CI files)
@@ -50,6 +49,7 @@ cmd/gravity              entrypoint: signal-aware context
        ├─ internal/version    the single version variable (ldflags stamp, else build info)
        └─ internal/pathsafe   repo-root path validation (leaf, stdlib-only)
 
+internal/eval            model quality eval: fixture endpoints, recording scorer (cmd/score), JSON + Markdown results
 internal/distribution    tests only: install.sh (major resolution, checksum), the GitHub action, ci/ templates, workflows
 ci/                      the GitHub action (ci/github/action.yml) and the CI templates `ci setup` writes, per provider
 plugin/                  the Claude Code plugin (skill, commands, MCP server); package plugin embeds skills/ for `agent install`
@@ -69,6 +69,7 @@ make test    # go test ./...
 make lint    # go tool golangci-lint run  (govet + staticcheck + the curated set)
 make fmt     # go tool golangci-lint fmt  (gofumpt + goimports)
 make ci      # lint + test + build  — what CI runs
+make eval MODEL=<id> [MAX_OUTPUT=<n>]  # model quality eval (docs/model-eval.md)
 ```
 
 The linter is pinned via the go.mod `tool` directive, so `make lint` uses the
@@ -211,8 +212,12 @@ to `debug.ReadBuildInfo`.
   retried once without it.
 - **Retries** (`internal/api`): `429` and `5xx` get up to three attempts with
   exponential backoff from 1 s, honoring `Retry-After`; network errors are
-  retried for GET only. `lease_lost` and `run_not_running` stop a run without a
-  finish call (`api.StopsRun`).
+  retried for GET and model calls only. Calls have a 120 s deadline; model
+  calls get 15 min per attempt and retry `429`, `5xx` and network errors until
+  30 min in total (`LLMTimeout`, `LLMRetryCap`). `lease_lost` and
+  `run_not_running` stop a run without a finish call (`api.StopsRun`);
+  `budget_exceeded` and `no_provider_key` halt it, then finish it as failed
+  (`api.HaltsRun`).
 - **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
   all human output on stderr. With `CI=true` or without a terminal, output is
   plain ASCII and nothing prompts. There is no global `--ci` flag in 1.x
@@ -238,7 +243,14 @@ to `debug.ReadBuildInfo`.
   (`modelFor`), the plan view through `engine.Env.Confirm`, lease waits through
   `Env.OnLease`, then the result report. Dry runs are recorded with
   `engine.NewRecording`/`SaveRecording` and sent with `engine.Replay`. CI runs
-  keep the 1.0 output (`printRun`) and never prompt.
+  keep the 1.0 output (`printRun`) and never prompt. `--model` reaches the
+  plan query, `POST /runs` and every bundle request (`Options.Model`); the
+  hidden `--max-output` only the bundle request (`Options.MaxOutput`);
+  `--debug` sets `Options.Debug`. A pass that will run and call a model whose
+  plan `model.unavailable` is set stops the run before the plan view
+  (`engine.ModelUnavailableError`, `model_unavailable`). The plan view
+  (`renderPlanView`) and `show` print one model line per AI pass;
+  `not_recommended` and fallbacks are warnings.
 - **Manifest** (`internal/config`): YAML is decoded to a generic tree, checked
   for tokens, validated by friendly Go rules and the embedded JSON
   Schema (byte-identical to the spec's, pinned by sha256 in
@@ -290,6 +302,10 @@ to `debug.ReadBuildInfo`.
   reach is `internal/passes/reach.go`; expected handoffs and the `documents`
   role are `internal/run/handoffs.go`. Cover rule changes in the table test of
   `internal/passes/ownership_test.go`.
+- **Change the eval fixture**: edit `testdata/eval/make-fixture.sh` and
+  `eval.FixtureEndpoints` together; `TestMakeFixtureMatchesTheScorer`
+  generates the fixture and compares its OpenAPI operations with the list.
+  The scorer reuses the page checks through `agent.CheckBlocks`.
 - **Change the installer or the action**: `internal/distribution` runs
   `install.sh` against a fake `curl` and runs the action's `gravity` step with a
   fake binary; keep both green.
@@ -300,10 +316,11 @@ to `debug.ReadBuildInfo`.
   `bitbucket-pipelines.yml` or a `.gitlab-ci.yml` with its own `include:` list
   is kept and a snippet is printed instead. Jenkins and CircleCI always get a
   snippet.
-- **The CLI never embeds instruction layers.** Every gateway call sends only
-  the kind prompt (`internal/prompts`) and `context { runId, runPassId,
-  purpose }`; the gateway composes the org/site/space/collection/pass/note
-  layers server-side.
+- **The CLI owns no instructions.** Every system prompt and tool description
+  comes from the run pass's `gravity.instructions/1` bundle
+  (`GET /api/llm/v1/instructions`, fetched once per run pass). Calls send `context { runId, runPassId,
+  purpose, instructionsVersion, phase }`. The loop's caps come from the
+  bundle's `harness`, and there is no CLI token budget.
 - **Writes only through a `passes.Sink`**: `PlatformSink` in write runs,
   `Recorder` in dry runs (PRs, `--dry-run`), which records the would-be
   requests into the pass report; a recorded dry run replays them.
@@ -315,6 +332,24 @@ to `debug.ReadBuildInfo`.
   the report goes to `gravity-report.md`. Jenkins and CircleCI only get the
   file. A comment is created only once a pull request has had impact; after
   that it is updated, down to "No documentation impact".
+- **List phases accumulate** (`agent.PlanList`, `ReleaseNotes`, `AtomList`,
+  `Review`, `UnitList`): `add_*` tools keep valid items and refuse the others
+  one by one, a `finish_*` terminal ends the task, and a forced finish is
+  partial. Kickoffs are tagged data; Go owns no instruction text.
+- **Bundles are fetched at launch**: `run` fetches every model pass's bundle
+  right after the run starts and before ingest, and fails the run on any
+  error; `api.HaltsRun` errors halt the run (`run.ErrHalted`). Pass results,
+  pass reports and recordings carry `generation`; recordings also keep
+  `usage` (turns, input and output tokens), and `--send` forwards
+  `generation`.
+- **`show` renders models from the plan**, not from the platform's
+  `passes.render`: that procedure is tRPC only and needs a run pass, and the
+  CLI talks REST.
+- **Pages are written through a draft** (`agent.Draft`): write phases seed it
+  from the page, edit it with the draft tools and map the diff to one change
+  at `submit_page`, which refuses error findings of the deterministic checks.
+  Locks (human, non-authored types, `api`/`verbatim` bindings, person-edited
+  hybrid blocks, unbound blocks under unit reach) live in `lockReason`.
 - **Unit reach is update-only and block-bound**: guides change a page outside
   their target only through existing blocks bound to a touched unit this
   repository declares or implements; the server re-checks reach and a refusal
