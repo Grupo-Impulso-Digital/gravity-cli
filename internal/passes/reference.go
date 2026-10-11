@@ -312,6 +312,7 @@ func (Reference) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			removedByPage[slug] = append(removedByPage[slug], key)
 		}
 	}
+	var failures []string
 	for _, p := range pages {
 		changed, err := referencePage(ctx, in, out, &rep, p, headKeys, removedByPage[p.slug])
 		if err != nil {
@@ -320,7 +321,10 @@ func (Reference) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 		delete(removedByPage, p.slug)
 		if changed && in.BoolOption("prose", false) && (!out.Dry() || in.Preview) {
 			if err := referenceProse(ctx, in, out, &rep, p); err != nil {
-				rep.warn("prose for %s: %v", p.slug, err)
+				if endsPass(err) {
+					return rep, err
+				}
+				failures = append(failures, fmt.Sprintf("%s: prose: %v", p.slug, err))
 			}
 		}
 	}
@@ -336,6 +340,10 @@ func (Reference) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	}
 	rep.UnitsTouched = touchedAPIUnits(pages)
 	rep.Summary = summaryLine(rep.Counts, in.TargetLabel())
+	if len(failures) > 0 {
+		rep.Errors = failures
+		return rep, fmt.Errorf("%d page(s) failed: %s", len(failures), strings.Join(failures, "; "))
+	}
 	return rep, nil
 }
 

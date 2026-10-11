@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,9 @@ const MaxReportBytes = 500 * 1024
 // ErrStopped means the platform ended the run (lease lost or run finished) and no finish call was made.
 var ErrStopped = errors.New("run stopped by the platform")
 
+// ErrHalted means the run could not go on (a budget or provider-key refusal, or an unusable instructions bundle) and was finished as failed.
+var ErrHalted = errors.New("run halted")
+
 type runState struct {
 	env      *Env
 	opts     Options
@@ -34,7 +39,13 @@ type runState struct {
 	ingested []api.IngestUnit
 	mu       sync.Mutex
 	stopErr  error
+	haltErr  error
 	cancel   context.CancelFunc
+}
+
+type modelPass struct {
+	pp preparedPass
+	rp api.RunPass
 }
 
 func (s *runState) stop(err error) {
@@ -44,6 +55,35 @@ func (s *runState) stop(err error) {
 		s.stopErr = err
 		s.cancel()
 	}
+}
+
+func (s *runState) halt(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.haltErr == nil && s.stopErr == nil {
+		s.haltErr = err
+		s.cancel()
+	}
+}
+
+func (s *runState) halted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.haltErr
+}
+
+func (s *runState) failRun(ctx context.Context, res *Result, cause error) error {
+	msg := cause.Error()
+	fin, err := s.env.Client.FinishRun(ctx, s.started.Run.ID, api.FinishRunRequest{Status: api.StatusFailed, Error: &msg, Report: &api.FinishReport{Summary: msg}})
+	switch {
+	case err != nil && api.StopsRun(err):
+		return fmt.Errorf("%w: %w", ErrStopped, err)
+	case err != nil:
+		s.env.Log.Warn("finish_failed", fmt.Sprintf("could not finish run %s as failed: %v", s.started.Run.ID, err))
+	default:
+		res.Finish = fin
+	}
+	return fmt.Errorf("%w: %w", ErrHalted, cause)
 }
 
 func (s *runState) stopped() error {
@@ -68,12 +108,22 @@ func execute(ctx context.Context, env *Env, opts Options, p *api.Plan, prep *pre
 		cancel()
 		<-hbDone
 	}()
+	if err := s.loadBundles(runCtx); err != nil {
+		if api.StopsRun(err) {
+			s.stop(err)
+			return s.stopped()
+		}
+		return s.failRun(ctx, res, err)
+	}
 	if opts.Mode == api.ModeWrite && (started.Run.Authoritative || opts.Trigger == config.TriggerRelease) && p.Capabilities.Features["product-inventory"] {
 		ing, err := s.ingest(runCtx)
 		if err != nil {
 			if api.StopsRun(err) {
 				s.stop(err)
 				return s.stopped()
+			}
+			if api.HaltsRun(err) {
+				return s.failRun(ctx, res, err)
 			}
 			env.Log.Warn("ingest_failed", fmt.Sprintf("inventory ingest failed; passes use the stored inventory: %v", err))
 		}
@@ -92,6 +142,9 @@ func execute(ctx context.Context, env *Env, opts Options, p *api.Plan, prep *pre
 		return err
 	}
 	res.Passes = results
+	if err := s.halted(); err != nil {
+		return s.failRun(ctx, res, err)
+	}
 	if res.Ingest != nil {
 		if err := s.ingestDocuments(runCtx, results); err != nil {
 			if api.StopsRun(err) {
@@ -241,6 +294,9 @@ func (s *runState) passes(ctx context.Context) []PassResult {
 			if ctx.Err() != nil {
 				base.Status = api.StatusFailed
 				base.Error = "run stopped"
+				if err := s.halted(); err != nil {
+					base.Error = "run halted: " + err.Error()
+				}
 				results[i] = base
 				s.emit(base)
 				return
@@ -285,11 +341,66 @@ func productParam(opts Options, p *api.Plan) string {
 	return p.Product.Slug
 }
 
-func (s *runState) bundle(ctx context.Context, runPassID string) (*api.InstructionsBundle, error) {
+func (s *runState) cachedBundle(runPassID string) *api.InstructionsBundle {
 	s.mu.Lock()
-	b, ok := s.bundles[runPassID]
-	s.mu.Unlock()
-	if ok {
+	defer s.mu.Unlock()
+	return s.bundles[runPassID]
+}
+
+func (s *runState) modelPasses() []modelPass {
+	var out []modelPass
+	for _, pp := range s.prep.passes {
+		if !pp.decision.Run || !passes.UsesModel(pp.pass) {
+			continue
+		}
+		for _, rp := range s.started.Passes {
+			if rp.Name == pp.pass.Name && rp.Status != api.StatusSkipped && rp.RunPassID != "" {
+				out = append(out, modelPass{pp: pp, rp: rp})
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (s *runState) loadBundles(ctx context.Context) error {
+	for _, mp := range s.modelPasses() {
+		b, err := s.bundle(ctx, mp.rp.RunPassID)
+		if err != nil {
+			return fmt.Errorf("instructions bundle of pass %s: %w", mp.pp.pass.Name, err)
+		}
+		m := b.Model
+		s.env.Log.Infof("%s: %s · %s · %s (%s) · instructions %s", mp.pp.pass.Name, firstOf(m.Label, m.ID), firstOf(m.Quality, api.QualityUntested), firstOf(b.Language.Name, b.Language.Code), b.Language.Code, b.ShortVersion())
+		if m.Fallback != nil {
+			s.env.Log.Warn("model_fallback", fmt.Sprintf("%s: %s replaces %s (%s)", mp.pp.pass.Name, firstOf(m.Label, m.ID), m.Fallback.From, m.Fallback.Reason))
+		}
+		for _, w := range b.Warnings {
+			s.env.Log.Warn("instructions_warning", mp.pp.pass.Name+": "+w)
+		}
+		s.saveBundle(mp.rp.RunPassID, b)
+	}
+	return nil
+}
+
+func (s *runState) saveBundle(runPassID string, b *api.InstructionsBundle) {
+	if !s.opts.Debug || s.env.Repo == nil {
+		return
+	}
+	path := BundlePath(s.env.Repo.Root, s.started.Run.ID, runPassID)
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err == nil {
+		err = os.MkdirAll(filepath.Dir(path), 0o755)
+	}
+	if err == nil {
+		err = os.WriteFile(path, append(data, '\n'), 0o644)
+	}
+	if err != nil {
+		s.env.Log.Debugf("save instructions bundle: %v", err)
+	}
+}
+
+func (s *runState) bundle(ctx context.Context, runPassID string) (*api.InstructionsBundle, error) {
+	if b := s.cachedBundle(runPassID); b != nil {
 		return b, nil
 	}
 	b, err := s.env.Client.InstructionsBundle(ctx, api.InstructionsQuery{RunPassID: runPassID})
@@ -355,12 +466,18 @@ func (s *runState) runPass(ctx context.Context, pp preparedPass, rp api.RunPass,
 		if api.StopsRun(err) {
 			s.stop(err)
 		}
-		if api.StopsRun(err) || s.stopped() != nil {
-			base.Status, base.Error = api.StatusFailed, err.Error()
-			return base
+		if api.HaltsRun(err) {
+			s.halt(err)
 		}
 		base.Status, base.Error = api.StatusFailed, err.Error()
-		if pr := s.report(ctx, rp, api.StatusFailed, &rep, err.Error()); pr != nil {
+		if api.StopsRun(err) || s.stopped() != nil {
+			return base
+		}
+		rctx := ctx
+		if s.halted() != nil {
+			rctx = context.WithoutCancel(ctx)
+		}
+		if pr := s.report(rctx, rp, api.StatusFailed, &rep, err.Error()); pr != nil {
 			base.CostUSD, base.LLMCalls = pr.CostUSD, pr.LLMCalls
 		}
 		return base
@@ -381,6 +498,9 @@ func (s *runState) report(ctx context.Context, rp api.RunPass, status string, re
 	if rep != nil {
 		pr := fitReport(rep.PassReport)
 		req.Report = &pr
+	}
+	if b := s.cachedBundle(rp.RunPassID); b != nil {
+		req.Generation = &api.Generation{InstructionsVersion: b.Version, Model: b.Model.ID, Provider: b.Model.Provider}
 	}
 	out, err := s.env.Client.ReportPass(ctx, s.started.Run.ID, rp.RunPassID, req)
 	if err != nil {
@@ -424,7 +544,7 @@ func (s *runState) ingest(ctx context.Context) (*api.IngestResult, error) {
 	if s.env.Manifest != nil && s.env.Manifest.Code != nil && len(s.env.Manifest.Code.Entrypoints) > 0 {
 		mapped, ran, err := s.mapUnits(ctx)
 		switch {
-		case err != nil && api.StopsRun(err):
+		case err != nil && (api.StopsRun(err) || api.HaltsRun(err)):
 			return nil, err
 		case err != nil:
 			s.env.Log.Warn("map_units_failed", fmt.Sprintf("unit mapping failed: %v", err))
@@ -491,24 +611,11 @@ func mergeUnits(base, extra []api.IngestUnit) []api.IngestUnit {
 
 func (s *runState) mapUnits(ctx context.Context) ([]api.IngestUnit, bool, error) {
 	m := s.env.Manifest
-	var host *preparedPass
-	var hostRP api.RunPass
-	for i, pp := range s.prep.passes {
-		if !pp.decision.Run || !passes.AIKinds[pp.pass.Kind] {
-			continue
-		}
-		for _, rp := range s.started.Passes {
-			if rp.Name == pp.pass.Name && rp.Status != api.StatusSkipped {
-				host, hostRP = &s.prep.passes[i], rp
-			}
-		}
-		if host != nil {
-			break
-		}
-	}
-	if host == nil {
+	hosts := s.modelPasses()
+	if len(hosts) == 0 {
 		return nil, false, nil
 	}
+	host, hostRP := hosts[0].pp, hosts[0].rp
 	survey := host.rng.Kind == api.RangeSurvey
 	changed := false
 	if host.cs != nil {
@@ -534,29 +641,45 @@ func (s *runState) mapUnits(ctx context.Context) ([]api.IngestUnit, bool, error)
 			}
 		}
 	}
-	var existing strings.Builder
-	for _, u := range s.plan.Inventory.Units {
-		if u.Kind != api.UnitKindAPI {
-			fmt.Fprintf(&existing, "- %s (%s) %s\n", u.Key, u.Kind, u.Title)
-		}
-	}
-	kickoff := fmt.Sprintf("Repository %s. Entrypoints: %s.\n\n## Existing product units (reuse the key of a unit whose surface still exists; leave out units this repository no longer provides, which retires them)\n%s\n## Entrypoint files\n%s\n\nCommands, routes or pages kept only to print a removal or migration notice are not units.\n",
-		s.env.Info.RemoteKey, strings.Join(m.Code.Entrypoints, ", "), firstOf(existing.String(), "(none)\n"), strings.Join(entry, "\n"))
-	if kind := unitKind(m); kind != "" {
-		kickoff += "\nDefault unit kind: " + kind + "\n"
-	}
 	h := s.harness(hostRP)
-	tools := agent.RepoTools(s.env.Repo, agent.Range{Head: s.prep.headSHA})
-	out, err := agent.Submit[agent.UnitsInput](ctx, h, agent.Task{Phase: api.PhaseUnitsMap, Purpose: api.PurposeMapUnits, Kickoff: kickoff, Tools: tools, Submit: agent.SubmitUnitsTool()})
+	list := agent.NewUnitList()
+	tools := append(agent.RepoTools(s.env.Repo, agent.Range{Head: s.prep.headSHA}), list.AddTool())
+	res, err := h.Run(ctx, agent.Task{Phase: api.PhaseUnitsMap, Purpose: api.PurposeMapUnits, Kickoff: unitsKickoff(s.env.Info.RemoteKey, m, s.plan.Inventory.Units, entry), Tools: tools, Submit: list.FinishTool()})
 	if err != nil {
 		return nil, false, err
 	}
+	if !list.Complete(res) {
+		s.env.Log.Warn("map_units_incomplete", "unit mapping did not finish with a complete list; no mapped unit is ingested")
+		return nil, false, nil
+	}
+	mapped := list.Units()
 	roles := Roles(m)
-	units := make([]api.IngestUnit, 0, len(out.Units))
-	for _, u := range out.Units {
+	units := make([]api.IngestUnit, 0, len(mapped))
+	for _, u := range mapped {
 		units = append(units, api.IngestUnit{Key: u.Key, Kind: u.Kind, Title: firstOf(u.Title, u.Key), Summary: u.Summary, Audiences: u.Audiences, Roles: roles, SourceRefs: u.SourceRefs, Aliases: u.Aliases})
 	}
 	return units, true, nil
+}
+
+func unitsKickoff(repo string, m *config.Manifest, inventory []api.Unit, entry []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<task phase=%q>\nRepository: %s\nEntrypoints: %s\n", api.PhaseUnitsMap, repo, strings.Join(m.Code.Entrypoints, ", "))
+	if kind := unitKind(m); kind != "" {
+		fmt.Fprintf(&b, "Default unit kind: %s\n", kind)
+	}
+	b.WriteString("</task>\n<existing_units>\n")
+	n := 0
+	for _, u := range inventory {
+		if u.Kind != api.UnitKindAPI {
+			fmt.Fprintf(&b, "- %s (%s) %s\n", u.Key, u.Kind, u.Title)
+			n++
+		}
+	}
+	if n == 0 {
+		b.WriteString("(none)\n")
+	}
+	fmt.Fprintf(&b, "</existing_units>\n<entrypoint_files>\n%s\n</entrypoint_files>\n", strings.Join(entry, "\n"))
+	return b.String()
 }
 
 func unitKind(m *config.Manifest) string {

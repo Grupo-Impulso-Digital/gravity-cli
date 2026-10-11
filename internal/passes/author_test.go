@@ -39,9 +39,9 @@ func TestGuidesCreatesAPageThroughTheDraft(t *testing.T) {
 	r, fake, base, head := guidesFixture(t)
 	create := agent.PageAction{
 		Action: agent.ActionCreate, Slug: "refund-reasons", Title: "Refund reasons", CollectionPath: []string{"Guides"},
-		Reason: "the refund reason field is new", Units: []string{"feature:refunds"}, MustCover: []agent.MustCover{{Token: "POST /v1/refunds", Text: "Create a refund with a reason."}},
+		Why: "the refund reason field is new", Units: []string{"feature:refunds"}, MustCover: []agent.MustCover{{Token: "POST /v1/refunds", Text: "Create a refund with a reason."}},
 	}
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{create}},
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{create}},
 		calls(
 			call(agent.ToolDraftAppend, map[string]any{"rationale": map[string]any{"summary": "routes", "sourceRefs": []string{"src/refunds.ts:2"}}, "blocks": []any{
 				map[string]any{"type": "heading", "text": "Refund reasons", "level": 2},
@@ -67,7 +67,7 @@ func TestGuidesCreatesAPageThroughTheDraft(t *testing.T) {
 		t.Fatalf("changes = %+v", w.changes)
 	}
 	c := w.changes[0]
-	if c.Op != api.OpCreate || c.Title != "Refund reasons" || c.Target.SpaceID != "sp_1" || c.Target.Slug != "refund-reasons" || strings.Join(c.Target.CollectionPath, "/") != "guides" || c.Summary != "Adds refund reasons" {
+	if c.Op != api.OpCreate || c.Title != "Refund reasons" || c.Target.SpaceID != "sp_1" || c.Target.Slug != "refund-reasons" || strings.Join(c.Target.CollectionPath, "/") != "guides" || c.Summary != "Adds refund reasons\n\nWhy: the refund reason field is new" {
 		t.Fatalf("change = %+v", c)
 	}
 	var got []string
@@ -116,7 +116,7 @@ func TestGuidesUpdateKickoffAndUnchangedDraft(t *testing.T) {
 	r, fake, base, head := guidesFixture(t)
 	clean := true
 	fake.pages["pg_1"].Blocks[0].Clean = &clean
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionDeprecate, PageID: "pg_1", Slug: "refunds", Reason: "the unit was removed"}}})
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionDeprecate, PageID: "pg_1", Slug: "refunds", Why: "the unit was removed"}}})
 	w := &writes{}
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite)
 	rep, err := passes.Guides{}.Run(context.Background(), in, sink(w))
@@ -126,7 +126,7 @@ func TestGuidesUpdateKickoffAndUnchangedDraft(t *testing.T) {
 	if len(w.changes) != 0 || rep.Counts.Unchanged != 1 {
 		t.Fatalf("an untouched draft sends nothing: %+v %+v", w.changes, rep.Counts)
 	}
-	kickoff := kickoffOf(fake.requests[1])
+	kickoff := kickoffOf(fake.requests[2])
 	if !strings.Contains(kickoff, `<task mode="deprecate">`) || !strings.Contains(kickoff, "Editable: keys: guide:refunds:intro") || strings.Contains(kickoff, "Written by a person.") {
 		t.Fatalf("kickoff = %s", kickoff)
 	}
@@ -138,7 +138,7 @@ func TestGuidesUpdateKickoffAndUnchangedDraft(t *testing.T) {
 func TestGuidesFailedPageSendsNothing(t *testing.T) {
 	r, fake, base, head := guidesFixture(t)
 	ended := api.MessagesResponse{StopReason: api.StopEndTurn, Usage: api.Usage{InputTokens: 10, OutputTokens: 5}, Content: []api.ContentPart{{Type: api.PartText, Text: "Done."}}}
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionCreate, Slug: "new-page", Title: "New page", Reason: "x"}}},
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionCreate, Slug: "new-page", Title: "New page", Why: "x"}}},
 		calls(call(agent.ToolDraftAppend, map[string]any{"blocks": []any{map[string]any{"type": "prose", "text": "Half a page."}}})),
 		ended, ended, ended, ended, ended, ended,
 	)

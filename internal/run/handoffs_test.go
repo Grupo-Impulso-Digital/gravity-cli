@@ -102,7 +102,7 @@ func TestWriteRunsKeepAndRecordDocumentsRoles(t *testing.T) {
 		name := ""
 		for _, raw := range tools {
 			n := raw.(map[string]any)["name"].(string)
-			if strings.HasPrefix(n, "submit_") {
+			if strings.HasPrefix(n, "submit_") || strings.HasPrefix(n, "finish_") {
 				name = n
 			}
 		}
@@ -114,8 +114,11 @@ func TestWriteRunsKeepAndRecordDocumentsRoles(t *testing.T) {
 			}
 		}
 		switch {
-		case name == "submit_page_plan":
-			input = map[string]any{"actions": []any{map[string]any{"action": "update", "pageId": "pg_1", "slug": "routing", "reason": "routing explained", "units": []any{"feature:routing"}}}}
+		case name == "finish_plan" && turns == 0:
+			name = "add_pages"
+			input = map[string]any{"pages": []any{map[string]any{"action": "update", "pageId": "pg_1", "slug": "routing", "why": "routing explained", "units": []any{"feature:routing"}}}}
+		case name == "finish_plan":
+			input = map[string]any{"summary": "one page"}
 		case turns == 0:
 			name = "draft_append"
 			input = map[string]any{"blocks": []any{map[string]any{"type": "prose", "text": "Routes go through the gateway.", "units": []any{"feature:routing"}, "rationale": map[string]any{"summary": "docs"}}}}

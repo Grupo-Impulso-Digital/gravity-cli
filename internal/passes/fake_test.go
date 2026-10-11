@@ -93,6 +93,7 @@ type fakeAPI struct {
 	recall    []api.RecallHit
 	runs      []*api.Run
 	llm       func(req api.MessagesRequest) api.MessagesResponse
+	llmErr    func(req api.MessagesRequest) error
 	requests  []api.MessagesRequest
 }
 
@@ -165,6 +166,11 @@ func (f *fakeAPI) Messages(_ context.Context, req api.MessagesRequest) (*api.Mes
 	f.mu.Lock()
 	f.requests = append(f.requests, req)
 	f.mu.Unlock()
+	if f.llmErr != nil {
+		if err := f.llmErr(req); err != nil {
+			return nil, err
+		}
+	}
 	if f.llm == nil {
 		return nil, fmt.Errorf("unexpected LLM call")
 	}
@@ -192,6 +198,17 @@ func calls(parts ...api.ContentPart) api.MessagesResponse {
 	return api.MessagesResponse{StopReason: api.StopToolUse, Usage: api.Usage{InputTokens: 100, OutputTokens: 10}, Content: parts}
 }
 
+type pagePlan struct {
+	Actions []agent.PageAction
+}
+
+func listTurn(req api.MessagesRequest, add, field string, items any, finish string, done any) api.MessagesResponse {
+	if assistantTurns(req) == 0 {
+		return submit(add, map[string]any{field: items})
+	}
+	return submit(finish, done)
+}
+
 func assistantTurns(req api.MessagesRequest) int {
 	n := 0
 	for _, m := range req.Messages {
@@ -204,7 +221,7 @@ func assistantTurns(req api.MessagesRequest) int {
 
 func lastTool(req api.MessagesRequest) string {
 	for _, t := range req.Tools {
-		if strings.HasPrefix(t.Name, "submit_") || t.Name == agent.ToolReportFindings {
+		if strings.HasPrefix(t.Name, "submit_") || strings.HasPrefix(t.Name, "finish_") {
 			return t.Name
 		}
 	}

@@ -45,12 +45,33 @@
 - `read_file`, `git_diff` and `read_page` page through long content with
   `offset` and `limit`; `read_page` also takes a `slug`.
 - `run.Options.Debug` keeps each page draft under `.gravity/runs/<runId>/<runPassId>/`.
+- List phases build their result over many calls: `add_pages`/`finish_plan`
+  (with `mustCover` and `why`, and `page budget reached (<n>)` past
+  `maxPages`), `add_release_items`/`finish_release_notes` (grouped by section
+  by the CLI), `add_atoms`/`finish_atoms` (`maxAtoms` across calls),
+  `add_findings`/`finish_review` and `add_units`/`finish_units`. Invalid items
+  are refused one by one and the valid ones kept.
+- The bundle of every model pass is fetched right after the run starts and
+  before ingest; any error finishes the run as failed before a pass starts.
+  The CLI prints `model · quality · language · instructions <version8>` per
+  pass, keeps the bundle under `--debug`
+  (`.gravity/runs/<runId>/<runPassId>.instructions.json`) and sends
+  `generation` in pass reports.
+- `budget_exceeded` and `no_provider_key` halt the run: no other pass starts,
+  passes in flight are canceled, and the run is finished as failed with the
+  reason.
 
 ### Changed
 
 - The doc tools `recall_nucleus` and `product_inventory` are now `recall` and
   `inventory` (`gravity.tools/1`).
 - The writer kickoff carries data only and no longer inlines the current page.
+- Every kickoff (plan, changelog, nucleus, check, units map) is tagged data
+  with no instructions; the guides plan's `reason` is now `why` and is added
+  to the change request summary.
+- Map-units ingests its units, as a complete list, only after an unforced
+  `finish_units {complete: true}`; otherwise none is ingested.
+- A failed reference prose page fails the pass (it was a warning).
 - List blocks hold one item: an `items` array is no longer joined into one
   block, and the `task` variant becomes `bulleted`. Callout variants are
   `info`, `success`, `warning` and `danger`.
@@ -61,6 +82,9 @@
 ### Removed
 
 - The `submit_page_changes` tool: pages are built through the draft tools.
+- The one-shot terminals `submit_page_plan`, `submit_release_notes`,
+  `submit_atoms`, `report_findings` and `submit_units`, the plan action
+  `none` and the release notes `title`.
 - The prompts baked into the binary and the hosted prompt resolver
   (`GET /api/llm/v1/prompts/{name}`): the instructions bundle is the only
   instruction source.

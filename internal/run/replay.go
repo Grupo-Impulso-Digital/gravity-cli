@@ -92,6 +92,12 @@ func DebugDir(root, runID, runPassID string) string {
 	return filepath.Join(root, filepath.FromSlash(RecordingDir), runID, runPassID)
 }
 
+// BundlePath is where --debug stores a run pass's instructions bundle: .gravity/runs/<runId>/<runPassId>.instructions.json.
+func BundlePath(root, runID, runPassID string) string {
+	ensureIgnored(root)
+	return filepath.Join(root, filepath.FromSlash(RecordingDir), runID, runPassID+".instructions.json")
+}
+
 func ensureIgnored(root string) {
 	ignore := filepath.Join(root, ".gravity", ".gitignore")
 	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {

@@ -30,17 +30,16 @@ const (
 	elideAbovePercent  = 60
 	elideToPercent     = 40
 	bytesPerToken      = 3
-	toolFinishUnits    = "finish_units"
 	truncatedText      = "(output truncated)"
 	noOutputText       = "(no output)"
 )
 
 var listPhaseTerminals = map[string]bool{
-	"finish_plan":          true,
-	"finish_atoms":         true,
-	toolFinishUnits:        true,
-	"finish_review":        true,
-	"finish_release_notes": true,
+	ToolFinishPlan:         true,
+	ToolFinishAtoms:        true,
+	ToolFinishUnits:        true,
+	ToolFinishReview:       true,
+	ToolFinishReleaseNotes: true,
 }
 
 // Task failure reasons.
@@ -562,7 +561,7 @@ func (r *Runner) runTools(ctx context.Context, uses []api.ContentPart, terminal 
 	result.Forced = forced
 	if forced && listPhaseTerminals[use.Name] {
 		result.Partial = true
-		if use.Name == toolFinishUnits {
+		if use.Name == ToolFinishUnits {
 			result.TerminalInput = json.RawMessage(`{"complete":false}`)
 		}
 	}

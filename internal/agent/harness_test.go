@@ -27,7 +27,7 @@ func testBundle() *api.InstructionsBundle {
 		},
 		Harness:  api.HarnessLimits{MaxTurns: 80, MaxToolCalls: 200, StepTokens: 4000, MaxContinueNudges: 4},
 		Rendered: api.RenderedPrompts{System: map[string]string{api.PhaseNucleusDistill: "distill system"}},
-		Tools:    map[string]string{agent.ToolSubmitAtoms: "server description of submit_atoms"},
+		Tools:    map[string]string{agent.ToolAddAtoms: "server description of add_atoms", agent.ToolFinishAtoms: "server description of finish_atoms"},
 	}
 }
 
@@ -37,15 +37,18 @@ func TestHarness(t *testing.T) {
 		setup func(h *agent.Harness)
 		phase string
 		reply []api.MessagesResponse
-		check func(t *testing.T, h *agent.Harness, llm *fakeLLM, out agent.AtomsInput, err error)
+		check func(t *testing.T, h *agent.Harness, llm *fakeLLM, out []agent.Atom, err error)
 	}{
 		{
 			name:  "bundle system, tools and run context",
 			phase: api.PhaseNucleusDistill,
-			reply: []api.MessagesResponse{use(agent.ToolSubmitAtoms, `{"atoms":[{"title":"Refund reasons","body":"POST /v1/refunds takes a reason."}]}`, 100, 20)},
-			check: func(t *testing.T, h *agent.Harness, llm *fakeLLM, out agent.AtomsInput, err error) {
-				if err != nil || len(out.Atoms) != 1 {
-					t.Fatalf("err=%v atoms=%+v", err, out.Atoms)
+			reply: []api.MessagesResponse{
+				use(agent.ToolAddAtoms, `{"atoms":[{"title":"Refund reasons","body":"POST /v1/refunds takes a reason."}]}`, 100, 20),
+				use(agent.ToolFinishAtoms, `{}`, 120, 5),
+			},
+			check: func(t *testing.T, h *agent.Harness, llm *fakeLLM, out []agent.Atom, err error) {
+				if err != nil || len(out) != 1 {
+					t.Fatalf("err=%v atoms=%+v", err, out)
 				}
 				req := llm.requests[0]
 				if req.SystemText() != "distill system" || req.SystemBlocks[0].CacheControl == nil {
@@ -55,10 +58,10 @@ func TestHarness(t *testing.T) {
 				if req.Context == nil || *req.Context != want || req.Model != "anthropic/claude-sonnet-4-6" || req.MaxTokens != 64000 {
 					t.Fatalf("context=%+v model=%q max=%d", req.Context, req.Model, req.MaxTokens)
 				}
-				if len(req.Tools) != 1 || req.Tools[0].Description != "server description of submit_atoms" {
+				if len(req.Tools) != 2 || req.Tools[0].Description != "server description of add_atoms" || req.Tools[1].Description != "server description of finish_atoms" {
 					t.Fatalf("tools = %+v", req.Tools)
 				}
-				if u := h.Usage(); u.Calls != 1 || u.InputTokens != 100 || u.OutputTokens != 20 {
+				if u := h.Usage(); u.Calls != 2 || u.InputTokens != 220 || u.OutputTokens != 25 {
 					t.Fatalf("usage = %+v", u)
 				}
 			},
@@ -66,7 +69,7 @@ func TestHarness(t *testing.T) {
 		{
 			name:  "missing phase",
 			phase: api.PhaseGuidesWrite,
-			check: func(t *testing.T, _ *agent.Harness, llm *fakeLLM, _ agent.AtomsInput, err error) {
+			check: func(t *testing.T, _ *agent.Harness, llm *fakeLLM, _ []agent.Atom, err error) {
 				if err == nil || len(llm.requests) != 0 {
 					t.Fatalf("err=%v requests=%d", err, len(llm.requests))
 				}
@@ -76,7 +79,7 @@ func TestHarness(t *testing.T) {
 			name:  "no bundle",
 			phase: api.PhaseNucleusDistill,
 			setup: func(h *agent.Harness) { h.Bundle = nil },
-			check: func(t *testing.T, _ *agent.Harness, _ *fakeLLM, _ agent.AtomsInput, err error) {
+			check: func(t *testing.T, _ *agent.Harness, _ *fakeLLM, _ []agent.Atom, err error) {
 				if !errors.Is(err, agent.ErrNoBundle) {
 					t.Fatalf("err = %v", err)
 				}
@@ -96,8 +99,8 @@ func TestHarness(t *testing.T) {
 					return testBundle(), nil
 				}
 			},
-			reply: []api.MessagesResponse{use(agent.ToolSubmitAtoms, `{"atoms":[]}`, 1, 1)},
-			check: func(t *testing.T, h *agent.Harness, llm *fakeLLM, _ agent.AtomsInput, err error) {
+			reply: []api.MessagesResponse{use(agent.ToolFinishAtoms, `{}`, 1, 1)},
+			check: func(t *testing.T, h *agent.Harness, llm *fakeLLM, _ []agent.Atom, err error) {
 				if err != nil || h.Bundle == nil {
 					t.Fatalf("err=%v bundle=%v", err, h.Bundle)
 				}
@@ -110,7 +113,7 @@ func TestHarness(t *testing.T) {
 				h.Bundle = nil
 				h.Instructions = func(context.Context) (*api.InstructionsBundle, error) { return nil, api.ErrServerTooOld }
 			},
-			check: func(t *testing.T, _ *agent.Harness, _ *fakeLLM, _ agent.AtomsInput, err error) {
+			check: func(t *testing.T, _ *agent.Harness, _ *fakeLLM, _ []agent.Atom, err error) {
 				if !errors.Is(err, api.ErrServerTooOld) {
 					t.Fatalf("err = %v", err)
 				}
@@ -124,7 +127,7 @@ func TestHarness(t *testing.T) {
 				{StopReason: api.StopEndTurn, Content: []api.ContentPart{{Type: api.PartText, Text: "done"}}, Usage: api.Usage{InputTokens: 5, OutputTokens: 1}},
 				{StopReason: api.StopEndTurn, Content: []api.ContentPart{{Type: api.PartText, Text: "still done"}}, Usage: api.Usage{InputTokens: 5, OutputTokens: 1}},
 			},
-			check: func(t *testing.T, h *agent.Harness, _ *fakeLLM, _ agent.AtomsInput, err error) {
+			check: func(t *testing.T, h *agent.Harness, _ *fakeLLM, _ []agent.Atom, err error) {
 				if !errors.Is(err, agent.ErrNoSubmit) {
 					t.Fatalf("err = %v", err)
 				}
@@ -141,8 +144,9 @@ func TestHarness(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(h)
 			}
-			out, err := agent.Submit[agent.AtomsInput](context.Background(), h, agent.Task{Phase: tc.phase, Purpose: api.PurposeDistill, Kickoff: "distill", Submit: agent.SubmitAtomsTool()})
-			tc.check(t, h, llm, out, err)
+			list := agent.NewAtomList(10, nil)
+			_, err := h.Run(context.Background(), agent.Task{Phase: tc.phase, Purpose: api.PurposeDistill, Kickoff: "distill", Tools: []agent.Tool{list.AddTool()}, Submit: list.FinishTool()})
+			tc.check(t, h, llm, list.Atoms(), err)
 		})
 	}
 }

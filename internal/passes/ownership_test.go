@@ -83,9 +83,8 @@ func reachFixture(t *testing.T) (*repoT, *fakeAPI, string, string) {
 func TestGuidesUpdatesBlocksAnotherRepositoryWroteThroughUnitReach(t *testing.T) {
 	r, fake, base, head := reachFixture(t)
 	fake.llm = guidesLLM(t,
-		agent.PagePlan{Actions: []agent.PageAction{
-			{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Reason: "reason added", Units: []string{"feature:refunds"}},
-			{Action: agent.ActionDeprecate, PageID: "pg_ext", Slug: "refund-flows", Reason: "no"},
+		pagePlan{Actions: []agent.PageAction{
+			{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Why: "reason added", Units: []string{"feature:refunds"}},
 		}},
 		calls(
 			call(agent.ToolDraftReplace, map[string]any{"key": "guide:refund-flows:limits", "block": map[string]any{"type": "prose", "text": "At most 5 refunds, each with a reason."}}),
@@ -112,9 +111,6 @@ func TestGuidesUpdatesBlocksAnotherRepositoryWroteThroughUnitReach(t *testing.T)
 	if rep.Counts.ViaUnit != 1 || rep.Counts.Updated != 1 || len(rep.Impact) != 1 || !strings.Contains(rep.Impact[0].Reason, "unit reach (implements feature:refunds)") {
 		t.Fatalf("counts=%+v impact=%+v", rep.Counts, rep.Impact)
 	}
-	if !strings.Contains(strings.Join(rep.Warnings, "\n"), "only its bound blocks") {
-		t.Fatalf("warnings = %v", rep.Warnings)
-	}
 	var results []string
 	for _, req := range fake.requests {
 		if lastTool(req) != agent.ToolSubmitPage {
@@ -139,10 +135,23 @@ func TestGuidesUpdatesBlocksAnotherRepositoryWroteThroughUnitReach(t *testing.T)
 	}
 }
 
+func TestGuidesSkipsDeprecatingAPageOutsideTheTarget(t *testing.T) {
+	r, fake, base, head := reachFixture(t)
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionDeprecate, PageID: "pg_ext", Slug: "refund-flows", Why: "no"}}})
+	w := &writes{}
+	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.changes) != 0 || !strings.Contains(strings.Join(rep.Warnings, "\n"), "only its bound blocks") {
+		t.Fatalf("changes=%+v warnings=%v", w.changes, rep.Warnings)
+	}
+}
+
 func TestGuidesDoesNotReachUnitsThisRepositoryOnlyDocuments(t *testing.T) {
 	r, fake, base, head := reachFixture(t)
 	fake.inventory[0].Contributors[0].Role = api.RoleDocuments
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Reason: "x"}}})
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Why: "x"}}})
 	w := &writes{}
 	rep, err := passes.Guides{}.Run(context.Background(), input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeWrite), sink(w))
 	if err != nil {
@@ -156,9 +165,9 @@ func TestGuidesDoesNotReachUnitsThisRepositoryOnlyDocuments(t *testing.T) {
 func TestGuidesPreviewFlagsPagesWithAnotherRunsOpenProposal(t *testing.T) {
 	r, fake, base, head := reachFixture(t)
 	fake.trees["sp_1"].Pages[0].OpenProposal = &api.OpenProposal{ID: "prop_9", Status: "open", PipelineRunID: "prun_gateway"}
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{
-		{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"},
-		{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Reason: "reason added"},
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{
+		{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason added"},
+		{Action: agent.ActionUpdate, PageID: "pg_ext", Slug: "refund-flows", Why: "reason added"},
 	}})
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
 	in.Trigger = config.TriggerPR
@@ -180,7 +189,7 @@ func TestGuidesPreviewSupersedesItsOwnPendingChange(t *testing.T) {
 	for i := range fake.pages["pg_1"].Blocks {
 		fake.pages["pg_1"].Blocks[i].Provenance = &api.BlockProvenance{Repo: "billing-api", Pass: "guides", RunID: "prun_earlier"}
 	}
-	fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}})
+	fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason added"}}})
 	in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
 	in.Trigger = config.TriggerPR
 	rep, err := passes.Guides{}.Run(context.Background(), in, &passes.Recorder{})
@@ -208,7 +217,7 @@ func TestGuidesPreviewReadsThePendingList(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, fake, base, head := reachFixture(t)
 			fake.trees["sp_1"].Pages[0].OpenProposal = &api.OpenProposal{ID: "prop_9", Status: "open", PipelineRunID: "prun_old", Pending: tc.pending}
-			fake.llm = guidesLLM(t, agent.PagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Reason: "reason added"}}})
+			fake.llm = guidesLLM(t, pagePlan{Actions: []agent.PageAction{{Action: agent.ActionUpdate, PageID: "pg_1", Slug: "refunds", Why: "reason added"}}})
 			in := input(t, r, fake, planPass(config.KindGuides, "guides", nil), manifest(), base, head, api.ModeDry)
 			in.Trigger = config.TriggerPR
 			rep, err := passes.Guides{}.Run(context.Background(), in, &passes.Recorder{})

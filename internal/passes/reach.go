@@ -86,12 +86,12 @@ func reachAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.P
 	for _, b := range current.Blocks {
 		bound[b.Key] = b.Units
 	}
-	notes := fmt.Sprintf("%s (in %s/%s). This page is outside the pass target; this repository %s %s.", a.Reason, r.Site, r.Space, firstOf(r.Role, "contributes to"), strings.Join(r.Units, ", "))
+	notes := fmt.Sprintf("%s (in %s/%s). This page is outside the pass target; this repository %s %s.", a.Why, r.Site, r.Space, firstOf(r.Role, "contributes to"), strings.Join(r.Units, ", "))
 	kickoff := writerKickoff(in, d, kickoffData{mode: agent.DraftReach, title: current.Page.Title, slug: ref.Slug, collection: current.Page.CollectionPath, notes: notes, units: r.Units})
 	if err := runDraft(ctx, in, d, api.PhaseReachWrite, kickoff); err != nil {
 		return nil, fmt.Errorf("author: %w", err)
 	}
-	summary := firstOf(d.Summary(), a.Reason)
+	summary := firstOf(d.Summary(), a.Why)
 	blocks, _ := draftBlocks(in, d, summary, bound)
 	hints := draftHints(d, r.PageID)
 	if len(blocks) == 0 {

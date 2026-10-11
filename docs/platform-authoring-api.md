@@ -304,6 +304,73 @@ change at a successful `submit_page`.
   (the platform supersedes it on the next write). Without the list, the CLI
   falls back to the block provenance of the open change.
 
+## List phases (CLI 1.2)
+
+The other phases build a list through an accumulating tool and end with a
+`finish_*` terminal. Every item is validated on its own: valid items are kept,
+and the invalid ones come back in one tool error, each with its reason.
+
+- `guides.plan`: `add_pages {pages: [{action: create|update|deprecate,
+  pageId?, slug, title, collectionPath?, units, mustCover: [{token?, text}],
+  why}]}` and `finish_plan {summary}`. A create needs a kebab-case slug and a
+  title; an update or deprecation needs the page id or slug; `why` is
+  required; a page already in the plan is refused; past the pass option
+  `maxPages` (default 25) every item is refused with `page budget reached
+  (<n>)`. The kept pages are then filtered as before (unknown, locked,
+  out-of-target and taken slugs are skipped with a warning). `why` goes to
+  the writer as `<planner_notes>` and to the change request summary
+  (`Why: …`); `mustCover` becomes `<must_cover>` and the E7 check. With
+  `deprecate: true` a deprecation runs the writer in `deprecate` mode; with
+  `deprecate: false` the page is deleted without a model call. A pull
+  request in `prPreview: impact` mode stops after the plan.
+- `changelog.write`: `add_release_items {items: [{section, text, commits?,
+  units?}]}` (sections `Added`, `Changed`, `Fixed`, `Deprecated`, `Removed`,
+  `Security`, any case) and `finish_release_notes {summary}`. The CLI groups
+  the items by section in that order.
+- `nucleus.distill`: `add_atoms {atoms: [{title, body, kind?, tags?,
+  confidence?, commits?, units?}]}` and `finish_atoms {}`. The pass option
+  `maxAtoms` (default 40) holds across calls, and a kind outside the pass
+  option `kinds` is refused.
+- `check.review`: `add_findings {findings: [ClaimFinding]}` (a verdict and a
+  title or claim) and `finish_review {summary}`.
+- `units.map`: `add_units {units: [{key, kind, title, summary?, sourceRefs,
+  aliases?, audiences?}]}`, where a later unit with the same key replaces the
+  earlier one, and `finish_units {complete}`. The mapped units are ingested,
+  with `complete: true`, only after an unforced `finish_units {complete:
+  true}` (a truncated turn never counts); otherwise none is ingested and the
+  ingest is not complete. Map-units runs on the bundle of the first AI pass's
+  run pass.
+
+Kickoffs carry data only, in tagged sections: `<task phase="…">` (repository,
+pass, audiences, product and the phase's settings such as the page budget,
+the namespace and atom budget, or the release and its readers),
+`<candidate_pages>`, `<reach_pages>`, `<undocumented_units>`, `<open_hints>`,
+`<known_atoms>`, `<pages>` (`<page id slug category="claims|verbatim"
+source?>`), `<existing_units>`, `<entrypoint_files>`, `<units>` and
+`<change_summary>`.
+
+## Run launch and failures (CLI 1.2)
+
+- Right after `POST /runs` and before the inventory ingest, the CLI fetches
+  the bundle of every run pass that calls a model (guides, changelog,
+  nucleus, check with `claims`, reference with `prose`) and prints `<pass>:
+  <model label> · <quality> · <language> (<code>) · instructions
+  <version8>`, plus the fallback and the bundle warnings. Any error (a `409
+  model_unavailable` or `model_conflict`, a server too old) finishes the run
+  as failed before any pass starts. With `run.Options.Debug` the bundle is
+  kept at `.gravity/runs/<runId>/<runPassId>.instructions.json`.
+- Pass reports carry `generation {instructionsVersion, model, provider}` from
+  the bundle.
+- A page task that fails (`output_limit`, `no_submit`, `refusal`,
+  `cap_reached`, a rejected forced submit) sends nothing for that page; the
+  other pages go on and the pass fails with the per-page list. Reference
+  prose failures fail the pass the same way, after its `api` blocks are
+  written.
+- `budget_exceeded` and `no_provider_key` halt the run: the pass in flight
+  ends, no other pass starts, in-flight passes are canceled, pages already
+  sent stay, and the run is finished as failed with the reason
+  (`run.ErrHalted`).
+
 ## LLM gateway
 
 `POST /api/llm/v1/messages` takes a Messages-style body plus
@@ -312,8 +379,8 @@ change at a successful `submit_page`.
 `map-units`. The CLI has no prompts of its own: every system prompt and tool
 description comes from the run pass's instructions bundle (below), and the
 gateway adds no layers to a call that carries `instructionsVersion`.
-`402 no_provider_key` means the organization has no LLM key; the AI pass fails
-with that error. The CLI never calls `GET /api/llm/v1/prompts/{name}` (kept by
+`402 no_provider_key` means the organization has no LLM key; it halts the
+run. The CLI never calls `GET /api/llm/v1/prompts/{name}` (kept by
 the server for CLI 1.1).
 
 ### Agent loop (CLI 1.2)

@@ -66,7 +66,7 @@ func text(stop, s string) api.MessagesResponse {
 
 func spin(id string) toolUse { return toolUse{id, "spin", `{}`} }
 func submitFindings(id string) toolUse {
-	return toolUse{id, agent.ToolReportFindings, `{"findings":[]}`}
+	return toolUse{id, toolReport, `{"findings":[]}`}
 }
 
 func spinTool(ran *[]string) agent.Tool {
@@ -121,7 +121,7 @@ func TestRunnerStopReasons(t *testing.T) {
 		{
 			name:     "tool use then terminal",
 			llm:      script(uses(spin("a")), uses(submitFindings("b"))),
-			wantTerm: agent.ToolReportFindings,
+			wantTerm: toolReport,
 			check: func(t *testing.T, s *scriptLLM, res *agent.Result, _ error) {
 				if res.ToolCalls != 1 || res.Turns != 2 {
 					t.Fatalf("toolCalls=%d turns=%d", res.ToolCalls, res.Turns)
@@ -135,7 +135,7 @@ func TestRunnerStopReasons(t *testing.T) {
 		{
 			name:     "max tokens notice then recovery",
 			llm:      script(api.MessagesResponse{StopReason: api.StopMaxTokens, Content: []api.ContentPart{{Type: api.PartToolUse, ID: "x", Name: "spin", Input: json.RawMessage(`{}`)}}}, uses(submitFindings("b"))),
-			wantTerm: agent.ToolReportFindings,
+			wantTerm: toolReport,
 			check: func(t *testing.T, s *scriptLLM, _ *agent.Result, _ error) {
 				req := s.requests[1]
 				assistant := req.Messages[1]
@@ -156,12 +156,12 @@ func TestRunnerStopReasons(t *testing.T) {
 		{
 			name:     "truncation streak resets",
 			llm:      script(text(api.StopMaxTokens, "p"), text(api.StopMaxTokens, "p"), uses(spin("a")), text(api.StopMaxTokens, "p"), text(api.StopMaxTokens, "p"), uses(submitFindings("b"))),
-			wantTerm: agent.ToolReportFindings,
+			wantTerm: toolReport,
 		},
 		{
 			name:     "end turn nudges then submit",
 			llm:      script(text(api.StopEndTurn, "thinking"), text(api.StopEndTurn, ""), uses(submitFindings("b"))),
-			wantTerm: agent.ToolReportFindings,
+			wantTerm: toolReport,
 			check: func(t *testing.T, s *scriptLLM, _ *agent.Result, _ error) {
 				if got := lastText(s.requests[1]); got != "Continue. Call report_findings when the work is complete." {
 					t.Fatalf("nudge = %q", got)
@@ -204,7 +204,7 @@ func TestRunnerStopReasons(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := runner(tc.llm, spinTool(nil), agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+			res, err := runner(tc.llm, spinTool(nil), reportTool()).Run(context.Background(), "kickoff")
 			switch {
 			case tc.wantErr != nil:
 				if !errors.Is(err, tc.wantErr) {
@@ -238,13 +238,13 @@ func TestRunnerToolOrdering(t *testing.T) {
 		{name: "earlier failure blocks terminal", calls: []toolUse{{"b", "boom", `{}`}, submitFindings("t")}, wantRan: nil, wantError: map[string]string{"b": "exploded", "t": "was not run"}},
 		{name: "unknown tool blocks terminal", calls: []toolUse{{"u", "nope", `{}`}, submitFindings("t")}, wantError: map[string]string{"u": "unknown tool", "t": "was not run"}},
 		{name: "second terminal refused", calls: []toolUse{submitFindings("t1"), submitFindings("t2")}, wantError: map[string]string{"t2": "once per turn", "t1": "was not run"}},
-		{name: "invalid terminal input is a tool error", calls: []toolUse{{"t", agent.ToolReportFindings, `{"findings":"no"}`}}, wantError: map[string]string{"t": "invalid report_findings input"}},
+		{name: "invalid terminal input is a tool error", calls: []toolUse{{"t", toolReport, `{"findings":"no"}`}}, wantError: map[string]string{"t": "invalid report_findings input"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var ran []string
 			llm := script(uses(tc.calls...), uses(submitFindings("final")))
-			res, err := runner(llm, spinTool(&ran), failTool(), agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+			res, err := runner(llm, spinTool(&ran), failTool(), reportTool()).Run(context.Background(), "kickoff")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -270,6 +270,24 @@ func TestRunnerToolOrdering(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+const toolReport = "report_findings"
+
+func reportTool() agent.Tool {
+	return agent.Tool{
+		Def:      api.Tool{Name: toolReport, InputSchema: map[string]any{"type": "object"}},
+		Terminal: true,
+		Validate: func(raw json.RawMessage) error {
+			var in struct {
+				Findings []map[string]any `json:"findings"`
+			}
+			if err := json.Unmarshal(raw, &in); err != nil {
+				return fmt.Errorf("findings must be an array of objects: %w", err)
+			}
+			return nil
+		},
 	}
 }
 
@@ -301,7 +319,7 @@ func TestRunnerCaps(t *testing.T) {
 			caps:    api.HarnessLimits{MaxTurns: 5, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
 			forced:  true,
 			replies: append(spins(3), uses(submitFindings("f"))),
-			submit:  agent.ReportFindingsTool(),
+			submit:  reportTool(),
 			check: func(t *testing.T, s *scriptLLM, res *agent.Result, err error) {
 				if err != nil || !res.Forced || res.Partial {
 					t.Fatalf("err=%v forced=%v partial=%v", err, res.Forced, res.Partial)
@@ -324,7 +342,7 @@ func TestRunnerCaps(t *testing.T) {
 			name:    "user text when forced tool choice is unsupported",
 			caps:    api.HarnessLimits{MaxTurns: 4, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
 			replies: append(spins(1), uses(submitFindings("f"))),
-			submit:  agent.ReportFindingsTool(),
+			submit:  reportTool(),
 			check: func(t *testing.T, s *scriptLLM, _ *agent.Result, err error) {
 				if err != nil {
 					t.Fatal(err)
@@ -343,7 +361,7 @@ func TestRunnerCaps(t *testing.T) {
 			caps:    api.HarnessLimits{MaxTurns: 3, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 9},
 			forced:  true,
 			replies: []any{text(api.StopEndTurn, "a"), text(api.StopEndTurn, "b"), text(api.StopEndTurn, "c")},
-			submit:  agent.ReportFindingsTool(),
+			submit:  reportTool(),
 			check: func(t *testing.T, _ *scriptLLM, _ *agent.Result, err error) {
 				if !errors.Is(err, agent.ErrCapReached) {
 					t.Fatalf("err = %v", err)
@@ -355,7 +373,7 @@ func TestRunnerCaps(t *testing.T) {
 			caps:    api.HarnessLimits{MaxTurns: 20, MaxToolCalls: 1, StepTokens: 4000, MaxContinueNudges: 2},
 			forced:  true,
 			replies: []any{uses(spin("a"), spin("b")), uses(submitFindings("f"))},
-			submit:  agent.ReportFindingsTool(),
+			submit:  reportTool(),
 			check: func(t *testing.T, s *scriptLLM, res *agent.Result, err error) {
 				if err != nil || res.ToolCalls != 1 || !res.Forced {
 					t.Fatalf("err=%v calls=%d forced=%v", err, res.ToolCalls, res.Forced)
@@ -397,8 +415,8 @@ func TestRunnerCaps(t *testing.T) {
 			name:    "forced terminal with errors fails the task",
 			caps:    api.HarnessLimits{MaxTurns: 3, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
 			forced:  true,
-			replies: []any{uses(toolUse{"f", agent.ToolReportFindings, `{"findings":"bad"}`})},
-			submit:  agent.ReportFindingsTool(),
+			replies: []any{uses(toolUse{"f", toolReport, `{"findings":"bad"}`})},
+			submit:  reportTool(),
 			check: func(t *testing.T, _ *scriptLLM, _ *agent.Result, err error) {
 				if !errors.Is(err, agent.ErrForcedSubmitRejected) {
 					t.Fatalf("err = %v", err)
@@ -423,10 +441,10 @@ func TestRunnerForcedToolChoiceRejectedFallsBackToUserText(t *testing.T) {
 		&api.APIError{StatusCode: 400, Code: api.CodeProviderBadRequest, Message: "tool_choice not supported"},
 		uses(submitFindings("f")),
 	)
-	r := runner(llm, agent.ReportFindingsTool())
+	r := runner(llm, reportTool())
 	r.Caps.MaxTurns = 1
 	res, err := r.Run(context.Background(), "kickoff")
-	if err != nil || res.TerminalTool != agent.ToolReportFindings {
+	if err != nil || res.TerminalTool != toolReport {
 		t.Fatalf("err=%v res=%+v", err, res)
 	}
 	retry := llm.requests[1]
@@ -448,7 +466,7 @@ func TestRunnerMaxTokens(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			llm := script(uses(submitFindings("f")))
-			r := runner(llm, agent.ReportFindingsTool())
+			r := runner(llm, reportTool())
 			r.Limits = tc.limits
 			if _, err := r.Run(context.Background(), "kickoff"); err != nil {
 				t.Fatal(err)
@@ -466,7 +484,7 @@ func TestRunnerMaxTokens(t *testing.T) {
 
 func TestRunnerSendsCachedSystemAndBreakpoint(t *testing.T) {
 	llm := script(uses(spin("a")), uses(submitFindings("f")))
-	if _, err := runner(llm, spinTool(nil), agent.ReportFindingsTool()).Run(context.Background(), "kickoff"); err != nil {
+	if _, err := runner(llm, spinTool(nil), reportTool()).Run(context.Background(), "kickoff"); err != nil {
 		t.Fatal(err)
 	}
 	for i, req := range llm.requests {
@@ -508,7 +526,7 @@ func TestRunnerElidesOldToolResults(t *testing.T) {
 		uses(toolUse{"r3", "read_file", `{"path":"c.go"}`}),
 		uses(submitFindings("f")),
 	)
-	r := runner(llm, bigTool("read_file", 9000), bigTool("draft_view", 9000), agent.ReportFindingsTool())
+	r := runner(llm, bigTool("read_file", 9000), bigTool("draft_view", 9000), reportTool())
 	r.Limits = api.ModelLimits{MaxOutputTokens: 1000, ContextWindow: 20000}
 	r.Caps.StepTokens = 500
 	for i := range llm.replies {
@@ -562,14 +580,14 @@ func TestRunnerContextTooLarge(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			llm := script(tc.replies...)
-			res, err := runner(llm, bigTool("spin", 3000), agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+			res, err := runner(llm, bigTool("spin", 3000), reportTool()).Run(context.Background(), "kickoff")
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v", err)
 				}
 				return
 			}
-			if err != nil || res.TerminalTool != agent.ToolReportFindings || res.Turns != 3 {
+			if err != nil || res.TerminalTool != toolReport || res.Turns != 3 {
 				t.Fatalf("err=%v res=%+v", err, res)
 			}
 			retry := llm.requests[3]
@@ -586,7 +604,7 @@ func TestRunnerUsage(t *testing.T) {
 	first.Attribution = api.Attribution{Model: "anthropic/claude-served"}
 	second := uses(submitFindings("f"))
 	second.Usage = api.Usage{InputTokens: 50, OutputTokens: 10, CacheReadInputTokens: 1000}
-	res, err := runner(script(first, second), spinTool(nil), agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+	res, err := runner(script(first, second), spinTool(nil), reportTool()).Run(context.Background(), "kickoff")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,8 +634,8 @@ func TestRunnerOverHTTP(t *testing.T) {
 	defer srv.Close()
 	client := api.New(srv.URL, "test-token")
 	client.Sleep = func(context.Context, time.Duration) error { return nil }
-	res, err := runner(client, agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
-	if err != nil || res.TerminalTool != agent.ToolReportFindings || res.Model != "anthropic/claude-test" {
+	res, err := runner(client, reportTool()).Run(context.Background(), "kickoff")
+	if err != nil || res.TerminalTool != toolReport || res.Model != "anthropic/claude-test" {
 		t.Fatalf("err=%v res=%+v", err, res)
 	}
 	system, ok := bodies[1]["system"].([]any)
