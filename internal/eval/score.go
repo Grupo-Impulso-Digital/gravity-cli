@@ -173,7 +173,7 @@ func normalize(s string) string {
 const pathEnd = `(?:$|[^a-z0-9/{}_-])`
 
 func endpointPattern(e Endpoint) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^a-z])` + strings.ToLower(e.Method) + `[\s|]+["']?(?:https?://[^\s/]+(?:/v\d+)?)?` + regexp.QuoteMeta(normalize(e.Path)) + pathEnd)
+	return regexp.MustCompile(`(?:^|[^a-z])` + strings.ToLower(e.Method) + `[\s|]+["']?(?:https?://[^\s/]+)?(?:/v\d+)?` + regexp.QuoteMeta(normalize(e.Path)) + pathEnd)
 }
 
 func pathPattern(e Endpoint) *regexp.Regexp {

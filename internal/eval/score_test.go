@@ -284,6 +284,8 @@ func TestEndpointMatching(t *testing.T) {
 		{"GET /topics/{id}", one, true},
 		{"get /topics/:topic_id returns one topic", one, true},
 		{`curl -X GET "https://api.topics.example.com/v1/topics/{topicId}"`, one, true},
+		{"GET /v1/topics/{topicId}", one, true},
+		{"GET /v1/topics/{topicId}/posts", one, false},
 		{"GET /topics/{id}/posts", one, false},
 		{"POST /topics", topics, false},
 		{"FORGET /topics", topics, false},
