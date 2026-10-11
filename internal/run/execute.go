@@ -14,7 +14,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/changeset"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/passes"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // MaxReportBytes is the pass report size the platform accepts.
@@ -31,7 +30,7 @@ type runState struct {
 	started  *api.StartedRun
 	known    *passes.Units
 	assets   *passes.Assets
-	resolver *prompts.Resolver
+	bundles  map[string]*api.InstructionsBundle
 	ingested []api.IngestUnit
 	mu       sync.Mutex
 	stopErr  error
@@ -61,7 +60,7 @@ func execute(ctx context.Context, env *Env, opts Options, p *api.Plan, prep *pre
 	defer cancel()
 	s := &runState{
 		env: env, opts: opts, plan: p, prep: prep, started: started, known: passes.NewUnits(p.Inventory.Units), assets: passes.NewAssets(), cancel: cancel,
-		resolver: &prompts.Resolver{Fetcher: env.Client, Log: env.Log.Debugf},
+		bundles: map[string]*api.InstructionsBundle{},
 	}
 	hbDone := make(chan struct{})
 	go s.heartbeat(runCtx, hbDone)
@@ -279,8 +278,28 @@ func productParam(opts Options, p *api.Plan) string {
 	return p.Product.Slug
 }
 
+func (s *runState) bundle(ctx context.Context, runPassID string) (*api.InstructionsBundle, error) {
+	s.mu.Lock()
+	b, ok := s.bundles[runPassID]
+	s.mu.Unlock()
+	if ok {
+		return b, nil
+	}
+	b, err := s.env.Client.InstructionsBundle(ctx, api.InstructionsQuery{RunPassID: runPassID})
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.bundles[runPassID] = b
+	s.mu.Unlock()
+	return b, nil
+}
+
 func (s *runState) harness(rp api.RunPass) *agent.Harness {
-	return &agent.Harness{LLM: s.env.Client, Prompts: s.resolver, RunID: s.started.Run.ID, RunPassID: rp.RunPassID, TokenBudget: s.opts.TokenBudget, Log: debugWriter(s.env.Log)}
+	return &agent.Harness{
+		LLM: s.env.Client, RunID: s.started.Run.ID, RunPassID: rp.RunPassID, Log: debugWriter(s.env.Log),
+		Instructions: func(ctx context.Context) (*api.InstructionsBundle, error) { return s.bundle(ctx, rp.RunPassID) },
+	}
 }
 
 func (s *runState) runPass(ctx context.Context, pp preparedPass, rp api.RunPass, base PassResult) PassResult {
@@ -314,6 +333,9 @@ func (s *runState) runPass(ctx context.Context, pp preparedPass, rp api.RunPass,
 	rep, err := impl.Run(ctx, in, sink)
 	rep.DurationMs = s.env.now().Sub(started).Milliseconds()
 	rep.Usage = h.Usage()
+	for _, phase := range h.Partial() {
+		rep.Warnings = append(rep.Warnings, "partial (forced at cap): "+phase)
+	}
 	if rec != nil {
 		r := rec.Recorded()
 		rep.Recorded = &r
@@ -518,7 +540,7 @@ func (s *runState) mapUnits(ctx context.Context) ([]api.IngestUnit, bool, error)
 	}
 	h := s.harness(hostRP)
 	tools := agent.RepoTools(s.env.Repo, agent.Range{Head: s.prep.headSHA})
-	out, err := agent.Submit[agent.UnitsInput](ctx, h, agent.Task{Prompt: prompts.MapUnits, Purpose: api.PurposeMapUnits, Kickoff: kickoff, Tools: tools, Submit: agent.SubmitUnitsTool()})
+	out, err := agent.Submit[agent.UnitsInput](ctx, h, agent.Task{Phase: api.PhaseUnitsMap, Purpose: api.PurposeMapUnits, Kickoff: kickoff, Tools: tools, Submit: agent.SubmitUnitsTool()})
 	if err != nil {
 		return nil, false, err
 	}

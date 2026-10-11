@@ -7,7 +7,6 @@ import (
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 const maxProvenanceRefs = 10
@@ -105,7 +104,7 @@ func reachAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.P
 		fmt.Sprintf("This page is outside the pass target. You may change it only because this repository %s %s, which this change touches. Change only these existing blocks: %s. Add no block and remove no other block. Whichever repository wrote a block last, it is yours to correct when the change makes it untrue.\n\n## Current page (human blocks are read-only)\n%s",
 			firstOf(r.Role, "contributes to"), strings.Join(r.Units, ", "), strings.Join(keys, ", "), text)
 	kickoff += "\n" + UnitDetails(in.Plan, r.Units) + "\n" + ChangeSummary(in.ChangeSet, in.Range)
-	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Prompt: prompts.PassGuides, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPageChangesTool()})
+	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Phase: api.PhaseReachWrite, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPageChangesTool()})
 	if err != nil {
 		return nil, fmt.Errorf("author: %w", err)
 	}

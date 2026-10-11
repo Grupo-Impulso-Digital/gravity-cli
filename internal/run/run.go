@@ -19,7 +19,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/git"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/passes"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/plan"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // API is the platform surface a run uses.
@@ -27,7 +26,7 @@ type API interface {
 	passes.API
 	passes.Writer
 	agent.LLM
-	prompts.Fetcher
+	InstructionsBundle(ctx context.Context, q api.InstructionsQuery) (*api.InstructionsBundle, error)
 	Connect(ctx context.Context, req api.ConnectRequest) (*api.ConnectResponse, error)
 	Plan(ctx context.Context, q api.PlanQuery) (*api.Plan, error)
 	StartRun(ctx context.Context, repo string, req api.StartRunRequest) (*api.StartedRun, error)
@@ -69,7 +68,6 @@ type Options struct {
 	CI             *api.CIInfo
 	RepoParam      string
 	ConnectContext string
-	TokenBudget    int
 	NoSnapshot     bool
 }
 

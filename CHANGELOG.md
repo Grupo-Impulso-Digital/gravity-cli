@@ -22,11 +22,28 @@
   hints; object-shaped error `details` are decoded. `budget_exceeded` and
   `no_provider_key` are run-halting (`api.HaltsRun`).
 
+- The agent loop runs every phase from the run pass's instructions bundle:
+  the phase's rendered system prompt as one cached block, the bundle's tool
+  descriptions, its turn and tool-call caps (the terminal tool is forced for
+  the last three turns), `max_tokens` sized from the model's output limit and
+  context window, old tool results elided above 60% of the window, one retry
+  after `413 context_too_large`, and handling of the `max_tokens`
+  (`output_limit` after three in a row), `end_turn` (continue nudges, then
+  `no_submit`) and `refusal` stop reasons.
+
 ### Changed
 
 - Model calls get a 15 min deadline per attempt (other calls keep 120 s) and
   retry `429`, `5xx` and network errors, honoring `Retry-After`, for up to
   30 min in total instead of three attempts.
+
+### Removed
+
+- The prompts baked into the binary and the hosted prompt resolver
+  (`GET /api/llm/v1/prompts/{name}`): the instructions bundle is the only
+  instruction source.
+- The pass token budget (400k tokens per pass); the server's run and month
+  budgets apply.
 
 ## v1.1.1 — Unreleased
 

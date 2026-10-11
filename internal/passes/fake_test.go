@@ -216,7 +216,7 @@ func input(t *testing.T, r *repoT, fake *fakeAPI, pp api.PlanPass, m *config.Man
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &agent.Harness{LLM: fake, RunID: "prun_1", RunPassID: "ppr_1"}
+	h := &agent.Harness{LLM: fake, Bundle: testBundle(), RunID: "prun_1", RunPassID: "ppr_1"}
 	return passes.Input{
 		Pass: pp, Plan: p, Manifest: m, Range: rng, ChangeSet: cs, Builder: b, RunID: "prun_1", RunPassID: "ppr_1", Mode: mode, Trigger: "push",
 		Repo: repo, Info: passes.RepoInfo{ID: "cr_1", RemoteKey: "github.com/acme/billing-api", Name: "billing-api", WebURL: "https://github.com/acme/billing-api", Provider: "github", Branch: "main"},
@@ -298,4 +298,17 @@ func (w *writes) WriteMemory(_ context.Context, req api.MemoryWrite) (*api.Memor
 
 func sink(w *writes) *passes.PlatformSink {
 	return &passes.PlatformSink{W: w, RunID: "prun_1", RunPassID: "ppr_1", Assets: passes.NewAssets()}
+}
+
+func testBundle() *api.InstructionsBundle {
+	system := map[string]string{}
+	for _, phase := range []string{api.PhaseGuidesPlan, api.PhaseGuidesWrite, api.PhaseReachWrite, api.PhaseReferenceProse, api.PhaseChangelogWrite, api.PhaseNucleusDistill, api.PhaseCheckReview, api.PhaseUnitsMap} {
+		system[phase] = "system for " + phase
+	}
+	return &api.InstructionsBundle{
+		Schema: api.InstructionsSchema, Version: "sha256:test", ToolContract: api.ToolContract,
+		Model:    api.BundleModel{ID: "anthropic/claude-test", Limits: api.ModelLimits{MaxOutputTokens: 16000, ContextWindow: 200000, Known: true}, Features: api.ModelFeatures{ForcedToolChoice: true}},
+		Harness:  api.HarnessLimits{MaxTurns: 80, MaxToolCalls: 200, StepTokens: 4000, MaxContinueNudges: 4},
+		Rendered: api.RenderedPrompts{System: system},
+	}
 }

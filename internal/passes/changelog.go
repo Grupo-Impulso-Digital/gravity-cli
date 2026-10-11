@@ -15,7 +15,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/glob"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/verbatim"
 )
 
@@ -146,7 +145,7 @@ func releaseNotesBlocks(ctx context.Context, in Input, slug string, cs *changese
 	}
 	audience := in.StringOption("audience", "customer")
 	kickoff := passHeader(in) + fmt.Sprintf("\nWrite the release notes for %s. Audience: %s.\n\n", what, audience) + ChangeSummary(cs, in.Range)
-	notes, err := agent.Submit[agent.ReleaseNotesInput](ctx, in.Harness, agent.Task{Prompt: prompts.PassChangelog, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitReleaseNotesTool()})
+	notes, err := agent.Submit[agent.ReleaseNotesInput](ctx, in.Harness, agent.Task{Phase: api.PhaseChangelogWrite, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitReleaseNotesTool()})
 	if err != nil {
 		return nil, fmt.Errorf("release notes: %w", err)
 	}

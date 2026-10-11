@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -597,6 +596,3 @@ func ValidateUnits(raw json.RawMessage) error {
 	}
 	return nil
 }
-
-// ErrNoSubmit means the model never called the terminal tool.
-var ErrNoSubmit = errors.New("the model did not submit a result")

@@ -11,7 +11,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // PR preview modes of AI passes.
@@ -426,7 +425,7 @@ func (Guides) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	kickoff := passHeader(in) + fmt.Sprintf("Page budget: %d actions. New pages allowed: %v. Deprecations as callouts: %v.\n\n", maxPages, createPages, deprecate) +
 		ChangeSummary(in.ChangeSet, in.Range) + UnitDetails(in.Plan, touchedKeys(in)) + imp.render() +
 		"\nDecide the page actions now. Read pages with read_page before deciding when the reason is unclear."
-	plan, err := agent.Submit[agent.PagePlan](ctx, in.Harness, agent.Task{Prompt: prompts.PassImpact, Purpose: api.PurposePlan, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPagePlanTool()})
+	plan, err := agent.Submit[agent.PagePlan](ctx, in.Harness, agent.Task{Phase: api.PhaseGuidesPlan, Purpose: api.PurposePlan, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPagePlanTool()})
 	if err != nil {
 		return rep, fmt.Errorf("plan: %w", err)
 	}
@@ -604,7 +603,7 @@ func guidesAction(ctx context.Context, in Input, out Sink, rep *Report, a agent.
 		kickoff += "New keys follow guide:" + a.Slug + ":<section-slug>[:n].\n\n## Current page (human blocks are read-only)\n" + text
 	}
 	kickoff += "\n" + UnitDetails(in.Plan, a.Units) + "\n" + ChangeSummary(in.ChangeSet, in.Range)
-	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Prompt: prompts.PassGuides, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPageChangesTool()})
+	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Phase: api.PhaseGuidesWrite, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitPageChangesTool()})
 	if err != nil {
 		return nil, fmt.Errorf("author: %w", err)
 	}

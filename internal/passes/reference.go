@@ -17,7 +17,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/glob"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // Page strategies of a reference pass.
@@ -510,7 +509,7 @@ func referenceProse(ctx context.Context, in Input, out Sink, rep *Report, p *ref
 		kickoff += "\nCurrent page:\n" + pageText
 	}
 	tools := append(agent.RepoTools(in.Repo, agent.Range{Base: in.Range.Base, Head: in.Range.Head, WorkingTree: in.Range.Head == ""}), agent.DocTools(in.Client, docScope(in))...)
-	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Prompt: prompts.PassReference, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: tools, Submit: agent.SubmitPageChangesTool()})
+	changes, err := agent.Submit[agent.PageChanges](ctx, in.Harness, agent.Task{Phase: api.PhaseReferenceProse, Purpose: api.PurposeAuthor, Kickoff: kickoff, Tools: tools, Submit: agent.SubmitPageChangesTool()})
 	if err != nil {
 		return err
 	}

@@ -14,7 +14,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/glob"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // Finding categories of a check pass.
@@ -708,7 +707,7 @@ func checkClaims(ctx context.Context, in Input, out Sink, rep *Report) error {
 		return nil
 	}
 	kickoff := passHeader(in) + "\nReview the claims of these pages against this repository at the head of the range.\n\n" + ChangeSummary(in.ChangeSet, in.Range) + UnitDetails(in.Plan, touchedKeys(in)) + b.String()
-	res, err := agent.Submit[agent.FindingsInput](ctx, in.Harness, agent.Task{Prompt: prompts.PassCheck, Purpose: api.PurposeCheck, Kickoff: kickoff, Tools: toolset(in), Submit: agent.ReportFindingsTool()})
+	res, err := agent.Submit[agent.FindingsInput](ctx, in.Harness, agent.Task{Phase: api.PhaseCheckReview, Purpose: api.PurposeCheck, Kickoff: kickoff, Tools: toolset(in), Submit: agent.ReportFindingsTool()})
 	if err != nil {
 		return fmt.Errorf("claims: %w", err)
 	}

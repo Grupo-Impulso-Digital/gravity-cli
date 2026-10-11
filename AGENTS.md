@@ -31,10 +31,9 @@ cmd/gravity              entrypoint: signal-aware context
        │    └─ internal/passes  Pass interface + guides, reference, verbatim, changelog, nucleus, check, capture;
        │         │              Ownership (product-wide units, roles, claim verdicts), unit reach, provenance
        │         ├─ internal/verbatim  Markdown/MDX -> native blocks, file -> page mapping, link rewriting
-       │         └─ internal/agent     one harness: forced submit, token budget, git + doc tools, submit tools
+       │         └─ internal/agent     one harness: bundle-driven loop (caps, forced terminal, elision), git + doc tools, submit tools
        ├─ internal/report     doc-impact comment and run summary; comment upsert on GitHub, GitLab, Bitbucket, Azure;
        │                      GitHub/Azure annotations, GitLab Code Quality; page diffs
-       ├─ internal/prompts    hosted pass prompts with baked fallbacks
        ├─ internal/changeset  range resolution, ChangeSet, OpenAPI diff, symbols, unit mapping
        ├─ internal/setup      setup suggestions: product ranking, target site, pass templates, structure drafts and diffs
        │    └─ internal/detect  local repository detection (languages, specs, routes, docs, releases, CI files)
@@ -304,10 +303,11 @@ to `debug.ReadBuildInfo`.
   `bitbucket-pipelines.yml` or a `.gitlab-ci.yml` with its own `include:` list
   is kept and a snippet is printed instead. Jenkins and CircleCI always get a
   snippet.
-- **The CLI never embeds instruction layers.** Every gateway call sends only
-  the kind prompt (`internal/prompts`) and `context { runId, runPassId,
-  purpose }`; the gateway composes the org/site/space/collection/pass/note
-  layers server-side.
+- **The CLI owns no instructions.** Every system prompt and tool description
+  comes from the run pass's `gravity.instructions/1` bundle
+  (`GET /api/llm/v1/instructions`, fetched once per run pass). Calls send `context { runId, runPassId,
+  purpose, instructionsVersion, phase }`. The loop's caps come from the
+  bundle's `harness`, and there is no CLI token budget.
 - **Writes only through a `passes.Sink`**: `PlatformSink` in write runs,
   `Recorder` in dry runs (PRs, `--dry-run`), which records the would-be
   requests into the pass report; a recorded dry run replays them.

@@ -107,8 +107,7 @@ the error chain wins, then a `401`, then the command's own `*ExitError`.
 | `GET` | `/api/v1/content/resolve`, `/api/v1/content/pages/{pageId}/provenance` | `explain` |
 | `POST` | `/api/v1/nucleus/recall`, `/api/v1/nucleus/memories` | `nucleus` passes, doc tools |
 | `POST` | `/api/llm/v1/messages` | every AI pass |
-| `GET` | `/api/llm/v1/instructions?runPassId=&model=&maxOutput=` | the instructions bundle of an AI run pass (`api.Client.InstructionsBundle`) |
-| `GET` | `/api/llm/v1/prompts/{name}` | every AI pass (hosted prompt, with a baked fallback) |
+| `GET` | `/api/llm/v1/instructions?runPassId=&model=&maxOutput=` | every AI pass: the instructions bundle of its run pass, fetched once before its first model call (`api.Client.InstructionsBundle`) |
 
 ## Guided runs (CLI 1.1)
 
@@ -252,16 +251,54 @@ audiences?, after?, units?, rationale? }`.
 ## LLM gateway
 
 `POST /api/llm/v1/messages` takes a Messages-style body plus
-`context { runId, runPassId, purpose }`, with `purpose` among `plan`,
-`author`, `check`, `distill`, `impact` and `map-units`. The CLI sends only the
-pass kind's prompt; the gateway composes the organization, site, space,
-collection, pass and note layers. `402 no_provider_key` means the organization
-has no LLM key; the AI pass fails with that error. Hosted prompts come from
-`GET /api/llm/v1/prompts/{name}` and are cached per process
-(`prompts.Resolver`). An error or an empty answer falls back to the prompt
-baked into the binary, except a licence refusal, a run-stopping error
-(`lease_lost`, `run_not_running` or a `401`) or a cancelled context, which fail
-the pass.
+`context { runId, runPassId, purpose, instructionsVersion, phase }`, with
+`purpose` among `plan`, `author`, `check`, `distill`, `impact` and
+`map-units`. The CLI has no prompts of its own: every system prompt and tool
+description comes from the run pass's instructions bundle (below), and the
+gateway adds no layers to a call that carries `instructionsVersion`.
+`402 no_provider_key` means the organization has no LLM key; the AI pass fails
+with that error. The CLI never calls `GET /api/llm/v1/prompts/{name}` (kept by
+the server for CLI 1.1).
+
+### Agent loop (CLI 1.2)
+
+`internal/agent` runs one conversation per phase task (`agent.Harness`,
+`agent.Runner`):
+
+- `system` is `rendered.system[<phase>]`, sent as one cached text block, with
+  one cache breakpoint on the last part of the last message. Tool
+  descriptions are the bundle's `tools` entries.
+- `max_tokens` is `min(limits.maxOutputTokens, contextWindow − estimate −
+  2000)`. The estimate is the last response's prompt tokens (input plus cache
+  reads and writes) plus a third of the bytes appended since; the first call
+  estimates a third of the bytes of the system prompt, the kickoff and the
+  tool schemas. Unknown limits default to 8192 / 128000.
+- Above 60% of the context window, the oldest tool results (never the latest
+  `draft_view` result nor the kickoff) are replaced by `[elided: <tool> <args>;
+  call it again if needed]` in one batch until the estimate is below 40%. The
+  same happens first when `max_tokens` would fall below `harness.stepTokens`,
+  and once on `413 context_too_large` before a retry; a second `413` fails the
+  task with `context_limit`.
+- `tool_use`: every call runs in order, the terminal tool last and only when
+  every earlier call succeeded; all results go back in one user message.
+  `max_tokens`: tool calls are dropped and the model is told to work in steps
+  of about `stepTokens`; three in a row fail the task with `output_limit`.
+  `end_turn` without the terminal: `Continue. Call <terminal> when the work is
+  complete.`, up to `maxContinueNudges`, then `no_submit`. `refusal` fails the
+  task with the refusal text. An empty assistant turn is sent back as
+  `(no output)` or `(output truncated)`.
+- Caps come from `harness`: from `maxTurns − 3` turns on, or once
+  `maxToolCalls` is spent, only the terminal tool may be called
+  (`tool_choice {type: tool}` when `model.features.forcedToolChoice`, else a
+  user message). A forced terminal whose input is rejected fails the task;
+  a forced list-phase terminal (`finish_plan`, `finish_atoms`, `finish_units`,
+  `finish_review`, `finish_release_notes`) is partial (`finish_units` counts as
+  `complete: false`) and the pass report warns `partial (forced at cap)`.
+  Running out of turns fails with `cap_reached`.
+- There is no CLI token budget; the server's run and month budgets apply
+  (`402 budget_exceeded`). Failures are `agent.TaskError` values naming the
+  reason and the model. Pass reports count model calls and prompt and output
+  tokens (`agent.Usage`).
 
 ### Harness v2 surface (CLI 1.2)
 

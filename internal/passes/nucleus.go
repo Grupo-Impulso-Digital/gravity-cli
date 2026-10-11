@@ -9,7 +9,6 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/agent"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
-	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/prompts"
 )
 
 // Nucleus distills repository-tagged facts into the product's Nucleus namespace.
@@ -72,7 +71,7 @@ func (Nucleus) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 		kickoff += " Allowed kinds: " + strings.Join(kinds, ", ") + "."
 	}
 	kickoff += "\n\n## Already known (reuse a title to revise an atom)\n" + firstOf(known, "(nothing recalled)") + "\n\n" + ChangeSummary(in.ChangeSet, in.Range) + UnitDetails(in.Plan, touchedKeys(in))
-	atoms, err := agent.Submit[agent.AtomsInput](ctx, in.Harness, agent.Task{Prompt: prompts.PassNucleus, Purpose: api.PurposeDistill, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitAtomsTool()})
+	atoms, err := agent.Submit[agent.AtomsInput](ctx, in.Harness, agent.Task{Phase: api.PhaseNucleusDistill, Purpose: api.PurposeDistill, Kickoff: kickoff, Tools: toolset(in), Submit: agent.SubmitAtomsTool()})
 	if err != nil {
 		return rep, fmt.Errorf("distill: %w", err)
 	}

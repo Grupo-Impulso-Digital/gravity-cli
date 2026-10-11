@@ -3,6 +3,8 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,585 +16,612 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 )
 
-type scriptedServer struct {
-	responses []api.MessagesResponse
-	requests  []api.MessagesRequest
-	idx       int
+type scriptLLM struct {
+	replies  []func(req api.MessagesRequest) (*api.MessagesResponse, error)
+	requests []api.MessagesRequest
 }
 
-func newMessagesServer(t *testing.T, s *scriptedServer) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/llm/v1/messages" {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
-			t.Errorf("missing/incorrect auth header: %q", got)
-		}
-		var req api.MessagesRequest
-		body, _ := io.ReadAll(r.Body)
-		if err := json.Unmarshal(body, &req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		s.requests = append(s.requests, req)
-
-		if s.idx >= len(s.responses) {
-			t.Fatalf("server received more requests (%d) than scripted responses (%d)", s.idx+1, len(s.responses))
-		}
-		resp := s.responses[s.idx]
-		s.idx++
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-}
-
-func TestRunner_DispatchesToolThenTerminates(t *testing.T) {
-	rawInput := json.RawMessage(`{"from":"v1.0.0","to":"HEAD"}`)
-	submitInput := json.RawMessage(`{"title":"v1.1.0","summary":"A release.","sections":[{"heading":"Added","items":["A new thing"]}]}`)
-
-	script := &scriptedServer{
-		responses: []api.MessagesResponse{
-			{
-				Type:       "message",
-				Role:       "assistant",
-				StopReason: api.StopToolUse,
-				Content: []api.ContentPart{
-					{Type: api.PartText, Text: "Let me look at the log."},
-					{Type: api.PartToolUse, ID: "tu_1", Name: "fake_log", Input: rawInput},
-				},
-			},
-			{
-				Type:       "message",
-				Role:       "assistant",
-				StopReason: api.StopToolUse,
-				Content: []api.ContentPart{
-					{Type: api.PartToolUse, ID: "tu_2", Name: agent.ToolSubmitReleaseNotes, Input: submitInput},
-				},
-			},
-		},
+func (s *scriptLLM) Messages(_ context.Context, req api.MessagesRequest) (*api.MessagesResponse, error) {
+	s.requests = append(s.requests, req)
+	if len(s.requests) > len(s.replies) {
+		return nil, fmt.Errorf("unscripted request %d", len(s.requests))
 	}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
+	return s.replies[len(s.requests)-1](req)
+}
 
-	client := api.New(srv.URL, "test-token")
+func script(replies ...any) *scriptLLM {
+	s := &scriptLLM{}
+	for _, r := range replies {
+		switch v := r.(type) {
+		case api.MessagesResponse:
+			s.replies = append(s.replies, func(api.MessagesRequest) (*api.MessagesResponse, error) { return &v, nil })
+		case error:
+			s.replies = append(s.replies, func(api.MessagesRequest) (*api.MessagesResponse, error) { return nil, v })
+		case func(api.MessagesRequest) (*api.MessagesResponse, error):
+			s.replies = append(s.replies, v)
+		default:
+			panic(fmt.Sprintf("unsupported reply %T", r))
+		}
+	}
+	return s
+}
 
-	var toolRan bool
-	fakeTool := agent.Tool{
-		Def: api.Tool{Name: "fake_log", Description: "fake", InputSchema: map[string]any{"type": "object"}},
-		Run: func(_ context.Context, input json.RawMessage) (string, error) {
-			toolRan = true
-			var in struct {
-				From string `json:"from"`
-				To   string `json:"to"`
+type toolUse struct{ id, name, input string }
+
+func uses(calls ...toolUse) api.MessagesResponse {
+	r := api.MessagesResponse{StopReason: api.StopToolUse, Usage: api.Usage{InputTokens: 10, OutputTokens: 5}}
+	for _, c := range calls {
+		r.Content = append(r.Content, api.ContentPart{Type: api.PartToolUse, ID: c.id, Name: c.name, Input: json.RawMessage(c.input)})
+	}
+	return r
+}
+
+func text(stop, s string) api.MessagesResponse {
+	r := api.MessagesResponse{StopReason: stop, Usage: api.Usage{InputTokens: 10, OutputTokens: 5}}
+	if s != "" {
+		r.Content = []api.ContentPart{{Type: api.PartText, Text: s}}
+	}
+	return r
+}
+
+func spin(id string) toolUse { return toolUse{id, "spin", `{}`} }
+func submitFindings(id string) toolUse {
+	return toolUse{id, agent.ToolReportFindings, `{"findings":[]}`}
+}
+
+func spinTool(ran *[]string) agent.Tool {
+	return agent.Tool{
+		Def: api.Tool{Name: "spin", InputSchema: map[string]any{"type": "object"}},
+		Run: func(_ context.Context, in json.RawMessage) (string, error) {
+			if ran != nil {
+				*ran = append(*ran, "spin")
 			}
-			if err := json.Unmarshal(input, &in); err != nil {
-				t.Fatalf("tool input: %v", err)
+			return "spun", nil
+		},
+	}
+}
+
+func failTool() agent.Tool {
+	return agent.Tool{
+		Def: api.Tool{Name: "boom", InputSchema: map[string]any{"type": "object"}},
+		Run: func(context.Context, json.RawMessage) (string, error) { return "", errors.New("exploded") },
+	}
+}
+
+func runner(llm agent.LLM, tools ...agent.Tool) *agent.Runner {
+	return &agent.Runner{
+		Client:           llm,
+		System:           "system text",
+		Tools:            tools,
+		Model:            "anthropic/claude-test",
+		Limits:           api.ModelLimits{MaxOutputTokens: 8000, ContextWindow: 200000, Known: true},
+		Caps:             api.HarnessLimits{MaxTurns: 20, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
+		ForcedToolChoice: true,
+		Context:          &api.MessagesContext{RunID: "prun_1", RunPassID: "ppr_1", InstructionsVersion: "sha256:abc", Phase: api.PhaseCheckReview},
+	}
+}
+
+func lastText(req api.MessagesRequest) string {
+	m := req.Messages[len(req.Messages)-1]
+	p := m.Content[len(m.Content)-1]
+	if p.Type != api.PartText {
+		return ""
+	}
+	return p.Text
+}
+
+func TestRunnerStopReasons(t *testing.T) {
+	cases := []struct {
+		name     string
+		llm      *scriptLLM
+		wantErr  error
+		wantTerm string
+		check    func(t *testing.T, s *scriptLLM, res *agent.Result, err error)
+	}{
+		{
+			name:     "tool use then terminal",
+			llm:      script(uses(spin("a")), uses(submitFindings("b"))),
+			wantTerm: agent.ToolReportFindings,
+			check: func(t *testing.T, s *scriptLLM, res *agent.Result, _ error) {
+				if res.ToolCalls != 1 || res.Turns != 2 {
+					t.Fatalf("toolCalls=%d turns=%d", res.ToolCalls, res.Turns)
+				}
+				results := s.requests[1].Messages[2].Content
+				if len(results) != 1 || results[0].ToolUseID != "a" || results[0].Content != "spun" {
+					t.Fatalf("tool results = %+v", results)
+				}
+			},
+		},
+		{
+			name:     "max tokens notice then recovery",
+			llm:      script(api.MessagesResponse{StopReason: api.StopMaxTokens, Content: []api.ContentPart{{Type: api.PartToolUse, ID: "x", Name: "spin", Input: json.RawMessage(`{}`)}}}, uses(submitFindings("b"))),
+			wantTerm: agent.ToolReportFindings,
+			check: func(t *testing.T, s *scriptLLM, _ *agent.Result, _ error) {
+				req := s.requests[1]
+				assistant := req.Messages[1]
+				if len(assistant.Content) != 1 || assistant.Content[0].Text != "(output truncated)" {
+					t.Fatalf("truncated assistant = %+v", assistant.Content)
+				}
+				want := "Your last reply hit the output limit (~8000 tokens) and its tool calls were discarded. Work in smaller steps: at most ~4000 tokens per tool call."
+				if got := lastText(req); got != want {
+					t.Fatalf("notice = %q", got)
+				}
+			},
+		},
+		{
+			name:    "three truncated replies fail with output_limit",
+			llm:     script(text(api.StopMaxTokens, "part"), text(api.StopMaxTokens, "part"), text(api.StopMaxTokens, "part")),
+			wantErr: agent.ErrOutputLimit,
+		},
+		{
+			name:     "truncation streak resets",
+			llm:      script(text(api.StopMaxTokens, "p"), text(api.StopMaxTokens, "p"), uses(spin("a")), text(api.StopMaxTokens, "p"), text(api.StopMaxTokens, "p"), uses(submitFindings("b"))),
+			wantTerm: agent.ToolReportFindings,
+		},
+		{
+			name:     "end turn nudges then submit",
+			llm:      script(text(api.StopEndTurn, "thinking"), text(api.StopEndTurn, ""), uses(submitFindings("b"))),
+			wantTerm: agent.ToolReportFindings,
+			check: func(t *testing.T, s *scriptLLM, _ *agent.Result, _ error) {
+				if got := lastText(s.requests[1]); got != "Continue. Call report_findings when the work is complete." {
+					t.Fatalf("nudge = %q", got)
+				}
+				if a := s.requests[2].Messages[3]; a.Role != api.RoleAssistant || a.Content[0].Text != "(no output)" {
+					t.Fatalf("empty assistant = %+v", a)
+				}
+				for i, req := range s.requests {
+					if req.ToolChoice.Type != api.ToolChoiceAuto {
+						t.Fatalf("request %d tool_choice = %+v", i, req.ToolChoice)
+					}
+				}
+			},
+		},
+		{
+			name:    "nudges exhausted fail with no_submit",
+			llm:     script(text(api.StopEndTurn, "a"), text(api.StopEndTurn, "b"), text(api.StopEndTurn, "c")),
+			wantErr: agent.ErrNoSubmit,
+		},
+		{
+			name:    "refusal fails with its text",
+			llm:     script(text(api.StopRefusal, "I can't help with that.")),
+			wantErr: agent.ErrRefusal,
+			check: func(t *testing.T, _ *scriptLLM, _ *agent.Result, err error) {
+				if !strings.Contains(err.Error(), "I can't help with that.") || !strings.Contains(err.Error(), "anthropic/claude-test") {
+					t.Fatalf("err = %v", err)
+				}
+			},
+		},
+		{
+			name:    "gateway error is returned",
+			llm:     script(&api.APIError{StatusCode: 402, Code: api.CodeBudgetExceeded}),
+			wantErr: nil,
+			check: func(t *testing.T, _ *scriptLLM, _ *agent.Result, err error) {
+				if !api.HaltsRun(err) {
+					t.Fatalf("err = %v, want a run-halting error", err)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := runner(tc.llm, spinTool(nil), agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+			switch {
+			case tc.wantErr != nil:
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				var te *agent.TaskError
+				if !errors.As(err, &te) || te.Model != "anthropic/claude-test" {
+					t.Fatalf("err %v is not a TaskError with the model", err)
+				}
+			case tc.wantTerm != "":
+				if err != nil || res.TerminalTool != tc.wantTerm {
+					t.Fatalf("err=%v terminal=%q", err, res.TerminalTool)
+				}
 			}
-			if in.From != "v1.0.0" || in.To != "HEAD" {
-				t.Errorf("unexpected tool input: %+v", in)
+			if tc.check != nil {
+				tc.check(t, tc.llm, res, err)
 			}
-			return "abc123 first commit\ndef456 second commit", nil
-		},
-	}
-
-	runner := &agent.Runner{
-		Client: client,
-		System: "test",
-		Tools:  []agent.Tool{fakeTool, agent.SubmitReleaseNotesTool()},
-	}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-
-	if !toolRan {
-		t.Error("expected the non-terminal tool to be dispatched")
-	}
-	if res.TerminalTool != agent.ToolSubmitReleaseNotes {
-		t.Errorf("expected terminal tool %q, got %q", agent.ToolSubmitReleaseNotes, res.TerminalTool)
-	}
-	if res.Stopped {
-		t.Errorf("expected clean termination, got stopped: %s", res.StopReason)
-	}
-	if res.ToolCalls != 1 {
-		t.Errorf("expected 1 non-terminal tool call, got %d", res.ToolCalls)
-	}
-	if res.Iterations != 2 {
-		t.Errorf("expected 2 iterations, got %d", res.Iterations)
-	}
-
-	notes, err := agent.ParseReleaseNotes(res.TerminalInput)
-	if err != nil {
-		t.Fatalf("parse notes: %v", err)
-	}
-	if notes.Title != "v1.1.0" {
-		t.Errorf("expected title v1.1.0, got %q", notes.Title)
-	}
-	if len(notes.Sections) != 1 || notes.Sections[0].Heading != "Added" {
-		t.Errorf("unexpected sections: %+v", notes.Sections)
-	}
-
-	if len(script.requests) != 2 {
-		t.Fatalf("expected 2 requests to the gateway, got %d", len(script.requests))
-	}
-	second := script.requests[1]
-	if len(second.Messages) != 3 {
-		t.Fatalf("expected 3 messages in second request, got %d", len(second.Messages))
-	}
-	last := second.Messages[2]
-	if last.Role != api.RoleUser || len(last.Content) != 1 || last.Content[0].Type != api.PartToolResult {
-		t.Errorf("expected last message to be a user tool_result, got %+v", last)
-	}
-	if last.Content[0].ToolUseID != "tu_1" {
-		t.Errorf("tool_result must reference tu_1, got %q", last.Content[0].ToolUseID)
-	}
-	if last.Content[0].Content == "" {
-		t.Error("tool_result content should carry the tool output")
-	}
-}
-
-func TestRunner_RejectsInvalidTerminalInput(t *testing.T) {
-	badInput := json.RawMessage(`{"summary":"s","upserts":"totally not an array"}`)
-	goodInput := json.RawMessage(`{"summary":"s","upserts":[{"key":"h1","type":"heading","content":{"text":"Overview"},"rationale":{"summary":"new section","commits":["a1b2c3d"]}}]}`)
-
-	script := &scriptedServer{
-		responses: []api.MessagesResponse{
-			{
-				Type:       "message",
-				Role:       "assistant",
-				StopReason: api.StopToolUse,
-				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_1", Name: agent.ToolSubmitPageChanges, Input: badInput}},
-			},
-			{
-				Type:       "message",
-				Role:       "assistant",
-				StopReason: api.StopToolUse,
-				Content:    []api.ContentPart{{Type: api.PartToolUse, ID: "tu_2", Name: agent.ToolSubmitPageChanges, Input: goodInput}},
-			},
-		},
-	}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
-
-	runner := &agent.Runner{
-		Client: api.New(srv.URL, "test-token"),
-		Tools:  []agent.Tool{agent.SubmitPageChangesTool()},
-	}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if res.TerminalTool != agent.ToolSubmitPageChanges {
-		t.Fatalf("expected terminal tool after correction, got %q (stopped=%v %s)", res.TerminalTool, res.Stopped, res.StopReason)
-	}
-	if res.Iterations != 2 {
-		t.Errorf("expected 2 iterations (reject + accept), got %d", res.Iterations)
-	}
-	var page agent.PageChanges
-	if err := agent.Decode(res.TerminalInput, &page); err != nil {
-		t.Fatalf("parse accepted input: %v", err)
-	}
-	if len(page.Upserts) != 1 || page.Upserts[0].Key != "h1" {
-		t.Errorf("unexpected accepted page: %+v", page)
-	}
-
-	if len(script.requests) != 2 {
-		t.Fatalf("expected 2 requests, got %d", len(script.requests))
-	}
-	msgs := script.requests[1].Messages
-	last := msgs[len(msgs)-1]
-	if last.Role != api.RoleUser || len(last.Content) != 1 || last.Content[0].Type != api.PartToolResult {
-		t.Fatalf("expected trailing user tool_result, got %+v", last)
-	}
-	if !last.Content[0].IsError || last.Content[0].ToolUseID != "tu_1" {
-		t.Errorf("expected error tool_result for tu_1, got %+v", last.Content[0])
-	}
-	if !strings.Contains(last.Content[0].Content, "upserts") {
-		t.Errorf("rejection should explain the upserts problem, got %q", last.Content[0].Content)
-	}
-}
-
-func TestRunner_EndTurnStopsLoopWithoutTerminalTool(t *testing.T) {
-	script := &scriptedServer{
-		responses: []api.MessagesResponse{
-			{
-				Type:       "message",
-				Role:       "assistant",
-				StopReason: api.StopEndTurn,
-				Content:    []api.ContentPart{{Type: api.PartText, Text: "All done, nothing to do."}},
-			},
-		},
-	}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
-
-	runner := &agent.Runner{
-		Client: api.New(srv.URL, "test-token"),
-		Tools: []agent.Tool{{
-			Def: api.Tool{Name: "spin", InputSchema: map[string]any{"type": "object"}},
-			Run: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
-		}},
-	}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if res.TerminalTool != "" {
-		t.Errorf("expected no terminal tool, got %q", res.TerminalTool)
-	}
-	if res.FinalText == "" {
-		t.Error("expected final text to be captured")
-	}
-}
-
-func findingsUse(id string) api.MessagesResponse {
-	return api.MessagesResponse{
-		Type: "message", Role: "assistant", StopReason: api.StopToolUse,
-		Content: []api.ContentPart{{Type: api.PartToolUse, ID: id, Name: agent.ToolReportFindings, Input: json.RawMessage(`{"findings":[]}`)}},
-	}
-}
-
-func TestRunner_EndTurnWithoutSubmitIsForcedOnce(t *testing.T) {
-	script := &scriptedServer{
-		responses: []api.MessagesResponse{
-			{Type: "message", Role: "assistant", StopReason: api.StopEndTurn, Content: []api.ContentPart{{Type: api.PartText, Text: "Looks fine."}}},
-			findingsUse("tu_f"),
-		},
-	}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
-
-	runner := &agent.Runner{Client: api.New(srv.URL, "test-token"), Tools: []agent.Tool{agent.ReportFindingsTool()}}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if res.TerminalTool != agent.ToolReportFindings {
-		t.Fatalf("expected the forced submit, got %q", res.TerminalTool)
-	}
-	first, second := script.requests[0].ToolChoice, script.requests[1].ToolChoice
-	if first == nil || first.Type != api.ToolChoiceAuto {
-		t.Errorf("first turn tool_choice = %+v, want auto", first)
-	}
-	if second == nil || second.Type != api.ToolChoiceTool || second.Name != agent.ToolReportFindings {
-		t.Errorf("follow-up tool_choice = %+v, want tool %s", second, agent.ToolReportFindings)
-	}
-}
-
-func TestRunner_FinalTurnForcesTerminalTool(t *testing.T) {
-	spin := api.MessagesResponse{
-		Type: "message", Role: "assistant", StopReason: api.StopToolUse,
-		Content: []api.ContentPart{{Type: api.PartToolUse, ID: "tu_x", Name: "spin", Input: json.RawMessage(`{}`)}},
-	}
-	script := &scriptedServer{responses: []api.MessagesResponse{spin, spin, findingsUse("tu_f")}}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
-
-	runner := &agent.Runner{
-		Client:        api.New(srv.URL, "test-token"),
-		MaxIterations: 3,
-		Tools: []agent.Tool{
-			{
-				Def: api.Tool{Name: "spin", InputSchema: map[string]any{"type": "object"}},
-				Run: func(_ context.Context, _ json.RawMessage) (string, error) { return "spun", nil },
-			},
-			agent.ReportFindingsTool(),
-		},
-	}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if res.Stopped || res.TerminalTool != agent.ToolReportFindings {
-		t.Fatalf("expected a forced submit on the last turn, got stopped=%v terminal=%q", res.Stopped, res.TerminalTool)
-	}
-	for i, req := range script.requests {
-		want := api.ToolChoiceAuto
-		if i == 2 {
-			want = api.ToolChoiceTool
-		}
-		if req.ToolChoice == nil || req.ToolChoice.Type != want {
-			t.Errorf("request %d tool_choice = %+v, want %s", i, req.ToolChoice, want)
-		}
-	}
-	if script.requests[2].ToolChoice.Name != agent.ToolReportFindings {
-		t.Errorf("final turn must name the terminal tool, got %+v", script.requests[2].ToolChoice)
-	}
-}
-
-func TestRunner_ToolBudgetExhaustionForcesSubmit(t *testing.T) {
-	twoSpins := api.MessagesResponse{
-		Type: "message", Role: "assistant", StopReason: api.StopToolUse,
-		Content: []api.ContentPart{
-			{Type: api.PartToolUse, ID: "tu_a", Name: "spin", Input: json.RawMessage(`{}`)},
-			{Type: api.PartToolUse, ID: "tu_b", Name: "spin", Input: json.RawMessage(`{}`)},
-		},
-	}
-	script := &scriptedServer{responses: []api.MessagesResponse{twoSpins, findingsUse("tu_f")}}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
-
-	runner := &agent.Runner{
-		Client:       api.New(srv.URL, "test-token"),
-		MaxToolCalls: 1,
-		Tools: []agent.Tool{
-			{
-				Def: api.Tool{Name: "spin", InputSchema: map[string]any{"type": "object"}},
-				Run: func(_ context.Context, _ json.RawMessage) (string, error) { return "spun", nil },
-			},
-			agent.ReportFindingsTool(),
-		},
-	}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if res.Stopped || res.TerminalTool != agent.ToolReportFindings {
-		t.Fatalf("expected a forced submit after the budget ran out, got stopped=%v terminal=%q", res.Stopped, res.TerminalTool)
-	}
-	results := script.requests[1].Messages[2].Content
-	if len(results) != 2 || !results[1].IsError || results[1].ToolUseID != "tu_b" {
-		t.Errorf("every tool_use must get a tool_result, the over-budget one an error: %+v", results)
-	}
-	if tc := script.requests[1].ToolChoice; tc == nil || tc.Type != api.ToolChoiceTool {
-		t.Errorf("the turn after the budget ran out must force the submit, got %+v", tc)
-	}
-}
-
-func TestRunner_StripsEmptyTextBlocks(t *testing.T) {
-	script := &scriptedServer{
-		responses: []api.MessagesResponse{
-			{
-				Type:       "message",
-				Role:       "assistant",
-				StopReason: api.StopToolUse,
-				Content: []api.ContentPart{
-					{Type: api.PartText, Text: "   "},
-					{Type: api.PartToolUse, ID: "tu_1", Name: "empty_tool"},
-				},
-			},
-			{
-				Type:       "message",
-				Role:       "assistant",
-				StopReason: api.StopEndTurn,
-				Content:    []api.ContentPart{{Type: api.PartText, Text: "done"}},
-			},
-		},
-	}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
-
-	runner := &agent.Runner{
-		Client: api.New(srv.URL, "test-token"),
-		Tools: []agent.Tool{{
-			Def: api.Tool{Name: "empty_tool", InputSchema: map[string]any{"type": "object"}},
-			Run: func(_ context.Context, _ json.RawMessage) (string, error) { return "", nil },
-		}},
-	}
-	if _, err := runner.Run(context.Background(), "go"); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-
-	if len(script.requests) != 2 {
-		t.Fatalf("expected 2 gateway requests, got %d", len(script.requests))
-	}
-	assistant := script.requests[1].Messages[1]
-	for _, p := range assistant.Content {
-		if p.Type == api.PartText && strings.TrimSpace(p.Text) == "" {
-			t.Errorf("empty text block was echoed back to the provider: %+v", assistant.Content)
-		}
-	}
-	if len(assistant.Content) != 1 || assistant.Content[0].Type != api.PartToolUse {
-		t.Errorf("expected only the tool_use to survive sanitization, got %+v", assistant.Content)
-	}
-	if got := strings.TrimSpace(string(assistant.Content[0].Input)); got != "{}" {
-		t.Errorf("empty tool_use input must default to {}, got %q", got)
-	}
-	toolResult := script.requests[1].Messages[2]
-	if c := toolResult.Content[0].Content; strings.TrimSpace(c) == "" {
-		t.Errorf("empty tool output must be replaced with a placeholder, got %q", c)
-	}
-}
-
-func TestRunner_RetriesTransientGatewayError(t *testing.T) {
-	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		if calls < 3 {
-			w.WriteHeader(http.StatusBadGateway)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": map[string]string{"code": "provider_error", "message": "flaky"},
-			})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(api.MessagesResponse{
-			Type: "message", Role: "assistant", StopReason: api.StopEndTurn,
-			Content: []api.ContentPart{{Type: api.PartText, Text: "ok"}},
 		})
+	}
+}
+
+func TestRunnerToolOrdering(t *testing.T) {
+	cases := []struct {
+		name      string
+		calls     []toolUse
+		wantTerm  bool
+		wantRan   []string
+		wantError map[string]string
+	}{
+		{name: "terminal listed first runs last", calls: []toolUse{submitFindings("t"), spin("a")}, wantTerm: true, wantRan: []string{"spin"}},
+		{name: "earlier failure blocks terminal", calls: []toolUse{toolUse{"b", "boom", `{}`}, submitFindings("t")}, wantRan: nil, wantError: map[string]string{"b": "exploded", "t": "was not run"}},
+		{name: "unknown tool blocks terminal", calls: []toolUse{toolUse{"u", "nope", `{}`}, submitFindings("t")}, wantError: map[string]string{"u": "unknown tool", "t": "was not run"}},
+		{name: "second terminal refused", calls: []toolUse{submitFindings("t1"), submitFindings("t2")}, wantError: map[string]string{"t2": "once per turn", "t1": "was not run"}},
+		{name: "invalid terminal input is a tool error", calls: []toolUse{toolUse{"t", agent.ToolReportFindings, `{"findings":"no"}`}}, wantError: map[string]string{"t": "invalid report_findings input"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ran []string
+			llm := script(uses(tc.calls...), uses(submitFindings("final")))
+			res, err := runner(llm, spinTool(&ran), failTool(), agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(ran, ",") != strings.Join(tc.wantRan, ",") {
+				t.Fatalf("ran = %v, want %v", ran, tc.wantRan)
+			}
+			if tc.wantTerm {
+				if res.Turns != 1 {
+					t.Fatalf("turns = %d, want the terminal on the first turn", res.Turns)
+				}
+				return
+			}
+			results := llm.requests[1].Messages[2].Content
+			if len(results) != len(tc.calls) {
+				t.Fatalf("results = %+v", results)
+			}
+			for i, r := range results {
+				if r.ToolUseID != tc.calls[i].id {
+					t.Fatalf("result %d is for %s, want %s", i, r.ToolUseID, tc.calls[i].id)
+				}
+				if want, ok := tc.wantError[r.ToolUseID]; ok && (!r.IsError || !strings.Contains(r.Content, want)) {
+					t.Fatalf("result %s = %+v, want an error containing %q", r.ToolUseID, r, want)
+				}
+			}
+		})
+	}
+}
+
+func finishUnitsTool() agent.Tool {
+	return agent.Tool{
+		Def:      api.Tool{Name: "finish_units", InputSchema: map[string]any{"type": "object"}},
+		Terminal: true,
+	}
+}
+
+func TestRunnerCaps(t *testing.T) {
+	spins := func(n int) []any {
+		out := make([]any, 0, n)
+		for i := range n {
+			out = append(out, uses(spin(fmt.Sprintf("s%d", i))))
+		}
+		return out
+	}
+	cases := []struct {
+		name    string
+		caps    api.HarnessLimits
+		forced  bool
+		replies []any
+		submit  agent.Tool
+		check   func(t *testing.T, s *scriptLLM, res *agent.Result, err error)
+	}{
+		{
+			name:    "forced tool choice from cap minus three",
+			caps:    api.HarnessLimits{MaxTurns: 5, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
+			forced:  true,
+			replies: append(spins(3), uses(submitFindings("f"))),
+			submit:  agent.ReportFindingsTool(),
+			check: func(t *testing.T, s *scriptLLM, res *agent.Result, err error) {
+				if err != nil || !res.Forced || res.Partial {
+					t.Fatalf("err=%v forced=%v partial=%v", err, res.Forced, res.Partial)
+				}
+				for i, req := range s.requests {
+					want := api.ToolChoiceAuto
+					if i >= 2 {
+						want = api.ToolChoiceTool
+					}
+					if req.ToolChoice.Type != want {
+						t.Fatalf("request %d tool_choice = %+v, want %s", i, req.ToolChoice, want)
+					}
+				}
+				if r := s.requests[3].Messages[6].Content[0]; !r.IsError || !strings.Contains(r.Content, "only report_findings") {
+					t.Fatalf("forced turn spin result = %+v", r)
+				}
+			},
+		},
+		{
+			name:    "user text when forced tool choice is unsupported",
+			caps:    api.HarnessLimits{MaxTurns: 4, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
+			replies: append(spins(1), uses(submitFindings("f"))),
+			submit:  agent.ReportFindingsTool(),
+			check: func(t *testing.T, s *scriptLLM, _ *agent.Result, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				req := s.requests[1]
+				if req.ToolChoice.Type != api.ToolChoiceAuto || !strings.Contains(lastText(req), "Call report_findings now") {
+					t.Fatalf("tool_choice=%+v last=%q", req.ToolChoice, lastText(req))
+				}
+				if n := len(req.Messages[2].Content); n != 2 {
+					t.Fatalf("the instruction joins the tool results message, got %d parts", n)
+				}
+			},
+		},
+		{
+			name:    "turn cap exhausted",
+			caps:    api.HarnessLimits{MaxTurns: 3, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 9},
+			forced:  true,
+			replies: []any{text(api.StopEndTurn, "a"), text(api.StopEndTurn, "b"), text(api.StopEndTurn, "c")},
+			submit:  agent.ReportFindingsTool(),
+			check: func(t *testing.T, _ *scriptLLM, _ *agent.Result, err error) {
+				if !errors.Is(err, agent.ErrCapReached) {
+					t.Fatalf("err = %v", err)
+				}
+			},
+		},
+		{
+			name:    "tool-call cap forces the terminal",
+			caps:    api.HarnessLimits{MaxTurns: 20, MaxToolCalls: 1, StepTokens: 4000, MaxContinueNudges: 2},
+			forced:  true,
+			replies: []any{uses(spin("a"), spin("b")), uses(submitFindings("f"))},
+			submit:  agent.ReportFindingsTool(),
+			check: func(t *testing.T, s *scriptLLM, res *agent.Result, err error) {
+				if err != nil || res.ToolCalls != 1 || !res.Forced {
+					t.Fatalf("err=%v calls=%d forced=%v", err, res.ToolCalls, res.Forced)
+				}
+				results := s.requests[1].Messages[2].Content
+				if results[0].IsError || !results[1].IsError || !strings.Contains(results[1].Content, "tool-call cap of 1") {
+					t.Fatalf("results = %+v", results)
+				}
+				if s.requests[1].ToolChoice.Type != api.ToolChoiceTool {
+					t.Fatalf("tool_choice = %+v", s.requests[1].ToolChoice)
+				}
+			},
+		},
+		{
+			name:    "forced list terminal is partial",
+			caps:    api.HarnessLimits{MaxTurns: 3, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
+			forced:  true,
+			replies: []any{uses(toolUse{"f", "finish_units", `{"complete":true}`})},
+			submit:  finishUnitsTool(),
+			check: func(t *testing.T, _ *scriptLLM, res *agent.Result, err error) {
+				if err != nil || !res.Partial || string(res.TerminalInput) != `{"complete":false}` {
+					t.Fatalf("err=%v partial=%v input=%s", err, res.Partial, res.TerminalInput)
+				}
+			},
+		},
+		{
+			name:    "unforced list terminal is complete",
+			caps:    api.HarnessLimits{MaxTurns: 10, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
+			forced:  true,
+			replies: []any{uses(toolUse{"f", "finish_units", `{"complete":true}`})},
+			submit:  finishUnitsTool(),
+			check: func(t *testing.T, _ *scriptLLM, res *agent.Result, err error) {
+				if err != nil || res.Partial || string(res.TerminalInput) != `{"complete":true}` {
+					t.Fatalf("err=%v partial=%v input=%s", err, res.Partial, res.TerminalInput)
+				}
+			},
+		},
+		{
+			name:    "forced terminal with errors fails the task",
+			caps:    api.HarnessLimits{MaxTurns: 3, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
+			forced:  true,
+			replies: []any{uses(toolUse{"f", agent.ToolReportFindings, `{"findings":"bad"}`})},
+			submit:  agent.ReportFindingsTool(),
+			check: func(t *testing.T, _ *scriptLLM, _ *agent.Result, err error) {
+				if !errors.Is(err, agent.ErrForcedSubmitRejected) {
+					t.Fatalf("err = %v", err)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			llm := script(tc.replies...)
+			r := runner(llm, spinTool(nil), tc.submit)
+			r.Caps = tc.caps
+			r.ForcedToolChoice = tc.forced
+			res, err := r.Run(context.Background(), "kickoff")
+			tc.check(t, llm, res, err)
+		})
+	}
+}
+
+func TestRunnerForcedToolChoiceRejectedFallsBackToUserText(t *testing.T) {
+	llm := script(
+		&api.APIError{StatusCode: 400, Code: api.CodeProviderBadRequest, Message: "tool_choice not supported"},
+		uses(submitFindings("f")),
+	)
+	r := runner(llm, agent.ReportFindingsTool())
+	r.Caps.MaxTurns = 1
+	res, err := r.Run(context.Background(), "kickoff")
+	if err != nil || res.TerminalTool != agent.ToolReportFindings {
+		t.Fatalf("err=%v res=%+v", err, res)
+	}
+	retry := llm.requests[1]
+	if retry.ToolChoice.Type != api.ToolChoiceAuto || !strings.Contains(lastText(retry), "Call report_findings now") {
+		t.Fatalf("retry tool_choice=%+v last=%q", retry.ToolChoice, lastText(retry))
+	}
+}
+
+func TestRunnerMaxTokens(t *testing.T) {
+	cases := []struct {
+		name   string
+		limits api.ModelLimits
+		want   func(firstEstimate int) int
+	}{
+		{name: "model max output", limits: api.ModelLimits{MaxOutputTokens: 8000, ContextWindow: 200000}, want: func(int) int { return 8000 }},
+		{name: "bounded by the context window", limits: api.ModelLimits{MaxOutputTokens: 64000, ContextWindow: 20000}, want: func(est int) int { return 20000 - est - 2000 }},
+		{name: "defaults when unknown", limits: api.ModelLimits{}, want: func(int) int { return agent.DefaultMaxOutputTokens }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			llm := script(uses(submitFindings("f")))
+			r := runner(llm, agent.ReportFindingsTool())
+			r.Limits = tc.limits
+			if _, err := r.Run(context.Background(), "kickoff"); err != nil {
+				t.Fatal(err)
+			}
+			req := llm.requests[0]
+			defs, _ := json.Marshal(req.Tools)
+			msgs, _ := json.Marshal(api.UserText("kickoff"))
+			est := len(msgs)/3 + (len(r.System)+len(defs))/3
+			if got, want := req.MaxTokens, tc.want(est); got != want {
+				t.Fatalf("max_tokens = %d, want ~%d", got, want)
+			}
+		})
+	}
+}
+
+func TestRunnerSendsCachedSystemAndBreakpoint(t *testing.T) {
+	llm := script(uses(spin("a")), uses(submitFindings("f")))
+	if _, err := runner(llm, spinTool(nil), agent.ReportFindingsTool()).Run(context.Background(), "kickoff"); err != nil {
+		t.Fatal(err)
+	}
+	for i, req := range llm.requests {
+		if req.System != "" || len(req.SystemBlocks) != 1 || req.SystemBlocks[0].Text != "system text" || req.SystemBlocks[0].CacheControl == nil {
+			t.Fatalf("request %d system = %q %+v", i, req.System, req.SystemBlocks)
+		}
+		marks := 0
+		for mi, m := range req.Messages {
+			for pi, p := range m.Content {
+				if p.CacheControl != nil {
+					marks++
+					if mi != len(req.Messages)-1 || pi != len(m.Content)-1 {
+						t.Fatalf("request %d breakpoint on message %d part %d", i, mi, pi)
+					}
+				}
+			}
+		}
+		if marks != 1 {
+			t.Fatalf("request %d has %d breakpoints", i, marks)
+		}
+		if req.Context.InstructionsVersion != "sha256:abc" || req.Model != "anthropic/claude-test" {
+			t.Fatalf("request %d context=%+v model=%q", i, req.Context, req.Model)
+		}
+	}
+}
+
+func bigTool(name string, size int) agent.Tool {
+	return agent.Tool{
+		Def: api.Tool{Name: name, InputSchema: map[string]any{"type": "object"}},
+		Run: func(context.Context, json.RawMessage) (string, error) { return strings.Repeat("x", size), nil },
+	}
+}
+
+func TestRunnerElidesOldToolResults(t *testing.T) {
+	llm := script(
+		uses(toolUse{"r1", "read_file", `{"path":"a.go"}`}),
+		uses(toolUse{"d1", "draft_view", `{}`}),
+		uses(toolUse{"r2", "read_file", `{"path":"b.go"}`}),
+		uses(toolUse{"r3", "read_file", `{"path":"c.go"}`}),
+		uses(submitFindings("f")),
+	)
+	r := runner(llm, bigTool("read_file", 9000), bigTool("draft_view", 9000), agent.ReportFindingsTool())
+	r.Limits = api.ModelLimits{MaxOutputTokens: 1000, ContextWindow: 20000}
+	r.Caps.StepTokens = 500
+	for i := range llm.replies {
+		reply := llm.replies[i]
+		llm.replies[i] = func(req api.MessagesRequest) (*api.MessagesResponse, error) {
+			resp, err := reply(req)
+			if resp != nil {
+				b, _ := json.Marshal(req.Messages)
+				resp.Usage = api.Usage{InputTokens: len(b) / 3}
+			}
+			return resp, err
+		}
+	}
+	if _, err := r.Run(context.Background(), "kickoff"); err != nil {
+		t.Fatal(err)
+	}
+	last := llm.requests[4]
+	got := map[string]string{}
+	for _, m := range last.Messages {
+		for _, p := range m.Content {
+			if p.Type == api.PartToolResult {
+				got[p.ToolUseID] = p.Content
+			}
+		}
+	}
+	if !strings.HasPrefix(got["r1"], "[elided: read_file {\"path\":\"a.go\"}; call it again if needed]") {
+		t.Fatalf("oldest result not elided: %.60q", got["r1"])
+	}
+	if strings.HasPrefix(got["d1"], "[elided") {
+		t.Fatal("the latest draft_view must never be elided")
+	}
+	if strings.HasPrefix(got["r3"], "[elided") {
+		t.Fatal("the newest result should survive")
+	}
+	if k := last.Messages[0].Content[0].Text; k != "kickoff" {
+		t.Fatalf("kickoff changed: %q", k)
+	}
+}
+
+func TestRunnerContextTooLarge(t *testing.T) {
+	tooLarge := &api.APIError{StatusCode: 413, Code: api.CodeContextTooLarge}
+	cases := []struct {
+		name    string
+		replies []any
+		wantErr error
+	}{
+		{name: "elide once and retry", replies: []any{uses(spin("a")), uses(spin("b")), tooLarge, uses(submitFindings("f"))}},
+		{name: "second 413 fails with context_limit", replies: []any{uses(spin("a")), uses(spin("b")), tooLarge, tooLarge}, wantErr: agent.ErrContextLimit},
+		{name: "nothing to elide fails with context_limit", replies: []any{tooLarge}, wantErr: agent.ErrContextLimit},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			llm := script(tc.replies...)
+			res, err := runner(llm, bigTool("spin", 3000), agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v", err)
+				}
+				return
+			}
+			if err != nil || res.TerminalTool != agent.ToolReportFindings || res.Turns != 3 {
+				t.Fatalf("err=%v res=%+v", err, res)
+			}
+			retry := llm.requests[3]
+			if c := retry.Messages[2].Content[0].Content; !strings.HasPrefix(c, "[elided: spin") {
+				t.Fatalf("retry did not elide: %.40q", c)
+			}
+		})
+	}
+}
+
+func TestRunnerUsage(t *testing.T) {
+	first := uses(spin("a"))
+	first.Usage = api.Usage{InputTokens: 100, OutputTokens: 20, CacheCreationInputTokens: 1000}
+	first.Attribution = api.Attribution{Model: "anthropic/claude-served"}
+	second := uses(submitFindings("f"))
+	second.Usage = api.Usage{InputTokens: 50, OutputTokens: 10, CacheReadInputTokens: 1000}
+	res, err := runner(script(first, second), spinTool(nil), agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Turns != 2 || res.InputTokens != 2150 || res.OutputTokens != 30 || res.CacheReadTokens != 1000 || res.CacheWriteTokens != 1000 || res.Model != "anthropic/claude-served" {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestRunnerOverHTTP(t *testing.T) {
+	var bodies []map[string]any
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "provider_error", "message": "flaky"}})
+			return
+		}
+		w.Header().Set(api.HeaderModel, "anthropic/claude-test")
+		_ = json.NewEncoder(w).Encode(uses(submitFindings("f")))
 	}))
 	defer srv.Close()
-
 	client := api.New(srv.URL, "test-token")
 	client.Sleep = func(context.Context, time.Duration) error { return nil }
-	runner := &agent.Runner{Client: client}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("run should succeed after retries: %v", err)
+	res, err := runner(client, agent.ReportFindingsTool()).Run(context.Background(), "kickoff")
+	if err != nil || res.TerminalTool != agent.ToolReportFindings || res.Model != "anthropic/claude-test" {
+		t.Fatalf("err=%v res=%+v", err, res)
 	}
-	if calls != 3 {
-		t.Errorf("expected 3 attempts (2 transient failures + success), got %d", calls)
-	}
-	if res.FinalText != "ok" {
-		t.Errorf("expected final text from the successful retry, got %q", res.FinalText)
-	}
-}
-
-func TestRunner_IterationCap(t *testing.T) {
-	toolUse := api.MessagesResponse{
-		Type:       "message",
-		Role:       "assistant",
-		StopReason: api.StopToolUse,
-		Content: []api.ContentPart{
-			{Type: api.PartToolUse, ID: "tu_x", Name: "spin", Input: json.RawMessage(`{}`)},
-		},
-	}
-	var responses []api.MessagesResponse
-	for i := 0; i < 5; i++ {
-		responses = append(responses, toolUse)
-	}
-	script := &scriptedServer{responses: responses}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
-
-	runner := &agent.Runner{
-		Client:        api.New(srv.URL, "test-token"),
-		MaxIterations: 3,
-		Tools: []agent.Tool{{
-			Def: api.Tool{Name: "spin", InputSchema: map[string]any{"type": "object"}},
-			Run: func(_ context.Context, _ json.RawMessage) (string, error) { return "spun", nil },
-		}},
-	}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if !res.Stopped {
-		t.Error("expected loop to stop on the iteration cap")
-	}
-	if res.Iterations != 3 {
-		t.Errorf("expected 3 iterations, got %d", res.Iterations)
-	}
-}
-
-func TestRunner_ForcedToolChoiceRejectedFallsBackToInstruction(t *testing.T) {
-	var reqs []api.MessagesRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req api.MessagesRequest
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &req)
-		reqs = append(reqs, req)
-		w.Header().Set("Content-Type", "application/json")
-		if req.ToolChoice != nil && req.ToolChoice.Type == api.ToolChoiceTool {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": map[string]string{"code": "invalid_request", "message": "tool_choice forcing is not supported by this model"},
-			})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(findingsUse("tu_f"))
-	}))
-	defer srv.Close()
-
-	runner := &agent.Runner{
-		Client:        api.New(srv.URL, "test-token"),
-		MaxIterations: 1,
-		System:        "base",
-		Tools:         []agent.Tool{agent.ReportFindingsTool()},
-	}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatalf("a rejected forced tool_choice must fall back, got %v", err)
-	}
-	if res.TerminalTool != agent.ToolReportFindings {
-		t.Fatalf("terminal = %q", res.TerminalTool)
-	}
-	if len(reqs) != 2 {
-		t.Fatalf("requests = %d, want the forced attempt plus one fallback", len(reqs))
-	}
-	retry := reqs[1]
-	if retry.ToolChoice == nil || retry.ToolChoice.Type != api.ToolChoiceAuto {
-		t.Errorf("fallback tool_choice = %+v, want auto", retry.ToolChoice)
-	}
-	if !strings.HasPrefix(retry.System, "base") || !strings.Contains(retry.System, agent.ToolReportFindings) {
-		t.Errorf("fallback system prompt must name the terminal tool, got %q", retry.System)
-	}
-}
-
-func TestRunner_TokenBudgetForcesSubmitThenStops(t *testing.T) {
-	spin := api.MessagesResponse{
-		Type: "message", Role: "assistant", StopReason: api.StopToolUse,
-		Usage:   api.Usage{InputTokens: 600, OutputTokens: 100},
-		Content: []api.ContentPart{{Type: api.PartToolUse, ID: "tu_x", Name: "spin", Input: json.RawMessage(`{}`)}},
-	}
-	script := &scriptedServer{responses: []api.MessagesResponse{spin, findingsUse("tu_f")}}
-	srv := newMessagesServer(t, script)
-	defer srv.Close()
-	runner := &agent.Runner{
-		Client:      api.New(srv.URL, "test-token"),
-		TokenBudget: 500,
-		Tools: []agent.Tool{
-			{Def: api.Tool{Name: "spin", InputSchema: map[string]any{"type": "object"}}, Run: func(context.Context, json.RawMessage) (string, error) { return "spun", nil }},
-			agent.ReportFindingsTool(),
-		},
-	}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.TerminalTool != agent.ToolReportFindings || res.Tokens() != 700 {
-		t.Fatalf("terminal=%q tokens=%d", res.TerminalTool, res.Tokens())
-	}
-	if tc := script.requests[1].ToolChoice; tc == nil || tc.Type != api.ToolChoiceTool {
-		t.Fatalf("the turn after the budget ran out must force the submit, got %+v", tc)
-	}
-
-	stubborn := &scriptedServer{responses: []api.MessagesResponse{spin, spin}}
-	srv2 := newMessagesServer(t, stubborn)
-	defer srv2.Close()
-	runner.Client = api.New(srv2.URL, "test-token")
-	res, err = runner.Run(context.Background(), "go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Stopped || !strings.Contains(res.StopReason, "token budget") {
-		t.Fatalf("a forced turn past the budget must stop: %+v", res)
-	}
-}
-
-func TestRunner_ForcedToolChoiceRejectedUpstreamFallsBack(t *testing.T) {
-	var reqs []api.MessagesRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req api.MessagesRequest
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &req)
-		reqs = append(reqs, req)
-		w.Header().Set("Content-Type", "application/json")
-		if req.ToolChoice != nil && req.ToolChoice.Type == api.ToolChoiceTool {
-			w.WriteHeader(http.StatusBadGateway)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": map[string]string{"code": "provider_error", "message": "Upstream provider rejected the request (HTTP 400)"},
-			})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(findingsUse("tu_f"))
-	}))
-	defer srv.Close()
-	client := api.New(srv.URL, "test-token")
-	client.LLMRetryCap = time.Millisecond
-	runner := &agent.Runner{Client: client, MaxIterations: 1, System: "base", Tools: []agent.Tool{agent.ReportFindingsTool()}}
-	res, err := runner.Run(context.Background(), "go")
-	if err != nil || res.TerminalTool != agent.ToolReportFindings || len(reqs) != 2 {
-		t.Fatalf("a gateway provider_error on a forced turn falls back once: err=%v requests=%d", err, len(reqs))
+	system, ok := bodies[1]["system"].([]any)
+	if !ok || len(system) != 1 || system[0].(map[string]any)["cache_control"] == nil {
+		t.Fatalf("system on the wire = %#v", bodies[1]["system"])
 	}
 }
