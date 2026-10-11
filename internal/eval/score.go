@@ -340,47 +340,60 @@ func scoreCoverage(pages []page, endpoints []Endpoint, detailWords int) (Coverag
 	public := Public(endpoints)
 	cov := Coverage{Total: len(public), DetailWords: detailWords, Endpoints: []EndpointScore{}}
 	type section struct{ page, start int }
-	sections := make([]section, len(public))
-	shared := map[section]int{}
+	type candidate struct {
+		at    section
+		words int
+	}
+	candidates := make([][]candidate, len(public))
+	eligible := map[section]int{}
 	for k, e := range public {
-		es := EndpointScore{Endpoint: e.String()}
 		re := endpointPattern(e)
-		byHeading := false
+		var byHeading, other []candidate
+		seen := map[section]bool{}
 		for pi, p := range pages {
 			for i, b := range p.blocks {
 				if !re.MatchString(b.norm) {
 					continue
 				}
-				isHeading := b.typ == agent.BlockHeading
-				if byHeading && !isHeading {
-					continue
-				}
 				start, w := sectionWords(p.blocks, i)
-				if !es.Covered || isHeading && !byHeading || w > es.Words {
-					es.Covered, es.Page, es.Words = true, p.score.Name(), w
-					sections[k] = section{page: pi, start: start}
-					byHeading = byHeading || isHeading
+				c := candidate{at: section{page: pi, start: start}, words: w}
+				if b.typ == agent.BlockHeading {
+					byHeading = append(byHeading, c)
+				} else {
+					other = append(other, c)
 				}
 			}
 		}
-		if es.Covered {
-			shared[sections[k]]++
+		if len(byHeading) > 0 {
+			other = byHeading
 		}
-		cov.Endpoints = append(cov.Endpoints, es)
+		for _, c := range other {
+			if seen[c.at] {
+				continue
+			}
+			seen[c.at] = true
+			candidates[k] = append(candidates[k], c)
+			eligible[c.at]++
+		}
 	}
 	var words []int
-	for k := range cov.Endpoints {
-		es := &cov.Endpoints[k]
-		if !es.Covered {
-			continue
+	for k, e := range public {
+		es := EndpointScore{Endpoint: e.String()}
+		for _, c := range candidates[k] {
+			w := c.words / eligible[c.at]
+			if !es.Covered || w > es.Words {
+				es.Covered, es.Page, es.Words = true, pages[c.at.page].score.Name(), w
+			}
 		}
-		es.Words /= shared[sections[k]]
-		cov.Covered++
-		words = append(words, es.Words)
-		if es.Words >= detailWords {
-			es.Detailed = true
-			cov.Detailed++
+		if es.Covered {
+			cov.Covered++
+			words = append(words, es.Words)
+			if es.Words >= detailWords {
+				es.Detailed = true
+				cov.Detailed++
+			}
 		}
+		cov.Endpoints = append(cov.Endpoints, es)
 	}
 	return cov, wordStats(words)
 }

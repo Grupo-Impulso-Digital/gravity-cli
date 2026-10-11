@@ -119,6 +119,19 @@ func TestScore(t *testing.T) {
 			failures: []string{"14 covered endpoints have fewer than 40 words"},
 		},
 		{
+			name: "overview table plus a section per endpoint",
+			rec: recording(create("Topics API", func() []api.ChangeBlock {
+				rows := [][]string{{"Method", "Path", "Purpose"}}
+				var sections []api.ChangeBlock
+				for i, e := range Public(FixtureEndpoints) {
+					rows = append(rows, []string{e.Method, e.Path, "Works with the topics, posts and subscriptions that this service keeps for each team"})
+					sections = append(sections, heading(2, fmt.Sprintf("Operation %d", i+1)), prose("Send "+e.Method+" "+e.Path+". "+detail))
+				}
+				return append([]api.ChangeBlock{heading(1, "Topics API"), heading(2, "Overview"), table(rows...)}, sections...)
+			}())),
+			status: StatusScored, pass: true, covered: 14, detailed: 14,
+		},
+		{
 			name: "internal endpoints leak",
 			rec: recording(create("Topics API", fullPage(
 				heading(2, "Operations"),

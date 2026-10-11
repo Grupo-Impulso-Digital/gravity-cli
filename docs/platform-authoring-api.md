@@ -261,7 +261,8 @@ change at a successful `submit_page`.
 
 - Seeding: update pages start from `GET /api/v1/content/pages/{pageId}?state=draft&format=json`;
   new pages start empty; reference prose starts from the existing page merged
-  with the run's computed `api` blocks. A block is editable only when its
+  with the run's computed `api` blocks, and is skipped with a warning when the
+  page is not readable yet (for example its create is still pending). A block is editable only when its
   ownership is not `human`, its type is in `blocks.types`, its
   `sourceBinding.kind` is not `api`, `endpoint` or `verbatim`, a `hybrid`
   block carries `clean: true`, and, for unit reach, it is bound to a reached
@@ -430,7 +431,9 @@ the server for CLI 1.1).
   and once on `413 context_too_large` before a retry; a second `413` fails the
   task with `context_limit`.
 - `tool_use`: every call runs in order, the terminal tool last and only when
-  every earlier call succeeded; all results go back in one user message.
+  every earlier call that ran succeeded (calls refused on a forced turn or
+  past `maxToolCalls` get an error result but do not block the terminal);
+  all results go back in one user message.
   `max_tokens`: tool calls are dropped and the model is told to work in steps
   of about `stepTokens`; three in a row fail the task with `output_limit`.
   `end_turn` without the terminal: `Continue. Call <terminal> when the work is

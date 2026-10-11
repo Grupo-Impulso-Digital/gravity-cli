@@ -99,7 +99,7 @@ recording has no guides pass). The report holds:
 | ----- | ------- |
 | `checks` | the page checks of `check_page` (`agent.CheckBlocks`) run on every recorded block: E1 language, E2 code in prose, E3 Markdown heading, E4 planning voice and E5 output markers once per page, plus E7 once per run, which passes when every public endpoint is covered; `passRate` is passed over total |
 | `coverage` | public endpoints covered, out of 14. An endpoint is covered when a block names its method and path (`GET /topics/{id}`, `GET /topics/:id`, a table row `GET \| /topics`, or a URL after the method); parameter names do not matter |
-| `wordsPerEndpoint` | min, median and mean words of the section that documents each covered endpoint: from the heading that names it (or the heading before the block that names it) to the next heading of the same or a higher level, code excluded; endpoints that share one section split its words. A covered endpoint with at least `detailWords` words is `detailed` |
+| `wordsPerEndpoint` | min, median and mean words of the section that documents each covered endpoint: from the heading that names it (or the heading before the block that names it) to the next heading of the same or a higher level, code excluded; each endpoint takes, among the sections that name it (heading matches first), the one with the most words once split among every endpoint those sections name, so an overview table does not outweigh a per-endpoint section. A covered endpoint with at least `detailWords` words is `detailed` |
 | `internalLeaks` | blocks that name the path of an internal endpoint |
 | `turns`, `inputTokens`, `outputTokens`, `totalTokens` | the sum of the recorded passes' `usage` |
 | `durationSeconds` | the wall time of `gravity run` |

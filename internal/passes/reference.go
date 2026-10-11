@@ -519,17 +519,14 @@ func referenceProse(ctx context.Context, in Input, out Sink, rep *Report, p *ref
 	if err != nil && !notFound(err) {
 		return fmt.Errorf("read page %s: %w", p.slug, err)
 	}
-	if notFound(err) {
-		existing = nil
-	}
-	if existing != nil && existing.Page.Lock != nil {
+	if notFound(err) || existing == nil {
+		rep.warn("page %s is not readable yet (its create may be pending); prose skipped until a later run", p.slug)
 		return nil
 	}
-	file := "new-" + p.slug
-	if existing != nil {
-		file = existing.Page.ID
+	if existing.Page.Lock != nil {
+		return nil
 	}
-	d, err := newDraft(ctx, in, draftSpec{mode: agent.DraftReferenceProse, slug: p.slug, keyPrefix: agent.KeyPrefixRef, file: file, page: existing, computed: computed})
+	d, err := newDraft(ctx, in, draftSpec{mode: agent.DraftReferenceProse, slug: p.slug, keyPrefix: agent.KeyPrefixRef, file: existing.Page.ID, page: existing, computed: computed})
 	if err != nil {
 		return err
 	}
@@ -542,11 +539,7 @@ func referenceProse(ctx context.Context, in Input, out Sink, rep *Report, p *ref
 	if len(blocks) == 0 && len(remove) == 0 {
 		return nil
 	}
-	target := api.ChangeTarget{SpaceID: in.SpaceID(), Slug: p.slug}
-	if existing != nil {
-		target = api.ChangeTarget{PageID: existing.Page.ID}
-	}
-	c, err := out.Change(ctx, api.ChangeRequest{Op: api.OpUpdate, Target: target, Summary: summary, Blocks: blocks, RemoveBlockKeys: remove, Units: in.Known.Filter(changeUnits(blocks)), Languages: in.Languages()})
+	c, err := out.Change(ctx, api.ChangeRequest{Op: api.OpUpdate, Target: api.ChangeTarget{PageID: existing.Page.ID}, Summary: summary, Blocks: blocks, RemoveBlockKeys: remove, Units: in.Known.Filter(changeUnits(blocks)), Languages: in.Languages()})
 	if err != nil {
 		return err
 	}

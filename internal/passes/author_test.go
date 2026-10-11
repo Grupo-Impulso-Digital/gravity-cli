@@ -164,9 +164,6 @@ func TestReferenceProseWritesAroundTheAPIBlocks(t *testing.T) {
 		if lastTool(req) != agent.ToolSubmitPage {
 			t.Fatalf("unexpected tools %v", req.Tools)
 		}
-		if strings.Contains(kickoffOf(req), "slug charges") {
-			return submit(agent.ToolSubmitPage, map[string]any{"summary": "nothing"})
-		}
 		switch assistantTurns(req) {
 		case 0:
 			return calls(
@@ -180,8 +177,22 @@ func TestReferenceProseWritesAroundTheAPIBlocks(t *testing.T) {
 	}
 	w := &writes{}
 	in := input(t, r, fake, planPass(config.KindReference, "api-ref", map[string]any{"prose": true}), manifest(), "", head, api.ModeWrite)
-	if _, err := (passes.Reference{}).Run(context.Background(), in, sink(w)); err != nil {
+	rep, err := (passes.Reference{}).Run(context.Background(), in, sink(w))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(rep.Warnings, "\n"), "page charges is not readable yet") {
+		t.Fatalf("warnings = %v", rep.Warnings)
+	}
+	for _, c := range w.changes {
+		if c.Op == api.OpUpdate && c.Target.PageID == "" {
+			t.Fatalf("update without a page id: %+v", c)
+		}
+	}
+	for _, req := range fake.requests {
+		if strings.Contains(kickoffOf(req), "slug charges") {
+			t.Fatal("prose ran for a page that is not readable")
+		}
 	}
 	var prose *api.ChangeRequest
 	for i, c := range w.changes {

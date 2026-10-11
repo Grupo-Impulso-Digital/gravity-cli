@@ -514,12 +514,10 @@ func (r *Runner) runTools(ctx context.Context, uses []api.ContentPart, terminal 
 			continue
 		case forced:
 			results[i] = errorResult(use.ID, fmt.Sprintf("only %s can be called now", terminal))
-			failed = true
 			continue
 		case result.ToolCalls >= caps.maxToolCalls:
 			r.logf("agent: hit the tool-call cap (%d); requiring %s next", caps.maxToolCalls, terminal)
 			results[i] = errorResult(use.ID, fmt.Sprintf("the tool-call cap of %d is reached; call %s with your result", caps.maxToolCalls, terminal))
-			failed = true
 			*capForced = terminal != ""
 			continue
 		}

@@ -102,6 +102,15 @@
 - Map-units ingests its units, as a complete list, only after an unforced
   `finish_units {complete: true}`; otherwise none is ingested.
 - A failed reference prose page fails the pass (it was a warning).
+- Reference prose for a page that is not readable yet (its create still
+  pending) is skipped with a warning instead of sending an update without a
+  page id.
+- On a forced turn, or past the tool-call cap, refused work calls no longer
+  block the terminal tool in the same reply, so a forced list-phase terminal
+  keeps its partial result instead of ending with `cap_reached`.
+- The eval scorer splits each section's words among the endpoints it names
+  before choosing an endpoint's section, so an overview table no longer hides
+  the per-endpoint sections.
 - List blocks hold one item: an `items` array is no longer joined into one
   block, and the `task` variant becomes `bulleted`. Callout variants are
   `info`, `success`, `warning` and `danger`.

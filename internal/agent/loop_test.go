@@ -388,6 +388,44 @@ func TestRunnerCaps(t *testing.T) {
 			},
 		},
 		{
+			name:    "forced turn runs the terminal beside a rejected work call",
+			caps:    api.HarnessLimits{MaxTurns: 3, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
+			replies: []any{uses(spin("a"), toolUse{"f", "finish_units", `{"complete":true}`})},
+			submit:  finishUnitsTool(),
+			check: func(t *testing.T, _ *scriptLLM, res *agent.Result, err error) {
+				if err != nil || res.TerminalTool != "finish_units" || !res.Partial || res.ToolCalls != 0 {
+					t.Fatalf("err=%v res=%+v", err, res)
+				}
+			},
+		},
+		{
+			name:    "tool-call cap turn runs the terminal beside a rejected work call",
+			caps:    api.HarnessLimits{MaxTurns: 20, MaxToolCalls: 1, StepTokens: 4000, MaxContinueNudges: 2},
+			forced:  true,
+			replies: []any{uses(spin("a"), spin("b"), submitFindings("f"))},
+			submit:  reportTool(),
+			check: func(t *testing.T, _ *scriptLLM, res *agent.Result, err error) {
+				if err != nil || res.TerminalTool != toolReport || res.ToolCalls != 1 {
+					t.Fatalf("err=%v res=%+v", err, res)
+				}
+			},
+		},
+		{
+			name:    "a failed work call still blocks the terminal",
+			caps:    api.HarnessLimits{MaxTurns: 3, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
+			forced:  true,
+			replies: []any{uses(toolUse{"x", "nope", `{}`}, submitFindings("f")), uses(submitFindings("g"))},
+			submit:  reportTool(),
+			check: func(t *testing.T, s *scriptLLM, res *agent.Result, err error) {
+				if err != nil || len(s.requests) != 2 {
+					t.Fatalf("err=%v requests=%d", err, len(s.requests))
+				}
+				if r := s.requests[1].Messages[2].Content[1]; !r.IsError || !strings.Contains(r.Content, "earlier tool call") {
+					t.Fatalf("terminal result = %+v", r)
+				}
+			},
+		},
+		{
 			name:    "forced list terminal is partial",
 			caps:    api.HarnessLimits{MaxTurns: 3, MaxToolCalls: 50, StepTokens: 4000, MaxContinueNudges: 2},
 			forced:  true,
