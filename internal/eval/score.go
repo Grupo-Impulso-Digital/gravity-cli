@@ -137,7 +137,7 @@ type EndpointScore struct {
 	Detailed bool   `json:"detailed"`
 }
 
-// WordStats summarises the words of the covered endpoint sections.
+// WordStats summarizes the words of the covered endpoint sections.
 type WordStats struct {
 	Min    int     `json:"min"`
 	Median int     `json:"median"`
