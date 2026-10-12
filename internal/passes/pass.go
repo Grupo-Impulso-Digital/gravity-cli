@@ -77,6 +77,14 @@ func (in Input) logf(format string, args ...any) {
 // Dry reports whether the pass must not write.
 func (in Input) Dry() bool { return in.Mode == api.ModeDry }
 
+// FeatureSourceLocation is the server feature that accepts path, line range and sha on source bindings.
+const FeatureSourceLocation = "source-location"
+
+// Feature reports whether the plan's server advertises a feature.
+func (in Input) Feature(name string) bool {
+	return in.Plan != nil && in.Plan.Capabilities.Features[name]
+}
+
 // Head returns the commit the range ends at; empty for the working tree.
 func (in Input) Head() string { return in.Range.Head }
 

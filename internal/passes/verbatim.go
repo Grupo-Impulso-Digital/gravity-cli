@@ -100,6 +100,8 @@ func (Verbatim) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	convert := func(file string, body []byte, opts verbatim.Options) (*verbatim.Document, error) {
 		var fatal error
 		opts.Generator = in.Generator
+		opts.Locate = in.Feature(FeatureSourceLocation)
+		opts.Commit = head
 		opts.Link = m.Linker(file, in.SpaceSlug(), repo)
 		opts.Image = func(src string) (string, bool) {
 			u, ok, err := uploadImage(ctx, in, out, &rep, file, src)
@@ -134,7 +136,7 @@ func (Verbatim) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			ready[page.Path] = true
 			continue
 		}
-		doc, err := convert(page.Path, page.Body, verbatim.Options{Path: page.Path, Hash: page.Hash, MDX: page.MDX, DropTitleH1: page.TitleFromH1, Title: page.Title, Audiences: page.FrontMatter.Audiences})
+		doc, err := convert(page.Path, page.Body, verbatim.Options{Path: page.Path, Hash: page.Hash, MDX: page.MDX, DropTitleH1: page.TitleFromH1, Title: page.Title, Audiences: page.FrontMatter.Audiences, LineOffset: page.FrontMatter.BodyLine})
 		if err != nil {
 			return rep, err
 		}
@@ -170,7 +172,7 @@ func (Verbatim) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			continue
 		}
 		for _, t := range page.Translations {
-			doc, err := convert(t.Path, t.Body, verbatim.Options{Path: t.Path, Hash: t.Hash, MDX: t.MDX, DropTitleH1: t.TitleFromH1, Title: t.Title, Audiences: t.FrontMatter.Audiences})
+			doc, err := convert(t.Path, t.Body, verbatim.Options{Path: t.Path, Hash: t.Hash, MDX: t.MDX, DropTitleH1: t.TitleFromH1, Title: t.Title, Audiences: t.FrontMatter.Audiences, LineOffset: t.FrontMatter.BodyLine})
 			if err != nil {
 				return rep, err
 			}

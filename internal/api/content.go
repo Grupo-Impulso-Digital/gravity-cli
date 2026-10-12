@@ -58,6 +58,10 @@ type SourceBinding struct {
 	Ref       string `json:"ref"`
 	Hash      string `json:"hash"`
 	Generator string `json:"generator,omitempty"`
+	Path      string `json:"path,omitempty"`
+	LineStart int    `json:"lineStart,omitempty"`
+	LineEnd   int    `json:"lineEnd,omitempty"`
+	SHA       string `json:"sha,omitempty"`
 }
 
 // PreviousWriter is the writer before the last one.

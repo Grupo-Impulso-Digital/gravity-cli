@@ -20,6 +20,7 @@ type FrontMatter struct {
 	Audiences   []string       `json:"audiences,omitempty"`
 	Lang        string         `json:"lang,omitempty"`
 	Raw         map[string]any `json:"-"`
+	BodyLine    int            `json:"-"`
 }
 
 // SplitFrontMatter separates YAML (---) or TOML (+++) front matter from the body.
@@ -47,7 +48,9 @@ func SplitFrontMatter(src []byte) (FrontMatter, []byte, error) {
 		if err != nil {
 			return FrontMatter{}, nil, fmt.Errorf("front matter: %w", err)
 		}
-		return frontMatterFrom(m), []byte(body), nil
+		fm := frontMatterFrom(m)
+		fm.BodyLine = i + 1
+		return fm, []byte(body), nil
 	}
 	return FrontMatter{Raw: map[string]any{}}, []byte(text), nil
 }
