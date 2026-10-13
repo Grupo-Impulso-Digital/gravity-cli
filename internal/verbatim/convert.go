@@ -33,6 +33,9 @@ type Options struct {
 	Audiences   []string
 	Link        LinkFunc
 	Image       ImageFunc
+	Locate      bool
+	LineOffset  int
+	Commit      string
 }
 
 // Document is a converted file.
@@ -51,7 +54,18 @@ type converter struct {
 	used         map[string]bool
 	titleDropped bool
 	dropped      map[string]bool
+	span         lineSpan
+	fixed        bool
 }
+
+type lineSpan struct {
+	start int
+	end   int
+}
+
+var noSpan = lineSpan{start: -1, end: -1}
+
+var commitRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 var alertRE = regexp.MustCompile(`^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*`)
 
@@ -63,13 +77,19 @@ func Convert(body []byte, opts Options) *Document {
 		section: "intro",
 		used:    map[string]bool{"intro": true, "footnotes": true},
 		dropped: map[string]bool{},
+		span:    noSpan,
 	}
 	src := strings.ReplaceAll(string(body), "\r\n", "\n")
+	lines := identity(strings.Count(src, "\n") + 1)
 	if opts.MDX {
-		src = stripMDXImports(src)
+		var kept []int
+		src, kept = stripMDXImports(src)
+		lines = compose(lines, kept)
 	}
-	src, fn := extractFootnotes(src)
-	c.process(src)
+	src, fn, kept := extractFootnotes(src)
+	lines = compose(lines, kept)
+	c.process(src, lines)
+	c.span, c.fixed = noSpan, false
 	if len(fn.order) > 0 {
 		c.section, c.intra = "footnotes", 0
 		c.emit("divider", map[string]any{})
@@ -128,8 +148,42 @@ func clipURL(u string) string {
 	return u
 }
 
+func compose(outer, inner []int) []int {
+	out := make([]int, len(inner))
+	for i, at := range inner {
+		out[i] = outer[at]
+	}
+	return out
+}
+
 func (c *converter) binding() *api.SourceBinding {
-	return &api.SourceBinding{Kind: "file", Ref: c.opts.Path + "#" + c.section, Hash: c.opts.Hash, Generator: c.opts.Generator}
+	b := &api.SourceBinding{Kind: "file", Ref: c.opts.Path + "#" + c.section, Hash: c.opts.Hash, Generator: c.opts.Generator}
+	if !c.opts.Locate {
+		return b
+	}
+	b.Path = c.opts.Path
+	if commitRE.MatchString(c.opts.Commit) {
+		b.SHA = c.opts.Commit
+	}
+	if c.span.start >= 0 {
+		b.LineStart = c.span.start + 1 + c.opts.LineOffset
+		b.LineEnd = max(c.span.end, c.span.start) + 1 + c.opts.LineOffset
+	}
+	return b
+}
+
+func (c *converter) setSpan(s lineSpan) {
+	if !c.fixed {
+		c.span = s
+	}
+}
+
+func spanOf(base []int, start, end int) lineSpan {
+	if start < 0 || start >= len(base) {
+		return noSpan
+	}
+	end = min(max(end, start), len(base)-1)
+	return lineSpan{start: base[start], end: base[end]}
 }
 
 func (c *converter) emit(typ string, content map[string]any) {
@@ -148,11 +202,18 @@ func (c *converter) push(key, typ string, content map[string]any) {
 	})
 }
 
-func (c *converter) process(src string) {
+func (c *converter) process(src string, base []int) {
 	for _, seg := range segmentize(src) {
+		if base != nil {
+			c.setSpan(spanOf(base, seg.start, seg.end))
+		}
 		switch seg.kind {
 		case segMarkdown:
-			c.markdown([]byte(seg.body))
+			var inner []int
+			if base != nil && !c.fixed {
+				inner = base[seg.start : seg.end+1]
+			}
+			c.markdown([]byte(seg.body), inner)
 		case segCallout:
 			c.emit("callout", map[string]any{"text": titled(seg.title, c.markdownText(seg.body)), "variant": calloutVariant(seg.variant)})
 		case segExpandable:
@@ -170,7 +231,10 @@ func (c *converter) process(src string) {
 		case segComponent:
 			c.dropped[seg.name] = true
 			if strings.TrimSpace(seg.body) != "" {
-				c.process(seg.body)
+				wasFixed := c.fixed
+				c.fixed = true
+				c.process(seg.body, nil)
+				c.fixed = wasFixed
 			}
 		}
 	}
@@ -202,14 +266,21 @@ func (c *converter) parse(src []byte) ast.Node {
 	return c.md.Parser().Parse(text.NewReader(src))
 }
 
-func (c *converter) markdown(src []byte) {
+func (c *converter) markdown(src []byte, base []int) {
 	doc := c.parse(src)
+	var loc *locator
+	if base != nil {
+		loc = newLocator(src, base)
+	}
 	for n := doc.FirstChild(); n != nil; n = n.NextSibling() {
-		c.block(n, src)
+		if loc != nil {
+			c.setSpan(loc.span(n))
+		}
+		c.block(n, src, loc)
 	}
 }
 
-func (c *converter) block(n ast.Node, src []byte) {
+func (c *converter) block(n ast.Node, src []byte, loc *locator) {
 	switch node := n.(type) {
 	case *ast.Heading:
 		c.heading(node, src)
@@ -225,7 +296,7 @@ func (c *converter) block(n ast.Node, src []byte) {
 			c.emit("prose", map[string]any{"text": t})
 		}
 	case *ast.List:
-		c.list(node, src)
+		c.list(node, src, loc)
 	case *ast.FencedCodeBlock:
 		c.emit("code", map[string]any{"text": codeText(node, src), "language": fenceLanguage(node, src)})
 	case *ast.CodeBlock:
@@ -270,12 +341,15 @@ func (c *converter) heading(h *ast.Heading, src []byte) {
 	c.push(fmt.Sprintf("doc:%s:%s", c.opts.Path, uniq), "heading", map[string]any{"text": txt, "level": min(h.Level, 3)})
 }
 
-func (c *converter) list(l *ast.List, src []byte) {
+func (c *converter) list(l *ast.List, src []byte, loc *locator) {
 	variant := "bulleted"
 	if l.IsOrdered() {
 		variant = "numbered"
 	}
 	for item := l.FirstChild(); item != nil; item = item.NextSibling() {
+		if loc != nil {
+			c.setSpan(loc.span(item))
+		}
 		content := map[string]any{"variant": variant}
 		var parts []string
 		for ch := item.FirstChild(); ch != nil; ch = ch.NextSibling() {

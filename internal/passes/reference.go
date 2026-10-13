@@ -368,7 +368,7 @@ func summaryLine(c Counts, target string) string {
 	return line + " in " + target
 }
 
-func apiBlocks(in Input, p *refPage) ([]api.ChangeBlock, []string, error) {
+func apiBlocks(in Input, p *refPage, head string) ([]api.ChangeBlock, []string, error) {
 	blocks := make([]api.ChangeBlock, 0, len(p.ops))
 	var pageUnits []string
 	for _, op := range p.ops {
@@ -378,6 +378,9 @@ func apiBlocks(in Input, p *refPage) ([]api.ChangeBlock, []string, error) {
 		}
 		b.Audiences = in.Audiences()
 		b.Units = in.Known.Filter(b.Units)
+		if in.Feature(FeatureSourceLocation) {
+			docs.Locate(&b, op, p.spec, head)
+		}
 		pageUnits = append(pageUnits, b.Units...)
 		b.Rationale = &api.Rationale{Summary: "Generated from " + p.spec, SourceRefs: []string{p.spec + "#/paths/" + pointerEscape(op.Path) + "/" + strings.ToLower(op.Method)}}
 		blocks = append(blocks, b)
@@ -386,7 +389,7 @@ func apiBlocks(in Input, p *refPage) ([]api.ChangeBlock, []string, error) {
 }
 
 func referencePage(ctx context.Context, in Input, out Sink, rep *Report, p *refPage, headKeys map[string]string, removed []string) (bool, error) {
-	blocks, pageUnits, err := apiBlocks(in, p)
+	blocks, pageUnits, err := apiBlocks(in, p, in.HeadSHA(ctx))
 	if err != nil {
 		return false, err
 	}
@@ -511,7 +514,7 @@ func referenceProse(ctx context.Context, in Input, out Sink, rep *Report, p *ref
 	if in.Harness == nil {
 		return errors.New("no AI harness for this pass")
 	}
-	computed, _, err := apiBlocks(in, p)
+	computed, _, err := apiBlocks(in, p, in.HeadSHA(ctx))
 	if err != nil {
 		return err
 	}

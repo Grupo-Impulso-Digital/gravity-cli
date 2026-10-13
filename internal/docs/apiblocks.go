@@ -2,6 +2,7 @@ package docs
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
@@ -45,7 +46,23 @@ func Operations(spec []byte) ([]checks.OperationDetail, error) {
 	if err != nil {
 		return nil, err
 	}
+	locateOperations(spec, ops)
 	return ops, nil
+}
+
+// Locate adds the spec file, the operation's line range and the commit to an endpoint binding.
+func Locate(b *api.ChangeBlock, op checks.OperationDetail, specPath, commit string) {
+	if b.SourceBinding == nil || specPath == "" {
+		return
+	}
+	b.SourceBinding.Path = specPath
+	if op.LineStart > 0 {
+		b.SourceBinding.LineStart = op.LineStart
+		b.SourceBinding.LineEnd = max(op.LineEnd, op.LineStart)
+	}
+	if commitRE.MatchString(commit) {
+		b.SourceBinding.SHA = commit
+	}
 }
 
 var paramLocations = map[string]bool{"path": true, "query": true, "header": true, "body": true}
@@ -103,6 +120,8 @@ func APIBlocks(spec []byte, generator string) ([]api.ChangeBlock, error) {
 	}
 	return blocks, nil
 }
+
+var commitRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 // Slug lowercases text and collapses non-alphanumerics into single dashes, like the viewer's anchor slug.
 func Slug(s string) string {

@@ -97,6 +97,8 @@ type OperationDetail struct {
 	OperationID string           `json:"-"`
 	Tags        []string         `json:"-"`
 	Deprecated  bool             `json:"-"`
+	LineStart   int              `json:"-"`
+	LineEnd     int              `json:"-"`
 }
 
 // ParseOpenAPIDetailed parses an OpenAPI document (2.0 or 3.x) and returns the full operation detail for each (method, path).

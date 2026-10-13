@@ -29,6 +29,8 @@ type segment struct {
 	variant string
 	name    string
 	tabs    []tab
+	start   int
+	end     int
 }
 
 var (
@@ -66,20 +68,18 @@ func (f *fenceState) toggle(line string) bool {
 	return true
 }
 
-func stripMDXImports(body string) string {
+func stripMDXImports(body string) (string, []int) {
 	var out []string
+	var kept []int
 	var fs fenceState
-	for _, line := range strings.Split(body, "\n") {
-		if fs.toggle(line) {
-			out = append(out, line)
-			continue
-		}
-		if importRE.MatchString(line) {
+	for i, line := range strings.Split(body, "\n") {
+		if !fs.toggle(line) && importRE.MatchString(line) {
 			continue
 		}
 		out = append(out, line)
+		kept = append(kept, i)
 	}
-	return strings.Join(out, "\n")
+	return strings.Join(out, "\n"), kept
 }
 
 type footnotes struct {
@@ -88,21 +88,24 @@ type footnotes struct {
 	order   []string
 }
 
-func extractFootnotes(body string) (string, *footnotes) {
+func extractFootnotes(body string) (string, *footnotes, []int) {
 	fn := &footnotes{numbers: map[string]int{}, defs: map[string]string{}}
 	lines := strings.Split(body, "\n")
 	var kept []string
+	var keptAt []int
 	var fs fenceState
 	var defOrder []string
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
 		if fs.toggle(line) {
 			kept = append(kept, line)
+			keptAt = append(keptAt, i)
 			continue
 		}
 		m := footDefRE.FindStringSubmatch(line)
 		if m == nil {
 			kept = append(kept, line)
+			keptAt = append(keptAt, i)
 			continue
 		}
 		text := []string{m[2]}
@@ -126,7 +129,7 @@ func extractFootnotes(body string) (string, *footnotes) {
 		fn.defs[m[1]] = strings.TrimSpace(strings.Join(text, "\n"))
 	}
 	if len(fn.defs) == 0 {
-		return body, fn
+		return body, fn, identity(len(lines))
 	}
 	out := strings.Join(kept, "\n")
 	var fs2 fenceState
@@ -160,24 +163,39 @@ func extractFootnotes(body string) (string, *footnotes) {
 		}
 	}
 	sort.SliceStable(fn.order, func(i, j int) bool { return fn.numbers[fn.order[i]] < fn.numbers[fn.order[j]] })
-	return b.String(), fn
+	return b.String(), fn, keptAt
+}
+
+func identity(n int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = i
+	}
+	return out
 }
 
 func segmentize(body string) []segment {
 	lines := strings.Split(body, "\n")
 	var segs []segment
 	var md []string
+	mdStart := 0
 	flush := func() {
 		if len(md) > 0 {
-			segs = append(segs, segment{kind: segMarkdown, body: strings.Join(md, "\n")})
+			segs = append(segs, segment{kind: segMarkdown, body: strings.Join(md, "\n"), start: mdStart, end: mdStart + len(md) - 1})
 			md = nil
 		}
+	}
+	addMD := func(i int, line string) {
+		if len(md) == 0 {
+			mdStart = i
+		}
+		md = append(md, line)
 	}
 	var fs fenceState
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
 		if fs.toggle(line) {
-			md = append(md, line)
+			addMD(i, line)
 			continue
 		}
 		if m := colonOpenRE.FindStringSubmatch(line); m != nil {
@@ -185,7 +203,7 @@ func segmentize(body string) []segment {
 				flush()
 				title := strings.TrimSpace(m[3])
 				title = strings.TrimSuffix(strings.TrimPrefix(title, "["), "]")
-				segs = append(segs, segment{kind: segCallout, variant: strings.ToLower(m[2]), title: title, body: strings.Join(lines[i+1:end], "\n")})
+				segs = append(segs, segment{kind: segCallout, variant: strings.ToLower(m[2]), title: title, body: strings.Join(lines[i+1:end], "\n"), start: i, end: end})
 				i = end
 				continue
 			}
@@ -197,7 +215,7 @@ func segmentize(body string) []segment {
 			if strings.HasPrefix(m[1], "???") {
 				kind = segExpandable
 			}
-			segs = append(segs, segment{kind: kind, variant: strings.ToLower(m[2]), title: m[3], body: inner})
+			segs = append(segs, segment{kind: kind, variant: strings.ToLower(m[2]), title: m[3], body: inner, start: i, end: max(i, end-1)})
 			i = end - 1
 			continue
 		}
@@ -206,7 +224,9 @@ func segmentize(body string) []segment {
 			if end := findTagClose(lines, i, "details"); end >= 0 {
 				flush()
 				raw := strings.Join(lines[i:end+1], "\n")
-				segs = append(segs, detailsSegment(raw))
+				seg := detailsSegment(raw)
+				seg.start, seg.end = i, end
+				segs = append(segs, seg)
 				i = end
 				continue
 			}
@@ -215,22 +235,23 @@ func segmentize(body string) []segment {
 			name := m[1]
 			if m[3] == "/" {
 				flush()
-				segs = append(segs, segment{kind: segComponent, name: name})
+				segs = append(segs, segment{kind: segComponent, name: name, start: i, end: i})
 				continue
 			}
 			if end := findTagClose(lines, i, name); end >= 0 {
 				flush()
 				raw := strings.Join(lines[i:end+1], "\n")
+				seg := segment{kind: segComponent, name: name, body: innerOf(raw, name)}
 				if name == "Tabs" {
-					segs = append(segs, tabsSegment(raw))
-				} else {
-					segs = append(segs, segment{kind: segComponent, name: name, body: innerOf(raw, name)})
+					seg = tabsSegment(raw)
 				}
+				seg.start, seg.end = i, end
+				segs = append(segs, seg)
 				i = end
 				continue
 			}
 		}
-		md = append(md, line)
+		addMD(i, line)
 	}
 	flush()
 	return segs

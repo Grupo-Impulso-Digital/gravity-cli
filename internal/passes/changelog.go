@@ -223,12 +223,14 @@ func changelogFileBlocks(ctx context.Context, in Input, tag string) ([]api.Chang
 	want := strings.TrimPrefix(tag, "v")
 	var section []string
 	inSection := false
-	for _, line := range strings.Split(string(data), "\n") {
+	offset := 0
+	for i, line := range strings.Split(string(data), "\n") {
 		if m := changelogHeadingRE.FindStringSubmatch(line); m != nil {
 			if inSection {
 				break
 			}
 			inSection = strings.TrimPrefix(m[1], "v") == want
+			offset = i + 1
 			continue
 		}
 		if inSection {
@@ -238,7 +240,7 @@ func changelogFileBlocks(ctx context.Context, in Input, tag string) ([]api.Chang
 	if !inSection && len(section) == 0 {
 		return nil, fmt.Errorf("%s has no section for %s", file, tag)
 	}
-	doc := verbatim.Convert([]byte(strings.Join(section, "\n")), verbatim.Options{Path: file, Hash: docs.HashBytes(data), Generator: in.Generator, Audiences: in.Audiences()})
+	doc := verbatim.Convert([]byte(strings.Join(section, "\n")), verbatim.Options{Path: file, Hash: docs.HashBytes(data), Generator: in.Generator, Audiences: in.Audiences(), Locate: in.Feature(FeatureSourceLocation), LineOffset: offset, Commit: in.HeadSHA(ctx)})
 	return doc.Blocks, nil
 }
 
