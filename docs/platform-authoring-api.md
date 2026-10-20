@@ -9,7 +9,7 @@ the answer. The typed requests and responses live in `internal/api`.
 **Audience:** CLI contributors and the Gravity platform team.
 **Consumers:** `login`, `logout`, `whoami`, `org`, `setup`, `show`,
 `validate`, `structure`, `run`, `review`, `runs`, `approve`, `ci`, `status`,
-`check` and `explain`. CLI 1.1 has no stubs for removed commands: an unknown
+`check`, `explain`, `agent` and `version`. CLI 1.1 has no stubs for removed commands: an unknown
 command is cobra's usage error.
 
 ## Conventions
@@ -63,11 +63,11 @@ command is cobra's usage error.
 | Code | Meaning |
 | ---- | ------- |
 | `0` | Success, or nothing to do; a fork or Dependabot pull request without a token. |
-| `1` | Findings: `validate` errors (also before a real run and after a dry run), `check` findings in `failOn`, structure conflicts, refused approvals, `ci check`, `status --check` on an unhealthy repository. |
+| `1` | Findings: `validate` errors (also before a local real run and after a local dry run), `check` findings in `failOn`, structure conflicts, refused approvals, `ci check`, `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, a stale or dirty branch, a recording that no longer matches. |
 | `3` | Licence refusal (`module_disabled`, `seat_limit`). |
-| `130` | Interrupted: the run was finished with `status: cancelled` (or cancelled through `POST /runs/{id}/cancel`). |
 | `4` | No usable credentials: no token (`token_missing`), only unexpanded CI variables such as a literal `$(GRAVITY_REPO_TOKEN)` in CI, or locally with no profile token (`token_unresolved`), or any `401` (`unauthorized`), which also stops a run without its finish call. |
+| `130` | Interrupted: the run was finished with `status: cancelled` (or cancelled through `POST /runs/{id}/cancel`). |
 
 `CodeFor` in `internal/cli/exit.go` applies them: a licence refusal anywhere in
 the error chain wins, then a `401`, then the command's own `*ExitError`.

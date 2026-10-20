@@ -28,8 +28,8 @@ and `gravity ci setup --provider circleci`.
 | ------- | ---- | ------ |
 | Pull request | dry run | Doc-impact comment on the pull request, step summary, annotations for findings. Exit `1` only for `check` findings in `failOn`. |
 | Push to the default branch | write | One bundle of changes awaiting review in Gravity; inventory and handoffs recorded; watermarks advance. |
-| Push to another branch | write, not authoritative | Passes that apply to that branch run; the manifest and the inventory are not updated from it. |
-| Release tag (`v*`) | write | Changelog pages for the release; release-only passes. |
+| Push to another branch | write, not authoritative | Passes whose `branches` match that branch run (a pass without `branches` runs only on the default branch); the manifest and the inventory are not updated from it. |
+| Release | write | Changelog pages for the release; release-only passes. The GitHub template runs on a published release, the GitLab template on any tag, the Bitbucket and Azure templates on `v*` tags. |
 | Schedule | write | Passes that list the `schedule` trigger. |
 | Manual | write | Passes whose triggers include `manual`, `push` or `schedule`; the log names the passes it left out. `gravity run --pass <name>` (on GitHub, the action's `args: --pass <name>`) runs one pass whatever its triggers. |
 
@@ -45,7 +45,9 @@ build-user-vars plugin), a CircleCI pipeline triggered through the API
 `pipeline.trigger_source`), or any local run. `GRAVITY_TRIGGER=manual`
 overrides the detection anywhere.
 
-Deploys are never gated by documentation writes. Only `check` findings exit `1`.
+Deploys are never gated by documentation writes. Only `check` findings exit
+`1`; a failed pass or a missing target exits `2`, and an unapproved target
+only skips its pass unless `--strict`.
 
 The first CI run of an AI pass (no watermark yet) is skipped with
 `first_run_manual` unless the repository setting `ci.firstRun` is `run`: a
@@ -57,10 +59,8 @@ locally, `gravity run --dry-run`, review it, then `gravity run --send <runId>`.
 `GRAVITY_REPO_TOKEN` holds the repository token (`gr_repo_…`) that `gravity
 ci setup` mints with exactly the scopes of the repository's passes and stores in
 the provider's secret store. The CLI reads `GRAVITY_REPO_TOKEN` first, then
-`GRAVITY_TOKEN` (a user or organization token, and the name gravity 0.x
-pipelines use), so a 0.x pipeline keeps its `GRAVITY_TOKEN` while the
-repository moves to 1.x. Never commit a token, and never put it in
-`.gravity.yaml` (a `token:` there is a manifest error).
+`GRAVITY_TOKEN` (a user or organization token). Never commit a token, and
+never put it in `.gravity.yaml` (a `token:` there is a manifest error).
 
 How each template hands the token over:
 
@@ -71,13 +71,6 @@ How each template hands the token over:
 | GitLab, Bitbucket, CircleCI | Nothing to map: CI/CD, repository and project variables reach the job as environment variables, so either name works. |
 | Jenkins | Binds `GRAVITY_REPO_TOKEN` from the credential `gravity-repo-token`. |
 | Other CI | Runs `gravity run` with `GRAVITY_REPO_TOKEN` set. |
-
-CI files written by gravity 1.0.0 to 1.0.2 pass only `GRAVITY_TOKEN` (GitHub
-before 1.0.2, Azure, Jenkins), or both secrets through the one `token` input
-(GitHub 1.0.2). They keep working while the token sits in `GRAVITY_TOKEN`.
-`gravity status` flags them, and `gravity ci setup` rewrites a file it generated
-that you did not edit (an edited file is kept, and it prints the lines to
-change).
 
 Pull request comments need a provider token next to it:
 
@@ -150,13 +143,13 @@ resolved release with `actions/cache`, and installs it with `install.sh`
 
 Templates and the action install the newest `1.x` release
 (`GRAVITY_VERSION=1`, `ci/github@v1`), so a future 2.0 never changes a 1.x
-pipeline. Pipelines still on CLI 0.3 keep `ci/github@v0` or `GRAVITY_VERSION=0`
-and never receive 1.x; CLI 1.1 no longer converts v1 manifests, so move such a
-repository with `gravity setup`, which writes a fresh version 2 manifest.
+pipeline.
 
 `install.sh` accepts `GRAVITY_VERSION=<major>` (the newest release of that
 major), a release tag (`v1.2.3`) or `latest`; `GRAVITY_INSTALL_DIR` picks where
-the binary goes. It verifies the release checksum.
+the binary goes (`/usr/local/bin` when writable, else `~/.local/bin`). It
+verifies the archive against the release's `checksums.txt` and only warns when
+that file or a sha256 tool is missing.
 
 ## Git history
 
@@ -164,3 +157,15 @@ Ranges need history: `fetch-depth: 0` on GitHub, `GIT_DEPTH: 0` on GitLab,
 `clone: depth: full` on Bitbucket, `fetchDepth: 0` on Azure. A shallow clone is
 deepened when the CLI can, and a range it cannot resolve exits `2` with the
 reason.
+
+## Migrating older pipelines
+
+- CI files written by gravity 1.0.0 to 1.0.2 pass only `GRAVITY_TOKEN` (GitHub
+  before 1.0.2, Azure, Jenkins), or both secrets through the one `token` input
+  (GitHub 1.0.2). They keep working while the token sits in `GRAVITY_TOKEN`.
+  `gravity status` flags them, and `gravity ci setup` rewrites a file it
+  generated that you did not edit (an edited file is kept, and it prints the
+  lines to change).
+- Pipelines still on CLI 0.3 keep `ci/github@v0` or `GRAVITY_VERSION=0` and
+  never receive 1.x. CLI 1.1 no longer converts v1 manifests: move such a
+  repository with `gravity setup`, which writes a fresh version 2 manifest.
