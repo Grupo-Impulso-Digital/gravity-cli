@@ -47,12 +47,42 @@ Screenshots of UI routes through a configured connection; for apps with a UI.
 
 ## Triggers and branches
 
-- `push`: on commits to the branches in `branches` (default: the default branch).
+- `push`: on commits to the branches in `branches` (default: the default branch). The filter is also
+  applied to manual runs: from another branch the pass is skipped (`branch_mismatch`), and `--pass` on it
+  fails with `pass_not_applicable`. Release runs are exempt.
 - `pr`: dry, on pull requests (comments, check).
 - `release`: on tags (changelog).
 - `schedule`: periodic CI runs.
 - `manual`: `gravity run` outside CI. A manual run runs passes triggered on `manual`, `push` or
   `schedule`; `--pass <name>` runs a named pass whatever its triggers.
+
+## What the AI reads
+
+Each AI phase starts from a kickoff made of tagged data, not instructions (those come from Gravity's
+instructions bundle):
+
+- **Change summary**: the range (and, for a release, its tag and the previous one); commits with sha,
+  subject, PR number, author and the first four lines of the body (60 at most); changed files with status
+  and `+added -deleted` counts (200 at most; lockfiles, `node_modules`, `vendor`, `dist`, minified files
+  and `code.exclude` never take part); the units touched, added or removed; the OpenAPI delta per document
+  (added, removed, changed, breaking or not); removed or renamed symbols, best effort.
+- **Guides plan**: candidate pages in the target with why each is one, pages reachable through units this
+  repository contributes to, undocumented units, and open hints from other repositories.
+- No diffs and no file contents. The model asks for them with read-only tools: `git_log`, `git_diff`,
+  `git_show`, `list_files`, `read_file` (at the end of the range under review, or at a given `ref`),
+  `grep`; and `read_page`, `search_docs`, `recall`, `inventory`, `list_target` for Gravity. Pages are
+  written through `draft_*`, `check_page`, `raise_hint` and `submit_page`; plans, release notes, facts,
+  claim findings and unit maps through `add_*` and `finish_*`.
+
+Principles to repeat to the user:
+
+- **Commit messages are hints; impact comes from code units.** `plan.Decide` decides from changed files
+  and units whether a pass runs (changelog passes run on any commit); `passes.ComputeImpact` finds the
+  affected pages from the units touched and the pages bound to them. Only when that yields nothing does
+  the guides pass search the target for the first three commit subjects.
+- **`gravity run` reads committed history only.** Uncommitted work is invisible to the AI. A real run
+  refuses a dirty tree (tracked files, `worktree_dirty`); a dry run does too unless `--allow-dirty`,
+  which ignores the dirty files.
 
 ## First runs are local
 
@@ -83,7 +113,7 @@ targets that space or any collection inside it.
 When a grant is needed (`requiresApproval`, with `reasons`):
 
 - `skips_review`: a verbatim pass (imports and translations go live, repo-locked) or a pass whose
-  changes are auto-accepted (`publish: auto_if_trusted` into a space that trusts the repository and
+  changes are auto-accepted (`publish: auto-if-trusted` into a space that trusts the repository and
   whose review policy needs no human);
 - `nucleus`: a nucleus pass writes to the product memory directly;
 - `private_space`: the target space is not public (private, unlisted, or inheriting private), so the

@@ -18,13 +18,15 @@ runs) and for small targeted fixes the user asks for.
    `gravity structure apply`. No loops of `pages_create` / `collections_create`.
 2. **Never create stub pages where a verbatim pass will import.** A structure page with `source:` is
    created by the import itself; creating it first causes `slug_taken` at run time.
-3. **Never claim a run finished without `gravity runs show <id> --json`.** Read `.data.run.status`
-   (`succeeded`, `partial`, `failed`, `cancelled`, `abandoned`) and the bundle link. Silence, a closed
-   terminal or a CI job that "looks done" is not evidence.
+3. **Never claim a run finished without `gravity runs show <id> --json`.** Read `.data.run.status`: it
+   has finished only when it says `succeeded`, `partial`, `failed` or `cancelled`; `pending` and
+   `running` are in progress, and `abandoned` is shown like a failure, so report it as not finished.
+   Add the bundle link. Silence, a closed terminal or a CI job that "looks done" is not evidence.
 4. **Runs need an up-to-date, committed branch.** The CLI refuses when the branch is behind or diverged
    from its upstream (`branch_behind`, `branch_diverged`) or tracked files are dirty
-   (`worktree_dirty`). Run the git commands it prints, with the user's consent. Never force, never
-   `--allow-dirty` on a real run (it only exists for dry runs).
+   (`worktree_dirty`; untracked files are ignored). Run the git commands it prints, with the user's
+   consent. Never force, never `--allow-dirty` on a real run (it only exists for dry runs, and then the
+   dirty files are not part of the run).
 5. **Use `--json` for anything you parse.** Check `.ok` and `.error.code`; human text goes to stderr
    and can change.
 6. **Ask before spending.** AI passes cost money. Show the plan view / estimate and get a yes before
@@ -120,14 +122,21 @@ the changes in `.gravity/runs/<runId>.json` and renders them.
 
 ```bash
 gravity run --dry-run                       # on a TTY: plan view, confirm, result, "Send this run?"
+gravity run --dry-run --model <id>          # AI passes on another model enabled in Gravity's AI settings
 gravity run --dry-run --yes --json > /tmp/gravity-dry.json   # non-interactive, after the user agreed to the cost
 jq '.data | {recording, costUsd, pages: [.pages[] | {op, slug, title}], issues}' /tmp/gravity-dry.json
 ```
 
+The plan view names, per AI pass, its model, quality label and output language. Read them to the user: a
+`not_recommended` model warns before `--yes`, and a model that cannot run stops the run
+(`model_unavailable`, exit `2`). `--debug` keeps each pass's instructions bundle and page drafts under
+`.gravity/runs/<runId>/`. A dry run is recorded only when it has changes.
+
 Review the pages with the user. Then either:
 
-- send it as is, without recomputing: `gravity run --send <runId>` (refused with `send_mismatch` if HEAD
-  or `.gravity.yaml` changed since; dry-run again then), or
+- send it as is, without recomputing and without calling a model: `gravity run --send <runId|latest>`
+  (refused with `send_mismatch` if HEAD or `.gravity.yaml` changed since; dry-run again then; `--model`
+  does not apply), or
 - adjust `.gravity.yaml` (instructions, files, structure), commit, and dry-run again.
 
 A real run (`gravity run`) works from any branch with the local `.gravity.yaml` and creates a normal
@@ -145,8 +154,8 @@ Commit the CI file and `.gravity.yaml` on a branch; the user merges.
 ### 8. Later
 
 ```bash
-gravity run --pass <name>          # one pass, whatever its triggers
-gravity runs                       # recent runs; --watch to follow
+gravity run --pass <name>          # one pass, whatever its triggers (branch filters still apply)
+gravity runs                       # recent runs; --limit N, --watch to follow
 gravity runs show <runId> --json   # the only source of truth for "did it finish"
 gravity review latest              # open the change request
 gravity approve                    # spaces waiting for a grant and why; gravity approve <site/space> after the user agrees
@@ -167,7 +176,23 @@ gravity status                     # health, passes, open bundles
 
 Triggers: `push`, `pr`, `release`, `schedule`, `manual`; `branches` filters push/schedule (default:
 the default branch). `gravity run` outside CI is a manual run; `--pass <name>` runs that pass whatever its
-triggers. Details: [references/passes.md](references/passes.md).
+triggers, but branch filters still apply: a pass without `branches` is skipped (`branch_mismatch`) from
+any other branch, and naming it with `--pass` there fails with `pass_not_applicable` (exit `2`). Details: [references/passes.md](references/passes.md).
+
+## What the AI reads
+
+Tell the user this when they ask what the model sees or why a page was (not) touched:
+
+- The kickoff is data: commit subjects (with the first lines of the body), per-file `+/-` counts, the
+  product units the range touched, OpenAPI deltas and candidate pages. It holds no diffs or file contents;
+  the model fetches those with read-only tools (`git_log`, `git_diff`, `git_show`, `list_files`,
+  `read_file`, `grep`, and `read_page`, `search_docs`, `recall`, `inventory`, `list_target`).
+- Commit messages are hints. Whether a pass runs, and which pages a change affects, come from the files and
+  code units the range changed. Changelog passes are the exception: they write from commits.
+- `gravity run` reads committed history only, never the working tree, and a real run refuses a dirty tree.
+  If the user's change is not committed, the AI cannot see it.
+
+Full detail: [references/passes.md](references/passes.md#what-the-ai-reads).
 
 ## Languages (explain when languages come up)
 
