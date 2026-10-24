@@ -18,9 +18,11 @@ code:
   entrypoints: [src/routes]      # where user-visible surface starts
   include: [src/**]              # default scope for passes without scope.paths
   exclude: ["**/*.test.ts"]
-  units: { kind: auto, role: implements }   # role: implements | declares | documents (or a list)
+  units: { kind: auto, role: implements }   # kind: auto | feature | service | system | api | capability
+                                            # role: implements | declares | documents (or a list)
 docs:
   include: [docs/**]             # human docs passes may READ as context (reading is not importing)
+  exclude: []
 structure: { ... }               # declared docs structure, see structure.md
 passes: [ ... ]                  # passes-as-code, max 32, unique names
 ```
@@ -33,7 +35,9 @@ Globs are repository-relative doublestar patterns; absolute paths and `..` are r
 - name: admin-docs               # slug, unique
   kind: verbatim                 # guides | reference | verbatim | changelog | nucleus | check | capture
   title: Admin docs              # optional display name
-  template: verbatim-docs        # optional app template; kind must match it
+  template: verbatim-docs        # optional app template; kind must match it (api-reference, developer-guide,
+                                 # user-guide, customer-changelog, internal-changelog, runbook,
+                                 # nucleus-facts, verbatim-docs)
   target: polaris/developers/admin   # <site>/<space>[/<collection>...]; required for guides, reference,
                                      # verbatim, changelog, capture; check/nucleus accept a bare <site>
   triggers: [push]               # pr | push | release | schedule | manual
@@ -66,7 +70,8 @@ Globs are repository-relative doublestar patterns; absolute paths and `..` are r
     languages: [fr, es]          # translation languages requested for imported pages
   ```
   Folder structure below the include root nests collections (max depth 5). Front matter keys `title`,
-  `slug`, `description`, `position`, `hidden`, `lang`, `audiences` are honoured. A leading H1 equal to the
+  `slug`, `description`, `order` (also `sidebar_position`, `weight`), `hidden` (also `draft`), `lang`
+  (also `language`) and `audiences` are honoured. A leading H1 equal to the
   page title is dropped (no duplicate title). Package-name titles (`@scope/polaris-admin`) become
   `Polaris Admin`; slugs never come from package names.
 - **reference**: `sources: [{path, page, title, collection}]`, `pageStrategy: single | per-tag |

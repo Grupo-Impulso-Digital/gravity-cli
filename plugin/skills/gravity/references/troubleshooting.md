@@ -31,8 +31,10 @@ local rules ran. Say so to the user.
 - `branch_behind`: run the printed `git pull --ff-only` (with the user's consent), then retry.
 - `branch_diverged`: local and upstream both have commits; the user decides (rebase or merge). Never
   force-push on their behalf.
-- `worktree_dirty`: commit or stash tracked changes. A real run reads committed history only.
-  `--allow-dirty` is accepted only with `--dry-run`.
+- `worktree_dirty`: commit or stash tracked changes (untracked files are ignored). A run reads committed
+  history only. `--allow-dirty` is accepted only with `--dry-run`, and the dirty files are then left out.
+- `pass_unknown` / `pass_not_applicable` (exit `2`): `--pass` names no pass, or a pass the plan skips
+  (`disabled`, `trigger_mismatch` or `branch_mismatch`); the message says what to change.
 - `send_mismatch`: HEAD or `.gravity.yaml` changed since the dry run; dry-run again.
 
 ## Models and instructions
@@ -62,7 +64,9 @@ Error `lease_held` after the timeout means nothing ran.
 - `gravity runs show <id> --json`: `.data.run.status`, per-pass `.data.passes[].status`, `progress`, `skipReason`, bundle
   link. This is the only source of truth for completion.
 - `running` with progress moving: wait. No progress and the holder machine is gone: the lease expires
-  (status `abandoned`); cancelling releases it at once.
+  (`.data.run.lease.expiresAt`); cancelling releases it at once. A run is finished only when its status is
+  `succeeded`, `partial`, `failed` or `cancelled`; `abandoned` appears as a failure in `gravity runs`, so
+  treat it as not finished.
 - `skipped` with `first_run_manual`: CI skipped the first run of an AI pass; run it locally.
 - `skipped` with `target_unapproved`: `gravity approve` lists the space and the reason; `gravity approve <site/space>`.
 - `partial`: some passes failed; read each pass's `error`.
@@ -82,10 +86,12 @@ Error `lease_held` after the timeout means nothing ran.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.sh | sh   # macOS / Linux
 irm https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.ps1 | iex        # Windows
-brew install Grupo-Impulso-Digital/tap/gravity
+brew install Grupo-Impulso-Digital/tap/gravity                                                          # macOS (a cask)
 scoop bucket add impulso https://github.com/Grupo-Impulso-Digital/scoop-bucket; scoop install gravity
 gravity version
 ```
 
-The installer picks the newest release of the major that has an archive for the platform. Agent skill:
+The installer picks the newest release of the major that has an archive for the platform, verifies it
+against the release's `checksums.txt` (only a warning when that file or a sha256 tool is missing) and
+installs to `/usr/local/bin` when writable, else `~/.local/bin` (`GRAVITY_INSTALL_DIR` overrides). Agent skill:
 `gravity agent install [--tool claude|cursor|codex|agents-md] [--global]`.
