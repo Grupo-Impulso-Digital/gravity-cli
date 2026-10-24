@@ -104,13 +104,16 @@ func TestRunHalts(t *testing.T) {
 		code     string
 		details  map[string]any
 		summary  string
+		typed    func(error) bool
 		status   int
 		passes   int
 		ingested bool
 	}{
 		{name: "unusable model at bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeModelUnavailable, status: http.StatusConflict},
-		{name: "budget exceeded mid pass", route: "POST /api/llm/v1/messages", code: api.CodeBudgetExceeded, details: map[string]any{"scope": "run", "limitUsd": 5, "spentUsd": 5.2}, summary: "This run's AI budget is used up: $5.20 spent of a $5.00 limit.", status: http.StatusPaymentRequired, passes: 2, ingested: true},
-		{name: "budget exceeded at the bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeBudgetExceeded, details: map[string]any{"scope": "month", "resetsAt": "2026-11-01"}, summary: "The monthly AI budget is used up; it resets on 2026-11-01.", status: http.StatusPaymentRequired},
+		{name: "budget exceeded mid pass", route: "POST /api/llm/v1/messages", code: api.CodeBudgetExceeded, details: map[string]any{"scope": "run", "limitUsd": 5, "spentUsd": 5.2}, summary: "This run's AI budget is used up: $5.20 spent of a $5.00 limit.", typed: api.IsBudgetError, status: http.StatusPaymentRequired, passes: 2, ingested: true},
+		{name: "budget exceeded at the bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeBudgetExceeded, details: map[string]any{"scope": "month", "resetsAt": "2026-11-01"}, summary: "The monthly AI budget is used up; it resets on 2026-11-01.", typed: api.IsBudgetError, status: http.StatusPaymentRequired},
+		{name: "ai disabled mid pass", route: "POST /api/llm/v1/messages", code: api.CodeAIDisabled, details: map[string]any{}, summary: "AI is turned off for this organization.", typed: api.IsLicenseError, status: http.StatusForbidden, passes: 2, ingested: true},
+		{name: "ai disabled at the bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeAIDisabled, details: map[string]any{}, summary: "AI is turned off for this organization.", typed: api.IsLicenseError, status: http.StatusForbidden},
 		{name: "no provider key mid pass", route: "POST /api/llm/v1/messages", code: api.CodeNoProviderKey, status: http.StatusPaymentRequired, passes: 2, ingested: true},
 	}
 	for _, tc := range cases {
@@ -130,8 +133,8 @@ func TestRunHalts(t *testing.T) {
 			if !errors.Is(err, run.ErrHalted) || !api.HasCode(err, tc.code) {
 				t.Fatalf("err = %v", err)
 			}
-			if tc.code == api.CodeBudgetExceeded && (!api.IsBudgetError(err) || !strings.Contains(err.Error(), tc.summary)) {
-				t.Fatalf("a budget halt carries the typed error: %T %v", err, err)
+			if tc.typed != nil && (!tc.typed(err) || !strings.Contains(err.Error(), tc.summary)) {
+				t.Fatalf("the halt carries the typed error: %T %v", err, err)
 			}
 			wantSummary := tc.summary
 			if wantSummary == "" {

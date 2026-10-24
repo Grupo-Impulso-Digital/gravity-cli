@@ -49,8 +49,10 @@ command is cobra's usage error.
   `ErrLeaseHeld`, `ErrPlanStale`, `ErrNotConnected` (by envelope code) and
   `ErrUnauthorized` (any `401`).
 - **Licence refusals.** A `403` with `module_disabled` (and `module`) or
-  `seat_limit` becomes `*api.ModuleDisabledError` / `*api.SeatLimitError`; they
-  are not auth errors, and the command exits `3`.
+  `seat_limit` becomes `*api.ModuleDisabledError` / `*api.SeatLimitError`; a
+  `403` with `ai_disabled` (AI turned off for the organization, no details)
+  becomes `*api.AIDisabledError` and also halts the run. They are not auth
+  errors, and the command exits `3`.
 - **404 means "not on this server" only for the 1.1 endpoints.** A `404` whose
   envelope code is empty or `not_found` (or a `405`) on `repos/self/validate`,
   `repos/self/approvals`, `repos/self/runs`, `runs/{id}/cancel`, `structure` or
@@ -65,7 +67,7 @@ command is cobra's usage error.
 | `0` | Success, or nothing to do; a fork or Dependabot pull request without a token. |
 | `1` | Findings: `validate` errors (also before a local real run and after a local dry run), `check` findings in `failOn`, structure conflicts, refused approvals, `ci check`, `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, a stale or dirty branch, a recording that no longer matches. |
-| `3` | Licence refusal (`module_disabled`, `seat_limit`). |
+| `3` | Licence or organization-policy refusal (`module_disabled`, `seat_limit`, `ai_disabled`). |
 | `4` | No usable credentials: no token (`token_missing`), only unexpanded CI variables such as a literal `$(GRAVITY_REPO_TOKEN)` in CI, or locally with no profile token (`token_unresolved`), or any `401` (`unauthorized`), which also stops a run without its finish call. |
 | `5` | An AI spend cap is used up (`budget_exceeded`, a 402 decoded to `*api.BudgetExceededError`): the run halts and is finished as failed. |
 | `130` | Interrupted: the run was finished with `status: cancelled` (or cancelled through `POST /runs/{id}/cancel`). |
@@ -395,14 +397,17 @@ source?>`), `<existing_units>`, `<entrypoint_files>`, `<units>` and
   other pages go on and the pass fails with the per-page list. Reference
   prose failures fail the pass the same way, after its `api` blocks are
   written.
-- `budget_exceeded` and `no_provider_key` halt the run: the pass in flight
+- `budget_exceeded`, `no_provider_key` and `ai_disabled` halt the run: the pass in flight
   ends, no other pass starts, in-flight passes are canceled, pages already
   sent stay, and the run is finished as failed with the reason
   (`run.ErrHalted`). `budget_exceeded` then exits `5`; its `details` are read
   from the list shape (`[{path: "budget.maxCostUsdPerRun" | "…PerMonth",
   message: "<limit>"}]`) or from an object (`scope` `run` | `month` |
   `feature`, `feature`, `limitUsd`, `spentUsd`, `resetsAt`), every field
-  optional.
+  optional; CLI 1.2+ callers (those sending `context.instructionsVersion`) get
+  the object, older ones the list. `ai_disabled` exits `3`. A `429`
+  `concurrency_limited` (body `retryAfter`, header `Retry-After`) is retried
+  by the gateway client after that wait.
 
 ## LLM gateway
 

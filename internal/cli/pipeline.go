@@ -280,6 +280,7 @@ func validAnnotate(v string) error {
 func runError(err error) error {
 	var se *engine.SelectionError
 	var mu *engine.ModelUnavailableError
+	var ad *api.AIDisabledError
 	var be *api.BudgetExceededError
 	switch {
 	case errors.As(err, &mu):
@@ -298,6 +299,8 @@ func runError(err error) error {
 		return &ExitError{Code: CodeError, ErrCode: "pass_not_applicable", Err: err}
 	case errors.Is(err, api.ErrUnauthorized):
 		return &ExitError{Code: CodeCredentials, ErrCode: api.CodeUnauthorized, Err: err}
+	case errors.As(err, &ad):
+		return &ExitError{Code: CodeLicense, ErrCode: api.CodeAIDisabled, Err: ad}
 	case errors.As(err, &be):
 		return &ExitError{Code: CodeBudget, ErrCode: api.CodeBudgetExceeded, Err: be}
 	case errors.Is(err, engine.ErrLeaseTimeout):

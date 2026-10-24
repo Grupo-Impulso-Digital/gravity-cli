@@ -18,6 +18,8 @@ const (
 	CodeTokenExpired         = "token_expired"
 	CodeNoProviderKey        = "no_provider_key"
 	CodeBudgetExceeded       = "budget_exceeded"
+	CodeAIDisabled           = "ai_disabled"
+	CodeConcurrencyLimited   = "concurrency_limited"
 	CodeForbidden            = "forbidden"
 	CodeScopeMissing         = "scope_missing"
 	CodeOutsideReach         = "outside_reach"
@@ -226,7 +228,7 @@ func (e *APIError) Is(target error) bool {
 
 // IsAuth reports an authentication or authorization refusal that is not a license refusal.
 func (e *APIError) IsAuth() bool {
-	if e.Code == CodeModuleDisabled || e.Code == CodeSeatLimit {
+	if e.Code == CodeModuleDisabled || e.Code == CodeSeatLimit || e.Code == CodeAIDisabled {
 		return false
 	}
 	return e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden
@@ -240,7 +242,7 @@ func HasCode(err error, code string) bool {
 
 // HaltsRun reports whether err must halt the whole run: no new task or pass starts, in-flight work is canceled, and the run is finished as failed.
 func HaltsRun(err error) bool {
-	return HasCode(err, CodeBudgetExceeded) || HasCode(err, CodeNoProviderKey)
+	return HasCode(err, CodeBudgetExceeded) || HasCode(err, CodeNoProviderKey) || HasCode(err, CodeAIDisabled)
 }
 
 // StopsRun reports whether err means the run must stop immediately without calling finish: a lost lease, an ended run or a rejected token.

@@ -64,3 +64,33 @@ func TestRunHaltedByASpendCapWithoutDetails(t *testing.T) {
 		t.Fatalf("an empty details object is still carried: %v", e)
 	}
 }
+
+func TestRunHaltedByAIDisabledExitsThree(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	h.commitSpec(t)
+	pp := referencePlanPass("reference")
+	pp["options"] = map[string]any{"prose": true, "claims": false}
+	h.pipelineRoutes(t, pipelinePlan(t, pp))
+	h.platform.json("GET /api/llm/v1/instructions", 403, `{"error":{"code":"ai_disabled","message":"AI is disabled for this organization."}}`)
+
+	expectCode(t, h, h.run("run", "--dry-run", "--json"), CodeLicense)
+	e := h.envelope()["error"].(map[string]any)
+	want := "AI is turned off for this organization. An organization admin can turn it on in Gravity › AI usage."
+	if e["code"] != api.CodeAIDisabled || e["exitCode"] != float64(CodeLicense) || e["message"] != want || e["details"] != nil {
+		t.Fatalf("error = %v", e)
+	}
+	finish := h.platform.find("POST", "/api/v1/runs/prun_1/finish")
+	if len(finish) != 1 || finish[0].Body["status"] != api.StatusFailed {
+		t.Fatalf("the halted run is finished as failed: %+v", finish)
+	}
+	if len(h.platform.find("POST", "/api/llm/v1/messages")) != 0 {
+		t.Fatal("no model call while AI is off")
+	}
+
+	expectCode(t, h, h.run("run", "--dry-run"), CodeLicense)
+	if plain := "gravity: AI is turned off for this organization. An organization admin can turn it on in Gravity > AI usage."; !strings.Contains(h.stderr.String(), plain) || strings.Contains(h.stderr.String(), "run halted") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+}

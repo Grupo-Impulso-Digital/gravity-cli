@@ -179,7 +179,8 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   strings are lowercase and unpunctuated. No `panic` in non-test code.
 - **Exit-code contract** (`internal/cli/exit.go`): `0` success/no findings,
   `1` findings produced, `2` operational error (network/bad input),
-  `3` license refusal, `4` no usable credentials (`token_missing`,
+  `3` license or organization-policy refusal (`module_disabled`, `seat_limit`,
+  `ai_disabled`), `4` no usable credentials (`token_missing`,
   `token_unresolved`, any `401`, which `api.StopsRun` also treats as
   run-stopping), `5` an AI spend cap reached (`budget_exceeded`); precedence
   3 > 2 > 1 > 0 for pass outcomes. In an error chain `CodeFor` ranks 3 > 4 > 5 >
@@ -207,10 +208,18 @@ patch the newest released line. `main` is frozen: nothing merges into it.
 - **License refusals** (`internal/api/license.go`): a 403 whose envelope code is
   `module_disabled` (with `module`) or `seat_limit` decodes to
   `*api.ModuleDisabledError` / `*api.SeatLimitError`, whose message tells the
-  user to ask an administrator. They are *not* `IsAuth()` (the token is fine) and
-  `CodeFor` maps them to `3` from anywhere in the chain — so wrap with `%w`, never
-  flatten one into a `Failf` string. The CLI never calls `/api/mcp`, so the
-  JSON-RPC `MODULE_DISABLED` shape needs no handling here.
+  user to ask an administrator. A 403 `ai_disabled` (AI turned off by an
+  organization admin, no details) decodes the same way to `*api.AIDisabledError`
+  (`AI is turned off for this organization. An organization admin can turn it on
+  in Gravity › AI usage.`); it also halts the run (`api.HaltsRun`: no new pass
+  starts, the run is finished as failed) and `runError` keeps it as the whole
+  message. All three satisfy `api.IsLicenseError`, are *not* `IsAuth()` (the token
+  is fine) and `CodeFor` maps them to `3` from anywhere in the chain — so wrap
+  with `%w`, never flatten one into a `Failf` string. The `--json` envelope
+  carries the envelope code (`module_disabled`, `seat_limit`, `ai_disabled`). The
+  CLI never calls `/api/mcp`, so the JSON-RPC `MODULE_DISABLED` shape needs no
+  handling here. A 429 `concurrency_limited` is an ordinary rate limit: the
+  retry policy below waits its `Retry-After` (or `retryAfter`) and tries again.
 - **Token-security boundary** (`internal/auth`): a token comes only from
   `--token`, `GRAVITY_REPO_TOKEN`, `GRAVITY_TOKEN` or a profile in `~/.config/gravity/profiles.yaml`
   (mode `0600`). A `token:` anywhere in `.gravity.yaml` is a manifest error.
@@ -277,9 +286,9 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   calls get 15 min per attempt and retry `429`, `5xx` and network errors until
   30 min in total (`LLMTimeout`, `LLMRetryCap`). `lease_lost` and
   `run_not_running` stop a run without a finish call (`api.StopsRun`);
-  `budget_exceeded` and `no_provider_key` halt it, then finish it as failed
-  (`api.HaltsRun`; `budget_exceeded` ends with exit `5`, `no_provider_key`
-  with `2`).
+  `budget_exceeded`, `no_provider_key` and `ai_disabled` halt it, then finish it
+  as failed (`api.HaltsRun`; `budget_exceeded` ends with exit `5`, `ai_disabled`
+  with `3`, `no_provider_key` with `2`).
 - **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
   all human output on stderr. With `CI=true` or without a terminal, output is
   plain ASCII and nothing prompts. There is no global `--ci` flag in 1.x

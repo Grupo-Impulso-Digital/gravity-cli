@@ -9,7 +9,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 )
 
-// Exit codes: success, findings, operational error, license refusal, missing or rejected credentials, spend cap reached, interrupted.
+// Exit codes: success, findings, operational error, license or organization-policy refusal, missing or rejected credentials, spend cap reached, interrupted.
 const (
 	CodeOK          = 0
 	CodeFindings    = 1
@@ -46,7 +46,7 @@ func Failf(code int, format string, args ...any) *ExitError {
 	return &ExitError{Code: code, Err: fmt.Errorf(format, args...)}
 }
 
-// CodeFor extracts the exit code from an error chain: a license refusal anywhere wins, then a rejected token, then a spend cap refusal, then the command's own code.
+// CodeFor extracts the exit code from an error chain: a license or organization-policy refusal (module_disabled, seat_limit, ai_disabled) anywhere wins, then a rejected token, then a spend cap refusal, then the command's own code.
 func CodeFor(err error) int {
 	if err == nil {
 		return CodeOK

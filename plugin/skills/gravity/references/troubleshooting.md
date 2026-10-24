@@ -83,6 +83,8 @@ Error `lease_held` after the timeout means nothing ran.
   that host explicitly if trusted.
 - Several organizations: `gravity org list`, `gravity org use <slug>`.
 - Exit `3` (`module_disabled`, `seat_limit`): license; ask an admin.
+- Exit `3` with `ai_disabled`: AI is turned off for the organization; the run halts and is finished as
+  failed. An organization admin turns it on in Gravity › AI usage.
 
 ## Install
 

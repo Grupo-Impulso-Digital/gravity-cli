@@ -222,8 +222,8 @@ progress; Ctrl-C on a local run finishes it as cancelled and releases the lease.
 
 ## Exit codes
 
-`0` ok, `1` findings or validation errors, `2` operational error, `3` license refusal (ask an
-admin), `4` missing or rejected credentials (`gravity login`), `5` AI spend cap used up
+`0` ok, `1` findings or validation errors, `2` operational error, `3` license or org-policy refusal (`module_disabled`,
+`seat_limit`, `ai_disabled`; ask an admin), `4` missing or rejected credentials (`gravity login`), `5` AI spend cap used up
 (`budget_exceeded`; ask an org admin to raise it in Gravity › AI usage), `130` interrupted.
 
 ## References

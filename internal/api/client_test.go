@@ -96,6 +96,58 @@ func TestRetryHonoursRetryAfterAndGivesUp(t *testing.T) {
 	}
 }
 
+func TestConcurrencyLimitedIsRetriedAfterTheServerSaysSo(t *testing.T) {
+	const body = `{"error":{"code":"concurrency_limited","message":"Too many AI calls are running for this organization.","retryAfter":5}}`
+	cases := []struct {
+		name   string
+		header string
+	}{
+		{"header and body", "5"},
+		{"body only", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if calls.Add(1) <= 2 {
+					if tc.header != "" {
+						w.Header().Set("Retry-After", tc.header)
+					}
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = io.WriteString(w, body)
+					return
+				}
+				_, _ = io.WriteString(w, `{"organizationId":"org_1"}`)
+			}))
+			defer srv.Close()
+			c, rec := newTestClient(srv.URL)
+			who, err := c.WhoAmI(context.Background())
+			if err != nil || who.OrganizationID != "org_1" {
+				t.Fatalf("WhoAmI = %+v, %v", who, err)
+			}
+			if calls.Load() != 3 || len(rec.d) != 2 || rec.d[0] != 5*time.Second || rec.d[1] != 5*time.Second {
+				t.Fatalf("calls=%d sleeps=%v", calls.Load(), rec.d)
+			}
+		})
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	c, rec := newTestClient(srv.URL)
+	err := c.Post(context.Background(), "/api/v1/runs/r/heartbeat", map[string]any{}, nil)
+	var ae *api.APIError
+	if !errors.As(err, &ae) || ae.Code != api.CodeConcurrencyLimited || ae.RetryAfter != 5 || api.HaltsRun(err) || api.IsLicenseError(err) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(rec.d) != 2 {
+		t.Fatalf("sleeps = %v", rec.d)
+	}
+}
+
 func TestClientErrorsAreNotRetried(t *testing.T) {
 	for _, status := range []int{400, 401, 403, 404, 409, 413} {
 		var calls atomic.Int32

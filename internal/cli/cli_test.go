@@ -413,6 +413,7 @@ func TestExitCodeTable(t *testing.T) {
 	license := &api.ModuleDisabledError{Module: "cli", APIError: &api.APIError{StatusCode: 403, Code: api.CodeModuleDisabled}}
 	budget := &api.BudgetExceededError{BudgetDetails: api.BudgetDetails{Scope: api.BudgetScopeMonth}, APIError: &api.APIError{StatusCode: 402, Code: api.CodeBudgetExceeded}}
 	unauthorized := &api.APIError{StatusCode: 401, Code: api.CodeUnauthorized}
+	aiOff := &api.AIDisabledError{APIError: &api.APIError{StatusCode: 403, Code: api.CodeAIDisabled}}
 	cases := []struct {
 		err  error
 		code int
@@ -436,6 +437,12 @@ func TestExitCodeTable(t *testing.T) {
 		{errors.Join(budget, license), CodeLicense},
 		{errors.Join(budget, unauthorized), CodeCredentials},
 		{errors.Join(budget, errors.New("also failed")), CodeBudget},
+		{aiOff, CodeLicense},
+		{Fail(CodeError, fmt.Errorf("run halted: %w", fmt.Errorf("guides: %w", aiOff))), CodeLicense},
+		{errors.Join(budget, aiOff), CodeLicense},
+		{errors.Join(aiOff, unauthorized), CodeLicense},
+		{&api.APIError{StatusCode: 403, Code: api.CodeAIDisabled}, CodeError},
+		{&api.APIError{StatusCode: 429, Code: api.CodeConcurrencyLimited}, CodeError},
 	}
 	for i, tc := range cases {
 		if got := CodeFor(tc.err); got != tc.code {
@@ -447,6 +454,9 @@ func TestExitCodeTable(t *testing.T) {
 	}
 	if errorCode(budget) != api.CodeBudgetExceeded || errorCode(&ExitError{Code: CodeBudget}) != api.CodeBudgetExceeded || errorCode(fmt.Errorf("x: %w", budget)) != api.CodeBudgetExceeded {
 		t.Fatal("errorCode of a budget refusal")
+	}
+	if errorCode(aiOff) != api.CodeAIDisabled || errorCode(Fail(CodeError, fmt.Errorf("x: %w", aiOff))) != api.CodeAIDisabled {
+		t.Fatal("errorCode of an AI refusal")
 	}
 	if d, ok := errorDetails(fmt.Errorf("x: %w", budget)).(api.BudgetDetails); !ok || d.Scope != api.BudgetScopeMonth || errorDetails(license) != nil || errorDetails(nil) != nil {
 		t.Fatal("errorDetails")
