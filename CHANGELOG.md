@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.2.0 — Unreleased
+## v1.2.0 — 2026-10-24
 
 ### Added
 
@@ -147,11 +147,6 @@
   pass keeps the live slug of the pages it manages and an existing
   collection's old slug. Block keys keep the old form, so no existing block
   changes identity. Product slugs are unchanged.
-
-## v1.1.1 — Unreleased
-
-### Fixed
-
 - A dropped connection during a model call (`connection reset by peer`) is
   retried instead of failing the page.
 
