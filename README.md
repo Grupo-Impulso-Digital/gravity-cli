@@ -23,7 +23,7 @@ Two kinds of run, nothing in between:
 `gravity` is a single static binary.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/v1/install.sh | sh
 ```
 
 The script installs the newest 1.x release for your OS and architecture that
@@ -32,12 +32,15 @@ has an archive for it, verifies its checksum against the release's
 mismatch stops the install), and puts it in `/usr/local/bin` when writable,
 else `~/.local/bin`. `GRAVITY_VERSION` takes a major (`1`, the default), a
 release (`v1.2.3`) or `latest`; `GRAVITY_INSTALL_DIR` picks the directory.
+Release candidates (`v1.2.0-rc.1`) are GitHub pre-releases: a major,
+`latest`, Homebrew and Scoop never install one, only its exact version does
+(`GRAVITY_VERSION=v1.2.0-rc.1`).
 
 ```bash
 brew install Grupo-Impulso-Digital/tap/gravity                     # macOS (a Homebrew cask)
 scoop bucket add impulso https://github.com/Grupo-Impulso-Digital/scoop-bucket
 scoop install gravity                                               # Windows
-irm https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/v1/install.ps1 | iex
 go install github.com/Grupo-Impulso-Digital/gravity-cli/cmd/gravity@latest
 ```
 
@@ -652,5 +655,11 @@ make eval MODEL=<id> [MAX_OUTPUT=<n>]   # score a model on the eval fixture
 
 `make eval` needs a Gravity server seeded by `testdata/eval/setup.sh`; see
 [docs/model-eval.md](docs/model-eval.md).
+
+Pull requests target `develop`, the default branch; `ci-ok` must pass.
+Merging never releases: an approver runs `gh workflow run release.yml -f
+bump=patch|minor|major` (add `-f prerelease=true` for a release candidate),
+which tags and publishes a commit CI already passed
+([docs/adr/0001-trunk-delivery.md](docs/adr/0001-trunk-delivery.md)).
 
 Contributor standards and the architecture live in [AGENTS.md](AGENTS.md).

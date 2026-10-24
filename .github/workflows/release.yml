@@ -1,54 +1,189 @@
 name: release
 
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_call:
+  workflow_dispatch:
     inputs:
-      tag:
-        required: true
+      bump:
+        description: Part of the newest vX.Y.Z to bump.
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      prerelease:
+        description: Cut the next release candidate vX.Y.Z-rc.N instead of vX.Y.Z.
+        type: boolean
+        default: false
+      commit:
+        description: Commit to release (default the newest commit of the branch whose ci-ok passed).
         type: string
+        default: ''
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  gate:
+  prepare:
+    name: Tag the next version
     runs-on: ubuntu-latest
-    steps:
-      - name: Require the major-pinned 0.x release before 1.x
-        if: startsWith(inputs.tag || github.ref_name, 'v1.')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == false) | .tag_name | select(test("^v0\\.[0-9]+\\.[0-9]+$"))] | first // empty')"
-          if [ -z "$tag" ]; then
-            echo "::error::no v0.x release exists; ship the major-pinned v0.3.x release (milestone C0.1) before any v1 tag"
-            exit 1
-          fi
-          action="$(gh api "repos/$GITHUB_REPOSITORY/contents/ci/github/action.yml?ref=$tag" --jq .content | base64 -d)"
-          installer="$(gh api "repos/$GITHUB_REPOSITORY/contents/install.sh?ref=$tag" --jq .content | base64 -d)"
-          if ! printf '%s\n' "$action" | grep -Eq "default: ['\"]?0['\"]?$"; then
-            echo "::error::$tag's ci/github action still defaults to latest; v0.x pipelines would install 1.0"
-            exit 1
-          fi
-          if ! printf '%s\n' "$installer" | grep -Eq 'GRAVITY_VERSION:?[=-]"?0"?[^0-9.]'; then
-            echo "::error::$tag's install.sh does not default to major 0"
-            exit 1
-          fi
-          echo "$tag pins v0 pipelines to major 0"
-
-  goreleaser:
-    needs: gate
-    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      checks: read
+    outputs:
+      commit: ${{ steps.commit.outputs.commit }}
+      tag: ${{ steps.version.outputs.tag }}
+      previous: ${{ steps.version.outputs.previous }}
     env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - name: From develop or a hotfix branch, by an approver
+        env:
+          APPROVERS: ${{ vars.PRODUCTION_APPROVERS }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/develop|refs/heads/hotfix/v*) ;;
+            *) echo "::error::release runs on develop or hotfix/vX.Y, not ${GITHUB_REF}"; exit 1 ;;
+          esac
+          approvers=",${APPROVERS// /},"
+          for who in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            if [[ "${approvers,,}" != *",${who,,},"* ]]; then
+              echo "::error::${who} is not in PRODUCTION_APPROVERS; releases need an approver"
+              exit 1
+            fi
+          done
+
       - uses: actions/checkout@v7
         with:
-          ref: refs/tags/${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Commit to release
+        id: commit
+        env:
+          REQUESTED: ${{ inputs.commit }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          green() {
+            passed="$(gh api "repos/${GITHUB_REPOSITORY}/commits/$1/check-runs?check_name=ci-ok&filter=latest" \
+              --jq '[.check_runs[] | select(.app.slug == "github-actions" and .conclusion == "success")] | length')"
+            [ "$passed" -gt 0 ]
+          }
+          commit=""
+          if [ -n "$REQUESTED" ]; then
+            commit="$(git rev-parse --verify "${REQUESTED}^{commit}")"
+            if ! green "$commit"; then
+              echo "::error::ci-ok has not passed on ${commit}"
+              exit 1
+            fi
+          else
+            for sha in $(git rev-list --first-parent -n 50 "origin/${BRANCH}"); do
+              if green "$sha"; then commit="$sha"; break; fi
+            done
+            if [ -z "$commit" ]; then
+              echo "::error::ci-ok has not passed on any of the last 50 commits of ${BRANCH}"
+              exit 1
+            fi
+          fi
+          if ! git merge-base --is-ancestor "$commit" "origin/${BRANCH}"; then
+            echo "::error::${commit} is not on ${BRANCH}"
+            exit 1
+          fi
+          released="$(git tag --points-at "$commit" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
+          if [ -n "$released" ]; then
+            echo "::error::${commit} is already released as ${released}"
+            exit 1
+          fi
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+
+      - name: Next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          COMMIT: ${{ steps.commit.outputs.commit }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          out="$(git tag --list 'v*' | go run ./internal/release/cmd/next-version -bump "$BUMP" -rc="$PRERELEASE")"
+          latest="$(printf '%s\n' "$out" | sed -n 's/^latest=//p')"
+          tag="$(printf '%s\n' "$out" | sed -n 's/^version=//p')"
+          if [ -n "$latest" ] && git merge-base --is-ancestor "$COMMIT" "${latest}^{commit}"; then
+            echo "::error::${COMMIT} is not newer than ${latest}"
+            exit 1
+          fi
+          case "$BRANCH" in
+            hotfix/*)
+              line="${BRANCH#hotfix/}"
+              if [ "$BUMP" != patch ] || [ "${latest%.*}" != "$line" ]; then
+                echo "::error::${BRANCH} patches ${line}, so it needs bump=patch and ${line} must be the newest line (the newest release is ${latest:-none})"
+                exit 1
+              fi
+              ;;
+          esac
+          version="${tag#v}"
+          if [ "$PRERELEASE" != true ] && ! git show "${COMMIT}:CHANGELOG.md" | grep -Eq "^##[[:space:]]+\[?v?${version//./\\.}([][:space:]]|$)"; then
+            echo "::error::CHANGELOG.md at ${COMMIT} has no section for ${tag}; add a '## ${tag}' section before releasing"
+            exit 1
+          fi
+          if [ "$PRERELEASE" = true ] && [ -n "$(git tag --points-at "$COMMIT" --list "${tag%-rc.*}-rc.*")" ]; then
+            echo "::error::${COMMIT} is already a release candidate of ${tag%-rc.*}"
+            exit 1
+          fi
+          {
+            echo "tag=${tag}"
+            echo "previous=${latest}"
+          } >> "$GITHUB_OUTPUT"
+          echo "${tag} -> ${COMMIT} (previous release: ${latest:-none})" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tag
+        env:
+          COMMIT: ${{ steps.commit.outputs.commit }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" "$COMMIT" -m "$TAG"
+          git push origin "refs/tags/${TAG}"
+
+  publish:
+    name: Publish
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+    steps:
+      - name: By an approver
+        env:
+          APPROVERS: ${{ vars.PRODUCTION_APPROVERS }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          approvers=",${APPROVERS// /},"
+          if [[ "${approvers,,}" != *",${TRIGGERING_ACTOR,,},"* ]]; then
+            echo "::error::${TRIGGERING_ACTOR} is not in PRODUCTION_APPROVERS; releases need an approver"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+
+      - name: The tag is the verified commit
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$COMMIT" ]; then
+            echo "::error::${TAG} resolves to $(git rev-parse HEAD), not ${COMMIT}"
+            exit 1
+          fi
 
       - uses: actions/setup-go@v7
         with:
@@ -65,7 +200,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_TOKEN: ${{ secrets.GORELEASER_TOKEN }}
-          GORELEASER_CURRENT_TAG: ${{ inputs.tag || github.ref_name }}
+          GORELEASER_CURRENT_TAG: ${{ needs.prepare.outputs.tag }}
+          GORELEASER_PREVIOUS_TAG: ${{ needs.prepare.outputs.previous }}
 
       - name: Verify the GitHub release
         env:
@@ -82,9 +218,21 @@ jobs:
           fi
 
       - name: Move the major tag of the GitHub action
-        if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
+        if: ${{ !contains(needs.prepare.outputs.tag, '-') }}
         run: |
-          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
           major="${TAG%%.*}"
-          git tag -f "$major" "$sha"
+          git tag -f "$major" "$COMMIT"
           git push -f origin "refs/tags/$major"
+
+  docs:
+    name: Docs on the release tag
+    needs: [prepare, publish]
+    if: ${{ !inputs.prerelease }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh workflow run docs.yml -R "$GITHUB_REPOSITORY" --ref "$TAG"

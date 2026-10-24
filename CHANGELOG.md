@@ -93,6 +93,12 @@
 
 ### Changed
 
+- Releases come from a workflow run on a commit CI already passed, never from
+  a merge. Release candidates (`vX.Y.Z-rc.N`) are GitHub pre-releases:
+  `GRAVITY_VERSION=1`, `latest`, `ci/github@v1`, Homebrew and Scoop never
+  install one; `GRAVITY_VERSION=v1.2.0-rc.1` (or the action's `version`) does.
+- Release builds are reproducible: `gravity version` reports the commit date
+  as the build date.
 - The doc tools `recall_nucleus` and `product_inventory` are now `recall` and
   `inventory` (`gravity.tools/1`).
 - The writer kickoff carries data only and no longer inlines the current page.
