@@ -1,6 +1,8 @@
 package docs_test
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -93,9 +95,52 @@ func TestAPIContentMatchesThePlatformBlockSchema(t *testing.T) {
 }
 
 func TestSlug(t *testing.T) {
-	for in, want := range map[string]string{"On-call Rotation!": "on-call-rotation", "  Ünïcode  ": "n-code", "v1.4.0": "v1-4-0"} {
-		if got := docs.Slug(in); got != want {
-			t.Errorf("Slug(%q) = %q, want %q", in, got, want)
+	cases := []struct{ in, want, legacy string }{
+		{"On-call Rotation!", "on-call-rotation", "on-call-rotation"},
+		{"  Ünïcode  ", "unicode", "n-code"},
+		{"v1.4.0", "v1-4-0", "v1-4-0"},
+		{"État des actifs", "etat-des-actifs", "tat-des-actifs"},
+		{"Registre des états des actifs", "registre-des-etats-des-actifs", "registre-des-tats-des-actifs"},
+		{"Activité utilisateur", "activite-utilisateur", "activit-utilisateur"}, //nolint:misspell // French test vector
+		{"Café", "cafe", "caf"},
+		{"Straße", "strasse", "stra-e"},
+		{"STRASSE ẞ", "strasse-ss", "strasse"},
+		{"Guía rápida de instalación", "guia-rapida-de-instalacion", "gu-a-r-pida-de-instalaci-n"},
+		{"Año fiscal", "ano-fiscal", "a-o-fiscal"},
+		{"¿Cómo está el señor Núñez?", "como-esta-el-senor-nunez", "c-mo-est-el-se-or-n-ez"},
+		{"İstanbul ve Iğdır", "istanbul-ve-igdir", "istanbul-ve-i-d-r"},
+		{"ﬁchier ① ｆｕｌｌ", "fichier-1-full", "chier"},
+		{"㎒ Ⅻ", "z-xii", ""},
+		{"はじめに", "", ""},
+	}
+	for _, c := range cases {
+		if got := docs.Slug(c.in); got != c.want {
+			t.Errorf("Slug(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if got := docs.LegacySlug(c.in); got != c.legacy {
+			t.Errorf("LegacySlug(%q) = %q, want %q", c.in, got, c.legacy)
+		}
+	}
+}
+
+func TestSlugMatchesThePlatform(t *testing.T) {
+	data, err := os.ReadFile("testdata/slug.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		In  string `json:"in"`
+		Out string `json:"out"`
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("no fixtures")
+	}
+	for _, c := range cases {
+		if got := docs.Slug(c.In); got != c.Out {
+			t.Errorf("Slug(%q) = %q, want %q", c.In, got, c.Out)
 		}
 	}
 }

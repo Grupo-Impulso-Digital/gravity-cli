@@ -84,8 +84,8 @@ Error `lease_held` after the timeout means nothing ran.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.sh | sh   # macOS / Linux
-irm https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/main/install.ps1 | iex        # Windows
+curl -fsSL https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/v1/install.sh | sh   # macOS / Linux
+irm https://raw.githubusercontent.com/Grupo-Impulso-Digital/gravity-cli/v1/install.ps1 | iex        # Windows
 brew install Grupo-Impulso-Digital/tap/gravity                                                          # macOS (a cask)
 scoop bucket add impulso https://github.com/Grupo-Impulso-Digital/scoop-bucket; scoop install gravity
 gravity version

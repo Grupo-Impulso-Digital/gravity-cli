@@ -216,14 +216,15 @@ func tagTitle(sf SpecFile, tag string) string {
 
 type refPage struct {
 	slug       string
+	legacy     string
 	title      string
 	collection []string
 	ops        []checks.OperationDetail
 	spec       string
 }
 
-func pageFor(strategy string, sf SpecFile, op checks.OperationDetail) (slug, title string) {
-	docSlug := firstOf(sf.Page, docs.Slug(firstOf(sf.Title, strings.TrimSuffix(sf.File, ".yaml"))))
+func pageFor(strategy string, sf SpecFile, op checks.OperationDetail, slugOf func(string) string) (slug, title string) {
+	docSlug := firstOf(sf.Page, slugOf(firstOf(sf.Title, strings.TrimSuffix(sf.File, ".yaml"))))
 	docTitle := firstOf(sf.SpecSource.Title, sf.Title, sf.File)
 	switch strategy {
 	case StrategySingle:
@@ -233,10 +234,10 @@ func pageFor(strategy string, sf SpecFile, op checks.OperationDetail) (slug, tit
 		if name == "" {
 			name = op.Method + " " + op.Path
 		}
-		return docs.Slug(name), firstOf(op.Summary, strings.ToUpper(op.Method)+" "+op.Path)
+		return slugOf(name), firstOf(op.Summary, strings.ToUpper(op.Method)+" "+op.Path)
 	}
-	if len(op.Tags) > 0 && docs.Slug(op.Tags[0]) != "" {
-		return docs.Slug(op.Tags[0]), tagTitle(sf, op.Tags[0])
+	if len(op.Tags) > 0 && slugOf(op.Tags[0]) != "" {
+		return slugOf(op.Tags[0]), tagTitle(sf, op.Tags[0])
 	}
 	return docSlug, docTitle
 }
@@ -252,13 +253,14 @@ func groupPages(strategy string, specs []SpecFile, prefix []string) []*refPage {
 			}
 		}
 		for _, op := range sf.Ops {
-			slug, title := pageFor(strategy, sf, op)
+			slug, title := pageFor(strategy, sf, op, docs.Slug)
+			legacy, _ := pageFor(strategy, sf, op, docs.LegacySlug)
 			if slug == "" {
 				slug = "api"
 			}
 			p, ok := byKey[slug]
 			if !ok {
-				p = &refPage{slug: slug, title: title, collection: coll, spec: sf.File}
+				p = &refPage{slug: slug, legacy: legacy, title: title, collection: coll, spec: sf.File}
 				byKey[slug] = p
 				order = append(order, slug)
 			}
@@ -270,6 +272,22 @@ func groupPages(strategy string, specs []SpecFile, prefix []string) []*refPage {
 		out = append(out, byKey[k])
 	}
 	return out
+}
+
+func existingSlug(ctx context.Context, in Input, slug, legacy string) (string, error) {
+	if legacy == "" || legacy == slug {
+		return slug, nil
+	}
+	for _, s := range []string{slug, legacy} {
+		page, err := in.Client.PageBySlug(ctx, in.SpaceID(), s, api.PageQuery{State: "draft", Format: "json"})
+		if err != nil && !notFound(err) {
+			return "", fmt.Errorf("read page %s: %w", s, err)
+		}
+		if err == nil && page != nil {
+			return s, nil
+		}
+	}
+	return slug, nil
 }
 
 func notFound(err error) bool {
@@ -295,6 +313,23 @@ func (Reference) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 	}
 	strategy := in.StringOption("pageStrategy", StrategyPerTag)
 	pages := groupPages(strategy, specs, in.CollectionPrefix())
+	live := map[string]string{}
+	liveSlug := func(slug, legacy string) (string, error) {
+		if s, ok := live[slug]; ok {
+			return s, nil
+		}
+		s, err := existingSlug(ctx, in, slug, legacy)
+		if err != nil {
+			return "", err
+		}
+		live[slug] = s
+		return s, nil
+	}
+	for _, p := range pages {
+		if p.slug, err = liveSlug(p.slug, p.legacy); err != nil {
+			return rep, err
+		}
+	}
 	headKeys := map[string]string{}
 	for _, p := range pages {
 		for _, op := range p.ops {
@@ -308,7 +343,11 @@ func (Reference) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			if _, still := headKeys[key]; still {
 				continue
 			}
-			slug, _ := pageFor(strategy, sf, op)
+			slug, _ := pageFor(strategy, sf, op, docs.Slug)
+			legacy, _ := pageFor(strategy, sf, op, docs.LegacySlug)
+			if slug, err = liveSlug(slug, legacy); err != nil {
+				return rep, err
+			}
 			removedByPage[slug] = append(removedByPage[slug], key)
 		}
 	}

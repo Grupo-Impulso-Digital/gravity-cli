@@ -125,7 +125,7 @@ func TestInstallResolvesTheNewestReleaseOfAMajor(t *testing.T) {
 	)
 	latest, _ := json.Marshal(map[string]any{"tag_name": "v2.0.0", "assets": f.assets("v2.0.0")})
 	f.serve(releasesAPI+"/latest", latest)
-	cases := map[string]string{"": "v1.10.0", "1": "v1.10.0", "v1": "v1.10.0", "0": "v0.3.1", "2": "v2.0.0", "latest": "v2.0.0", "v1.2.9": "v1.2.9", "1.2.9": "v1.2.9"}
+	cases := map[string]string{"": "v1.10.0", "1": "v1.10.0", "v1": "v1.10.0", "0": "v0.3.1", "2": "v2.0.0", "latest": "v2.0.0", "v1.2.9": "v1.2.9", "1.2.9": "v1.2.9", "v1.10.0-rc.1": "v1.10.0-rc.1"}
 	for version, want := range cases {
 		env := []string{"GRAVITY_RESOLVE_ONLY=1"}
 		if version != "" {

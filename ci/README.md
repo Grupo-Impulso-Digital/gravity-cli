@@ -146,10 +146,12 @@ Templates and the action install the newest `1.x` release
 pipeline.
 
 `install.sh` accepts `GRAVITY_VERSION=<major>` (the newest release of that
-major), a release tag (`v1.2.3`) or `latest`; `GRAVITY_INSTALL_DIR` picks where
-the binary goes (`/usr/local/bin` when writable, else `~/.local/bin`). It
-verifies the archive against the release's `checksums.txt` and only warns when
-that file or a sha256 tool is missing.
+major), a release tag (`v1.2.3`) or `latest`. A major and `latest` never
+resolve to a release candidate (`v1.2.0-rc.1`, a GitHub pre-release); name
+one exactly, in `GRAVITY_VERSION` or the action's `version`, to try it.
+`GRAVITY_INSTALL_DIR` picks where the binary goes (`/usr/local/bin` when
+writable, else `~/.local/bin`). It verifies the archive against the release's
+`checksums.txt` and only warns when that file or a sha256 tool is missing.
 
 ## Git history
 

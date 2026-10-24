@@ -271,3 +271,42 @@ func TestReferencePerTagTitlesUseDisplayNames(t *testing.T) {
 		}
 	}
 }
+
+const specAccented = `openapi: 3.0.0
+info: {title: Actifs, version: 1.0.0}
+paths:
+  /assets/state:
+    get:
+      tags: [État des actifs]
+      summary: Lire l'état
+      responses: {'200': {description: ok}}
+  /activity:
+    get:
+      tags: [Journal des événements]
+      summary: Lister l'activité
+      responses: {'200': {description: ok}}
+`
+
+func TestReferenceTransliteratesNewSlugsAndKeepsLegacyPages(t *testing.T) {
+	r := newRepo(t)
+	head := r.commit("spec", map[string]string{"api/openapi.yaml": specAccented})
+	fake := newFakeAPI()
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_legacy", Slug: "tat-des-actifs", Title: "État des actifs"}})
+	w := &writes{}
+	in := input(t, r, fake, planPass(config.KindReference, "developer-api", nil), manifest(), "", head, api.ModeWrite)
+	if _, err := (passes.Reference{}).Run(context.Background(), in, sink(w)); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]api.ChangeRequest{}
+	for _, c := range w.changes {
+		got[c.Title] = c
+	}
+	if c := got["État des actifs"]; len(w.changes) != 2 || c.Op != api.OpUpdate || c.Target.PageID != "pg_legacy" {
+		t.Fatalf("the page created under the legacy slug must be updated, not duplicated: %+v", w.changes)
+	}
+	for _, c := range w.changes {
+		if c.Op == api.OpCreate && c.Target.Slug != "journal-des-evenements" {
+			t.Fatalf("new pages get the transliterated slug: %+v", c)
+		}
+	}
+}

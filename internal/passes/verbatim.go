@@ -85,6 +85,7 @@ func (Verbatim) Run(ctx context.Context, in Input, out Sink) (Report, error) {
 			locked[p.Lock.Path] = p
 		}
 	}
+	m.Settle(in.CollectionPrefix(), tree.Collections, locked)
 	files, err := in.Files(ctx)
 	if err != nil {
 		return rep, err

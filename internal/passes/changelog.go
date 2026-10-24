@@ -152,8 +152,9 @@ func releaseNotesBlocks(ctx context.Context, in Input, slug string, cs *changese
 	internal := audience == "internal"
 	blocks := []api.ChangeBlock{noteBlock(in, slug, "summary", firstOf(notes.Summary(), "Changes in this release."), nil)}
 	for _, section := range notes.Sections() {
-		key := "changelog:" + slug + ":" + docs.Slug(section.Heading)
-		h := noteBlock(in, slug, docs.Slug(section.Heading), section.Heading, nil)
+		sectionKey := docs.LegacySlug(section.Heading)
+		key := "changelog:" + slug + ":" + sectionKey
+		h := noteBlock(in, slug, sectionKey, section.Heading, nil)
 		h.Key, h.Type, h.Content = key, "heading", map[string]any{"text": section.Heading, "level": 2}
 		blocks = append(blocks, h)
 		for i, it := range section.Items {
@@ -165,7 +166,7 @@ func releaseNotesBlocks(ctx context.Context, in Input, slug string, cs *changese
 				}
 				text += " (" + strings.Join(refs, ", ") + ")"
 			}
-			b := noteBlock(in, slug, docs.Slug(section.Heading)+":"+strconv.Itoa(i+1), text, &it)
+			b := noteBlock(in, slug, sectionKey+":"+strconv.Itoa(i+1), text, &it)
 			b.Type = "list"
 			b.Content = map[string]any{"text": text, "variant": "bulleted"}
 			blocks = append(blocks, b)

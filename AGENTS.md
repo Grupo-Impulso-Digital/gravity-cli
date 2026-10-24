@@ -47,6 +47,7 @@ cmd/gravity              entrypoint: signal-aware context
        ├─ internal/git        thin wrapper over the system `git` binary
        ├─ internal/glob       doublestar matching (leaf)
        ├─ internal/version    the single version variable (ldflags stamp, else build info)
+       ├─ internal/release    the next version from the tags (release.yml's cmd/next-version)
        └─ internal/pathsafe   repo-root path validation (leaf, stdlib-only)
 
 internal/eval            model quality eval: fixture endpoints, recording scorer (cmd/score), JSON + Markdown results
@@ -74,49 +75,73 @@ make eval MODEL=<id> [MAX_OUTPUT=<n>]  # model quality eval (docs/model-eval.md)
 
 The linter is pinned via the go.mod `tool` directive, so `make lint` uses the
 same `golangci-lint` version as CI with no separate install. Config lives in
-[`.golangci.yml`](.golangci.yml). CI runs on every push/PR via
-`.github/workflows/ci.yml`, which is self-contained on purpose: this repository
-is public and cannot call the organization's private reusable `go-ci.yml`, so
-it mirrors that contract directly.
+[`.golangci.yml`](.golangci.yml). CI runs on every pull request to and push
+of `develop` and `hotfix/**` via `.github/workflows/ci.yml`, which is
+self-contained on purpose: this repository is public and cannot call the
+organization's private reusable `go-ci.yml`, so it mirrors that contract
+directly.
 
 ## Releasing / distribution
 
-The binaries are cut by [GoReleaser](https://goreleaser.com)
-([`.goreleaser.yaml`](.goreleaser.yaml)), driven by
-`.github/workflows/release.yml` on any `v*` tag. It builds static binaries for
-`{linux,darwin,windows} × {amd64,arm64}`, uploads the archives and
-`checksums.txt`, publishes the Homebrew cask (`Grupo-Impulso-Digital/homebrew-tap`)
-and the Scoop manifest (`Grupo-Impulso-Digital/scoop-bucket`), then moves the
-major tag (`v1`) that `uses: …/ci/github@v1` resolves. The version is stamped
-via `-X …/internal/version.Version={{.Version}}` (plus `Commit` and `Date`),
-the same symbols the Makefile sets; an unstamped `go install` build falls back
-to `debug.ReadBuildInfo`.
+Trunk delivery ([docs/adr/0001-trunk-delivery.md](docs/adr/0001-trunk-delivery.md),
+after Gravity's ADR-0001). `develop` is the trunk and default branch; every
+change lands by pull request, squash or rebase only. `hotfix/vX.Y` branches
+patch the newest released line. `main` is frozen: nothing merges into it.
 
-- Releases are cut by `.github/workflows/auto-release.yml`. On every push to
-  `main` it reads the first `## vX.Y.Z` heading of `CHANGELOG.md`; when that
-  heading carries a date instead of `Unreleased` and the tag does not exist, it
-  tags the commit and runs `release.yml` (GoReleaser, then the `v<major>` tag
-  the GitHub action is pinned to). To ship, date the top section in the PR.
-- Pushing a `v*` tag by hand still runs `release.yml` directly.
+- **CI** (`.github/workflows/ci.yml`) runs on every pull request to and push of
+  `develop` and `hotfix/**`: gofmt, `go vet`, `make lint`, `go test -race
+  -cover`, `goreleaser check` and a GoReleaser snapshot cross-build. `ci-ok`
+  is the one required check.
+- **Merging never releases. Nobody tags by hand.** An approver (repository
+  variable `PRODUCTION_APPROVERS`) runs `.github/workflows/release.yml`:
+
+  ```bash
+  gh workflow run release.yml -f bump=minor -f prerelease=true   # v1.2.0-rc.1, then rc.2, ...
+  gh workflow run release.yml -f bump=minor                      # v1.2.0
+  gh workflow run release.yml -f bump=patch -f commit=<sha>      # a given develop commit
+  gh workflow run release.yml --ref hotfix/v1.2 -f bump=patch    # patch the newest line from a hotfix branch
+  ```
+
+  It picks the newest commit of the branch whose `ci-ok` passed (or
+  `commit`), refuses one already released, older than the last release or,
+  for a stable version, without a `## vX.Y.Z` section in `CHANGELOG.md`,
+  computes the version from the tags (`internal/release`), pushes the tag
+  with `GITHUB_TOKEN`, runs GoReleaser from that tag (archives,
+  `checksums.txt`, the Homebrew cask in `Grupo-Impulso-Digital/homebrew-tap`,
+  the Scoop manifest in `Grupo-Impulso-Digital/scoop-bucket`), moves the
+  major tag (`v1`) that `uses: …/ci/github@v1` resolves, and runs `docs.yml`
+  on the tag. A failed publish is retried with "Re-run failed jobs"; a full
+  re-run refuses the already tagged commit.
+- **Release candidates** (`-f prerelease=true`) are GitHub pre-releases, never
+  marked latest. Majors and `latest` in `install.sh`/`install.ps1` (and so the
+  action and the CI templates) resolve to stable `vX.Y.Z` releases only, and
+  the cask and Scoop manifest skip pre-releases (`skip_upload: auto`). Try one
+  with `GRAVITY_VERSION=v1.2.0-rc.1` or the action's `version: v1.2.0-rc.1`,
+  then release the same commit with the same bump.
+- **Reproducible, not rebuilt elsewhere.** The version is stamped at link time
+  (`-X …/internal/version.Version={{.Version}}`, plus `Commit` and `Date`, the
+  same symbols the Makefile sets; an unstamped `go install` build falls back
+  to `debug.ReadBuildInfo`), so the release builds from the verified commit
+  with `-trimpath`, the commit date in the ldflags, `mod_timestamp` and
+  archive entries stamped with the commit time and owned by `root`: two
+  builds of one commit and version give the same `checksums.txt`.
+- `CHANGELOG.md` keeps the next version's section at the top
+  (`## vX.Y.Z — Unreleased`); the `bump` you release with must produce that
+  version.
 - A Homebrew tap or Scoop bucket failure (the `GORELEASER_TOKEN` PAT needs
   contents:write on `homebrew-tap` and `scoop-bucket`) leaves a warning on the
   run; the GitHub release and the major tag still ship.
-- **1.0 release gate.** A `v1.*` tag fails its `gate` job unless a `v0.x`
-  release exists whose action and `install.sh` default to major `0` (milestone
-  C0.1): without it every v0.3 pipeline would install 1.0 and break. The 1.0
-  release notes header tells v0.3 users how to stay on 0.x or migrate.
 - **Majors are pinned everywhere.** `install.sh`/`install.ps1` default to
   `GRAVITY_VERSION=1` and resolve `<major>` to the newest `v<major>.x.y`
-  release (pre-releases excluded); the action's `version` input defaults to
-  `1`; the CI templates install `GRAVITY_VERSION=1`. Bump all of them together
-  for a new major, and keep the app's `/install.sh` route byte-identical to
-  `install.sh`.
+  release; the action's `version` input defaults to `1`; the CI templates
+  install `GRAVITY_VERSION=1`. Bump all of them together for a new major. The
+  app's `/install.sh` and `/install.ps1` proxy these files.
 - **Validate** with `goreleaser check`; dry-run with
-  `goreleaser release --snapshot --clean --skip=publish` (writes `dist/`).
-- **Secrets**: the default `GITHUB_TOKEN` creates the release and moves the
-  major tag; a fine-grained `GORELEASER_TOKEN` (Contents read/write on the tap
-  and bucket repositories only) publishes the cask and manifest. Without it the
-  binaries still ship.
+  `goreleaser release --snapshot --clean` (writes `dist/`).
+- **Secrets**: the default `GITHUB_TOKEN` pushes the tag, creates the release
+  and moves the major tag; a fine-grained `GORELEASER_TOKEN` (Contents
+  read/write on the tap and bucket repositories only) publishes the cask and
+  manifest. Without it the binaries still ship.
 - `install.sh` reconstructs the archive name from the tag and `uname`; keep it
   in lockstep with the archive `name_template`.
 - The binaries are unsigned; the cask strips the quarantine attribute.
@@ -182,6 +207,8 @@ to `debug.ReadBuildInfo`.
   - `go.yaml.in/yaml/v3`: the manifest, CI files and the action under test.
   - `santhosh-tekuri/jsonschema/v6`: validating the manifest against the
     embedded schema, as the spec requires.
+  - `golang.org/x/text`: NFKD for `docs.Slug`, which transliterates exactly
+    like the platform's `slugText` (already in the module graph).
   - `charmbracelet/huh`: the prompts of `setup`, `run` and `approve`, with an
     accessible line mode that also drives the scripted tests.
   - `charmbracelet/bubbletea` + `charmbracelet/bubbles`: the live per-step
@@ -388,6 +415,15 @@ to `debug.ReadBuildInfo`.
 - **The manifest schema gained `structure:` and verbatim `allowEmpty`.** The
   platform's `docs/pipelines/gravity.schema.json` must carry the same bytes
   (`pinnedSchemaSHA256`).
+- **Slugs transliterate; identifiers do not.** `docs.Slug` matches the
+  platform's `slugText` (`internal/docs/testdata/slug.json` mirrors its
+  vectors) for page, collection and space slugs and heading anchors.
+  `docs.LegacySlug` (CLI 1.1 and earlier, accents dropped) keeps block keys
+  stable, and pages created under it are found by it: the reference pass
+  falls back to the legacy slug, and the verbatim pass keeps the live slug of
+  the pages it manages and a collection that exists only under its legacy
+  slug (`Mapping.Settle`). `normalize.ProductSlug` is a contract with the
+  platform's `productSlug` and still drops accents.
 - **No live integration tests**: server interactions use `httptest` mocks.
 - **`gosec` is intentionally not enabled yet**; the git `exec.Command` and
   computed-path reads are sandboxed.

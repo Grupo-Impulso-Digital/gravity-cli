@@ -14,6 +14,8 @@ func TestCreatePath(t *testing.T) {
 		{[]string{"guides"}, []string{"guides", "CI providers"}, "guides/ci-providers"},
 		{[]string{"guides"}, []string{"How-to Guides"}, "guides/how-to-guides"},
 		{nil, []string{"Set up", ""}, "set-up"},
+		{[]string{"guides"}, []string{"Dépannage", "Réseau sans fil"}, "guides/depannage/reseau-sans-fil"},
+		{nil, []string{"はじめに"}, "default"},
 		{nil, nil, ""},
 	}
 	for _, tc := range cases {

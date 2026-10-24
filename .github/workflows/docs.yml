@@ -2,9 +2,10 @@ name: Docs (Gravity)
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [develop]
+    tags: ['v*.*.*', '!v*.*.*-*']
   pull_request:
+    branches: [develop, 'hotfix/**']
   workflow_dispatch:
 
 permissions:
@@ -14,6 +15,9 @@ permissions:
 jobs:
   gravity:
     runs-on: ubuntu-latest
+    env:
+      GRAVITY_TRIGGER: ${{ github.ref_type == 'tag' && 'release' || '' }}
+      GRAVITY_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
     steps:
       - uses: actions/checkout@v7
         with:

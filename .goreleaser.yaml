@@ -15,7 +15,8 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{ .Version }} -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Commit={{ .FullCommit }} -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Date={{ .Date }}
+      - -s -w -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Version={{ .Version }} -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Commit={{ .FullCommit }} -X github.com/Grupo-Impulso-Digital/gravity-cli/internal/version.Date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
       - darwin
@@ -33,6 +34,21 @@ archives:
       - goos: windows
         formats:
           - zip
+    builds_info:
+      owner: root
+      group: root
+      mtime: "{{ .CommitDate }}"
+    files:
+      - src: README.md
+        info:
+          owner: root
+          group: root
+          mtime: "{{ .CommitDate }}"
+      - src: CHANGELOG.md
+        info:
+          owner: root
+          group: root
+          mtime: "{{ .CommitDate }}"
 
 checksum:
   name_template: "checksums.txt"
@@ -58,13 +74,14 @@ homebrew_casks:
       owner: Grupo-Impulso-Digital
       name: homebrew-tap
       token: "{{ .Env.GORELEASER_TOKEN }}"
+    skip_upload: auto
     homepage: "https://github.com/Grupo-Impulso-Digital/gravity-cli"
     description: "Keeps documentation in Gravity true to your code, from CI"
     hooks:
       post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/gravity"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/gravity"]
           end
 
 scoops:
@@ -72,6 +89,7 @@ scoops:
       owner: Grupo-Impulso-Digital
       name: scoop-bucket
       token: "{{ .Env.GORELEASER_TOKEN }}"
+    skip_upload: auto
     homepage: "https://github.com/Grupo-Impulso-Digital/gravity-cli"
     description: "Keeps documentation in Gravity true to your code, from CI"
 
@@ -81,6 +99,7 @@ release:
     name: gravity-cli
   draft: false
   prerelease: auto
+  make_latest: "{{ if .Prerelease }}false{{ else }}true{{ end }}"
   header: |
     {{- if and (eq .Major 1) (eq .Minor 0) (eq .Patch 0) }}
     ## gravity 1.0

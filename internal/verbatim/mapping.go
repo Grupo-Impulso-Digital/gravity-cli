@@ -10,6 +10,7 @@ import (
 
 	yaml "go.yaml.in/yaml/v3"
 
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/glob"
 )
@@ -82,6 +83,7 @@ type Page struct {
 	pinned         bool
 	sourceDir      string
 	collectionDirs []string
+	legacyPath     []string
 }
 
 // Translation is a repository file holding one language version of a mapped page.
@@ -255,10 +257,11 @@ func (m *Mapping) add(src Source, file string, spec FileSpec, root string, liter
 	if dir == root || dir == "." {
 		rel = ""
 	}
-	var segs, dirs []string
+	var segs, dirs, legacy []string
 	for _, s := range strings.Split(spec.Collection, "/") {
 		if s != "" {
 			segs = append(segs, docs.Slug(s))
+			legacy = append(legacy, docs.LegacySlug(s))
 			dirs = append(dirs, "")
 		}
 	}
@@ -270,18 +273,19 @@ func (m *Mapping) add(src Source, file string, spec FileSpec, root string, liter
 		acc = path.Join(acc, s)
 		if sl := docs.Slug(s); sl != "" {
 			segs = append(segs, sl)
+			legacy = append(legacy, docs.LegacySlug(s))
 			dirs = append(dirs, acc)
 		}
 	}
 	if len(segs) > MaxCollectionDepth {
 		m.Warnings = append(m.Warnings, fmt.Sprintf("%s: nested deeper than %d collections; flattened into %s", file, MaxCollectionDepth, strings.Join(segs[:MaxCollectionDepth], "/")))
-		segs, dirs = segs[:MaxCollectionDepth], dirs[:MaxCollectionDepth]
+		segs, dirs, legacy = segs[:MaxCollectionDepth], dirs[:MaxCollectionDepth], legacy[:MaxCollectionDepth]
 	}
 	base := path.Base(file)
 	p := Page{
 		Path: file, Hash: docs.HashBytes(data), FrontMatter: fm, Body: body, MDX: strings.EqualFold(path.Ext(file), ".mdx"),
 		CollectionPath: append([]string{}, segs...), Description: fm.Description, explicitOrder: fm.Position,
-		sourceDir: dir, collectionDirs: dirs, Empty: emptyBody(body),
+		sourceDir: dir, collectionDirs: dirs, legacyPath: legacy, Empty: emptyBody(body),
 	}
 	if p.CollectionPath == nil {
 		p.CollectionPath = []string{}
@@ -717,6 +721,39 @@ func (m *Mapping) Lookup(p string) (*Page, bool) {
 		return nil, false
 	}
 	return &m.Pages[i], true
+}
+
+// Settle aligns the mapping with the live space: a page the pass already manages keeps its live slug, and a collection that exists only under its legacy slug keeps that slug.
+func (m *Mapping) Settle(prefix []string, collections []api.TreeCollection, managed map[string]api.TreePage) {
+	live := map[string]bool{}
+	for _, c := range collections {
+		live[strings.Join(c.Path, "/")] = true
+	}
+	exists := func(segs ...string) bool {
+		return live[strings.Join(append(append([]string{}, prefix...), segs...), "/")]
+	}
+	for i := range m.Pages {
+		p := &m.Pages[i]
+		if cur, ok := managed[p.Path]; ok && cur.Slug != "" {
+			p.Slug = cur.Slug
+		}
+		if len(p.legacyPath) != len(p.CollectionPath) {
+			continue
+		}
+		settled := make([]string, 0, len(p.CollectionPath))
+		for depth, seg := range p.CollectionPath {
+			parent := settled[:depth:depth]
+			if alt := p.legacyPath[depth]; alt != "" && alt != seg && !exists(append(parent, seg)...) && exists(append(parent, alt)...) {
+				seg = alt
+			}
+			settled = append(settled, seg)
+			from, to := strings.Join(p.CollectionPath[:depth+1], "/"), strings.Join(settled, "/")
+			if title, ok := m.CollectionTitles[from]; ok && from != to {
+				m.CollectionTitles[to] = title
+			}
+		}
+		p.CollectionPath = settled
+	}
 }
 
 // TitlesFor returns the collectionTitles of a page's chain, keyed by collection slug.

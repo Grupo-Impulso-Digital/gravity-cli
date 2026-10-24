@@ -1,6 +1,7 @@
 package distribution_test
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -84,13 +85,118 @@ func TestTemplatesPinMajorOne(t *testing.T) {
 	}
 }
 
-func TestReleaseRequiresTheMajorPinnedZeroRelease(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+func readWorkflow(t *testing.T, name string, v any) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(data)
-	if !strings.Contains(s, "needs: gate") || !strings.Contains(s, "startsWith(inputs.tag || github.ref_name, 'v1.')") {
-		t.Fatal("goreleaser must wait for the v0 gate on v1 tags")
+	if err := yaml.Unmarshal(data, v); err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestReleasesComeFromTheWorkflow(t *testing.T) {
+	var wf struct {
+		On map[string]struct {
+			Inputs map[string]any `yaml:"inputs"`
+		} `yaml:"on"`
+	}
+	s := readWorkflow(t, "release.yml", &wf)
+	if len(wf.On) != 1 || wf.On["workflow_dispatch"].Inputs["bump"] == nil || wf.On["workflow_dispatch"].Inputs["prerelease"] == nil || wf.On["workflow_dispatch"].Inputs["commit"] == nil {
+		t.Fatalf("release.yml must be a workflow_dispatch with bump, prerelease and commit: %+v", wf.On)
+	}
+	for _, gate := range []string{"vars.PRODUCTION_APPROVERS", "check_name=ci-ok", "refs/heads/develop", "GORELEASER_CURRENT_TAG", "contains(needs.prepare.outputs.tag, '-')"} {
+		if !strings.Contains(s, gate) {
+			t.Errorf("release.yml lacks %s", gate)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join("..", "..", ".github", "workflows"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		var other struct {
+			On map[string]any `yaml:"on"`
+		}
+		body := readWorkflow(t, e.Name(), &other)
+		if e.Name() != "release.yml" && strings.Contains(body, "goreleaser release --clean") {
+			t.Errorf("%s publishes a release; only release.yml may", e.Name())
+		}
+		if push, ok := other.On["push"].(map[string]any); ok && strings.Contains(fmt.Sprint(push["branches"]), "main") {
+			t.Errorf("%s runs on pushes to the frozen main branch", e.Name())
+		}
+	}
+}
+
+func TestDependabotTargetsTheTrunk(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "dependabot.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Updates []struct {
+			Ecosystem    string `yaml:"package-ecosystem"`
+			TargetBranch string `yaml:"target-branch"`
+		} `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range cfg.Updates {
+		if u.TargetBranch != "develop" {
+			t.Errorf("dependabot %s targets %q, want develop", u.Ecosystem, u.TargetBranch)
+		}
+	}
+}
+
+func TestCIGuardsTheTrunk(t *testing.T) {
+	var wf struct {
+		On   map[string]map[string][]string `yaml:"on"`
+		Jobs map[string]struct {
+			Needs []string `yaml:"needs"`
+			Steps []struct {
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	readWorkflow(t, "ci.yml", &wf)
+	for _, event := range []string{"push", "pull_request"} {
+		if got := strings.Join(wf.On[event]["branches"], ","); got != "develop,hotfix/**" {
+			t.Errorf("ci.yml %s branches = %s", event, got)
+		}
+	}
+	if got := strings.Join(wf.Jobs["ci-ok"].Needs, ","); got != "check,test,build" {
+		t.Errorf("ci-ok needs %s", got)
+	}
+	var args []string
+	for _, step := range wf.Jobs["build"].Steps {
+		args = append(args, step.With["args"])
+	}
+	if got := strings.Join(args, ","); !strings.Contains(got, "check") || !strings.Contains(got, "release --snapshot --clean") {
+		t.Errorf("the build job must run goreleaser check and a snapshot: %v", args)
+	}
+}
+
+func TestPreReleasesNeverReachTheTapOrTheBucket(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Casks  []map[string]any `yaml:"homebrew_casks"`
+		Scoops []map[string]any `yaml:"scoops"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Casks) == 0 || len(cfg.Scoops) == 0 {
+		t.Fatal("the cask and the scoop manifest are published")
+	}
+	for _, c := range append(cfg.Casks, cfg.Scoops...) {
+		if c["skip_upload"] != "auto" {
+			t.Errorf("%v must skip pre-releases (skip_upload: auto)", c["repository"])
+		}
 	}
 }
