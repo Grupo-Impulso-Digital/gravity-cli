@@ -17,6 +17,7 @@ const (
 	msgModuleDisabled        = "The %s module is not included in this workspace's licence. Ask an administrator."
 	msgModuleDisabledUnnamed = "A module this command needs is not included in this workspace's licence. Ask an administrator."
 	msgSeatLimit             = "This workspace has used all the seats its licence includes. Ask an administrator."
+	msgAIDisabled            = "AI is turned off for this organization. An organization admin can turn it on in Gravity › AI usage."
 )
 
 func (e *ModuleDisabledError) Error() string {
@@ -41,11 +42,24 @@ func (e *SeatLimitError) Error() string {
 // Unwrap exposes the raw *APIError.
 func (e *SeatLimitError) Unwrap() error { return e.APIError }
 
-// IsLicenseError reports whether err is a license refusal rather than an auth, network or input failure.
+// AIDisabledError is a refusal because an organization admin turned AI off.
+type AIDisabledError struct {
+	*APIError
+}
+
+func (e *AIDisabledError) Error() string {
+	return msgAIDisabled
+}
+
+// Unwrap exposes the raw *APIError.
+func (e *AIDisabledError) Unwrap() error { return e.APIError }
+
+// IsLicenseError reports whether err is a license or organization-policy refusal (module_disabled, seat_limit, ai_disabled) rather than an auth, network or input failure.
 func IsLicenseError(err error) bool {
 	var md *ModuleDisabledError
 	var sl *SeatLimitError
-	return errors.As(err, &md) || errors.As(err, &sl)
+	var ad *AIDisabledError
+	return errors.As(err, &md) || errors.As(err, &sl) || errors.As(err, &ad)
 }
 
 func classifyLicense(e *APIError) error {
@@ -57,6 +71,8 @@ func classifyLicense(e *APIError) error {
 		return &ModuleDisabledError{Module: e.Module, APIError: e}
 	case CodeSeatLimit:
 		return &SeatLimitError{APIError: e}
+	case CodeAIDisabled:
+		return &AIDisabledError{APIError: e}
 	}
 	return e
 }

@@ -40,6 +40,7 @@ type ErrorInfo struct {
 	Code     string `json:"code"`
 	Message  string `json:"message"`
 	ExitCode int    `json:"exitCode"`
+	Details  any    `json:"details,omitempty"`
 }
 
 // Envelope is the single JSON document printed on stdout in --json mode.

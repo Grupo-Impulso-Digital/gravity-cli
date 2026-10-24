@@ -200,3 +200,91 @@ func TestPreReleasesNeverReachTheTapOrTheBucket(t *testing.T) {
 		}
 	}
 }
+
+func TestTapAndBucketChangeThroughPullRequests(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type repository struct {
+		Owner       string `yaml:"owner"`
+		Name        string `yaml:"name"`
+		Branch      string `yaml:"branch"`
+		PullRequest struct {
+			Enabled bool `yaml:"enabled"`
+			Base    struct {
+				Owner  string `yaml:"owner"`
+				Name   string `yaml:"name"`
+				Branch string `yaml:"branch"`
+			} `yaml:"base"`
+		} `yaml:"pull_request"`
+	}
+	var cfg struct {
+		Casks []struct {
+			Repository repository `yaml:"repository"`
+		} `yaml:"homebrew_casks"`
+		Scoops []struct {
+			Repository repository `yaml:"repository"`
+		} `yaml:"scoops"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var repos []repository
+	for _, c := range cfg.Casks {
+		repos = append(repos, c.Repository)
+	}
+	for _, s := range cfg.Scoops {
+		repos = append(repos, s.Repository)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("one cask and one scoop manifest are published, got %d repositories", len(repos))
+	}
+	workflow := readWorkflow(t, "release.yml", &struct{}{})
+	for _, r := range repos {
+		slug := r.Owner + "/" + r.Name
+		base := r.PullRequest.Base
+		if !r.PullRequest.Enabled || r.Branch == "" || base.Owner != r.Owner || base.Name != r.Name || base.Branch != "main" {
+			t.Errorf("%s must be updated through a pull request into main (the default branch is protected): %+v", slug, r)
+		}
+		if !strings.Contains(r.Branch, "{{ .Tag }}") {
+			t.Errorf("%s: the release branch %q must carry the tag so releases never share one", slug, r.Branch)
+		}
+		if !strings.Contains(workflow, slug) {
+			t.Errorf("release.yml does not merge the pull request of %s", slug)
+		}
+		if head := strings.ReplaceAll(r.Branch, "{{ .Tag }}", "${TAG}"); !strings.Contains(workflow, `branch="`+head+`"`) {
+			t.Errorf("release.yml looks for another head branch than %q", head)
+		}
+	}
+	for _, want := range []string{"GH_TOKEN: ${{ secrets.GORELEASER_TOKEN }}", "gh pr list", "gh pr merge", "--squash", "git/refs/heads/", "::warning::"} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("release.yml lacks %s in the pull request merge step", want)
+		}
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				If   string `yaml:"if"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	readWorkflow(t, "release.yml", &wf)
+	found := false
+	for _, step := range wf.Jobs["publish"].Steps {
+		if strings.Contains(step.Run, "gh pr merge") {
+			found = true
+			if !strings.Contains(step.If, "contains(needs.prepare.outputs.tag, '-')") || !strings.Contains(step.If, "!") {
+				t.Errorf("pre-releases skip the cask and the manifest, so only stable releases merge: if = %q", step.If)
+			}
+			if strings.Contains(step.Run, "set -e") || strings.Contains(step.Run, "exit 1") {
+				t.Errorf("a failed merge must warn, never fail the release: %s", step.Name)
+			}
+		}
+	}
+	if !found {
+		t.Error("the publish job has no step merging the tap and bucket pull requests")
+	}
+}

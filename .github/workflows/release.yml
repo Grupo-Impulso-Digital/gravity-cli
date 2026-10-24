@@ -214,8 +214,42 @@ jobs:
             exit 1
           fi
           if [ "$OUTCOME" != "success" ]; then
-            echo "::warning::$TAG is published with $assets assets, but GoReleaser failed after the release (usually the Homebrew tap or Scoop bucket: GORELEASER_TOKEN needs contents:write on Grupo-Impulso-Digital/homebrew-tap and Grupo-Impulso-Digital/scoop-bucket)"
+            echo "::warning::$TAG is published with $assets assets, but GoReleaser failed after the release (usually the Homebrew tap or Scoop bucket: GORELEASER_TOKEN needs contents and pull requests write on Grupo-Impulso-Digital/homebrew-tap and Grupo-Impulso-Digital/scoop-bucket)"
           fi
+
+      - name: Merge the Homebrew tap and Scoop bucket pull requests
+        if: ${{ !contains(needs.prepare.outputs.tag, '-') }}
+        env:
+          GH_TOKEN: ${{ secrets.GORELEASER_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::GORELEASER_TOKEN is not set, so the Homebrew tap and the Scoop bucket were not updated for $TAG"
+            exit 0
+          fi
+          branch="gravity-${TAG}"
+          for repo in Grupo-Impulso-Digital/homebrew-tap Grupo-Impulso-Digital/scoop-bucket; do
+            number="$(gh pr list --repo "$repo" --head "$branch" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+            if [ -z "$number" ]; then
+              echo "::warning::no open pull request from ${branch} in ${repo}; $TAG is not in its manifest yet (look for ${branch} there, or update it by hand)"
+              continue
+            fi
+            merged=false
+            for _ in 1 2 3; do
+              if gh pr merge "$number" --repo "$repo" --squash; then
+                merged=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "$merged" != true ]; then
+              echo "::warning::could not merge ${repo}#${number} (${branch}); merge it by hand: https://github.com/${repo}/pull/${number}"
+              continue
+            fi
+            echo "merged ${repo}#${number}" >> "$GITHUB_STEP_SUMMARY"
+            if gh api "repos/${repo}/git/ref/heads/${branch}" >/dev/null 2>&1; then
+              gh api -X DELETE "repos/${repo}/git/refs/heads/${branch}" >/dev/null || echo "::warning::could not delete ${branch} in ${repo}"
+            fi
+          done
 
       - name: Move the major tag of the GitHub action
         if: ${{ !contains(needs.prepare.outputs.tag, '-') }}

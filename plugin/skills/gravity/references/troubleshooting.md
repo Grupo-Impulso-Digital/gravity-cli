@@ -47,8 +47,11 @@ local rules ran. Say so to the user.
   before passing `--yes`.
 - `model_conflict`: the run pass already recorded another model; start a new run.
 - `server_too_old`: the server has no instructions bundle; upgrade it or use gravity 1.1.
-- `budget_exceeded` / `no_provider_key`: the whole run halts and is finished as failed; nothing else to
-  retry until the budget or key is fixed in Gravity.
+- `budget_exceeded` (exit `5`) / `no_provider_key` (exit `2`): the whole run halts and is finished as
+  failed; nothing else to retry until the budget or key is fixed in Gravity. The `budget_exceeded`
+  message names the cap (this run, the month or a feature), with the limit, the spend and the reset
+  date when the server sends them, and `--json` carries them in `error.details`. Tell the user to ask
+  an organization admin to raise the cap in Gravity › AI usage.
 - `--debug` keeps each pass's instructions bundle and page drafts under `.gravity/runs/<runId>/` for
   diagnosis.
 
@@ -80,6 +83,8 @@ Error `lease_held` after the timeout means nothing ran.
   that host explicitly if trusted.
 - Several organizations: `gravity org list`, `gravity org use <slug>`.
 - Exit `3` (`module_disabled`, `seat_limit`): license; ask an admin.
+- Exit `3` with `ai_disabled`: AI is turned off for the organization; the run halts and is finished as
+  failed. An organization admin turns it on in Gravity › AI usage.
 
 ## Install
 

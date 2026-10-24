@@ -455,6 +455,34 @@ func TestLLMRetriesUntilTotalCap(t *testing.T) {
 	}
 }
 
+func TestLLMWaitsOutAConcurrencyLimit(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) <= 3 {
+			w.Header().Set("Retry-After", "5")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"code":"concurrency_limited","message":"Too many AI calls are running for this organization.","retryAfter":5}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"stop_reason":"end_turn","content":[]}`)
+	}))
+	defer srv.Close()
+	c := api.New(srv.URL, "tok")
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	c.Now, c.Sleep = clock.Now, clock.Sleep
+	if _, err := c.Messages(context.Background(), api.MessagesRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 4 || len(clock.sleeps) != 3 {
+		t.Fatalf("calls = %d sleeps = %v", calls.Load(), clock.sleeps)
+	}
+	for _, d := range clock.sleeps {
+		if d != 5*time.Second {
+			t.Fatalf("sleeps = %v", clock.sleeps)
+		}
+	}
+}
+
 func TestLLMRetriesNetworkErrors(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

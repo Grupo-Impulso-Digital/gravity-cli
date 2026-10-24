@@ -297,8 +297,10 @@ list in one reply:
   cap, a refusal or the output limit three times in a row; that page sends
   nothing and the pass fails with the list of failed pages.
 - There is no CLI token budget: the repository's run and month budgets in
-  Gravity apply. `budget_exceeded` and `no_provider_key` halt the whole run,
-  which is finished as failed.
+  Gravity apply. `budget_exceeded`, `no_provider_key` and `ai_disabled` halt
+  the whole run, which is finished as failed; `budget_exceeded` exits `5` and
+  says which cap was reached, `ai_disabled` exits `3` (see Exit codes). A `429`
+  `concurrency_limited` is retried after its `Retry-After`.
 
 Every pass report records which model, provider and instructions version it
 ran with.
@@ -602,13 +604,16 @@ between them.
 | `0` | Success, or nothing to do (no change in scope; a fork or Dependabot pull request without a token). |
 | `1` | Findings: `validate` errors (also before a local real run, and in a local dry run that sending would fail on), `check` findings in `failOn`, structure conflicts, refused approvals, `ci check` on an incomplete setup, `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, a branch behind or diverged from its upstream, uncommitted tracked files, a recording that no longer matches HEAD. |
-| `3` | Licence refusal (`module_disabled`, `seat_limit`): ask a workspace administrator. |
+| `3` | Licence or organization-policy refusal (`module_disabled`, `seat_limit`, `ai_disabled`): ask a workspace administrator. With `ai_disabled`, AI is turned off for the organization and an admin can turn it on in Gravity › AI usage; the run halts and is finished as failed. |
 | `4` | No usable credentials: no token (`token_missing`), only CI variables that were never expanded such as a literal `$(GRAVITY_REPO_TOKEN)`, in CI or locally without a profile token (`token_unresolved`), or a token the server rejects (`401`, also in the middle of a run). |
+| `5` | An AI spend cap is used up (`budget_exceeded`): this run's, the month's or a feature's. The run halts and is finished as failed; ask an organization admin to raise the cap in Gravity › AI usage. |
 | `130` | Interrupted (Ctrl-C or SIGTERM): the run was finished as cancelled and its lease released. |
 
 Within a run, the passes' outcomes combine as `3` > `2` > `1` > `0`. Across
-the error chain, a licence refusal wins, then a `401` (`4`), then the
-command's own code. A missing or unresolved token stops a
+the error chain, a licence refusal wins, then a `401` (`4`), then a spend cap
+(`5`), then the command's own code. A spend cap halts the run before its
+outcomes combine, so it replaces the `2` the halted run used to end with, but
+never hides a licence or credential refusal. A missing or unresolved token stops a
 command before any request; a rejected token stops it at the first `401`
 (a run ends without its finish call), and both exit `4`. Locally, with a
 profile token, the error adds "run `gravity login` to sign in again". Fork
@@ -619,9 +624,9 @@ by Dependabot by their actor; only those skip with a notice when the token is
 missing. Bitbucket runs no pipeline for a fork
 in the target repository, so a missing token there is always `4`. In CI, a
 run exits `1` only for `check` findings; a failed pass or a missing target
-exits `2`. Unapproved targets, missing scopes and missing modules only skip
-their pass, unless `--strict` turns the first two into `2` and missing modules
-into `3`.
+exits `2`, and a spend cap that halts the run exits `5`. Unapproved targets,
+missing scopes and missing modules only skip their pass, unless `--strict`
+turns the first two into `2` and missing modules into `3`.
 
 ## Migrating from 0.x and 1.0
 

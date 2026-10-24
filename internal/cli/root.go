@@ -87,7 +87,7 @@ func run(ctx context.Context, a *app, args []string) int {
 		msg += a.credentialHint(err)
 	}
 	if a.ui.JSON() {
-		_ = a.ui.Failure(ui.ErrorInfo{Code: errorCode(err), Message: msg, ExitCode: code}, nil)
+		_ = a.ui.Failure(ui.ErrorInfo{Code: errorCode(err), Message: msg, ExitCode: code, Details: errorDetails(err)}, nil)
 	}
 	if !silent {
 		a.ui.Error(msg)

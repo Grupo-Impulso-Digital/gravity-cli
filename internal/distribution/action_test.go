@@ -153,6 +153,10 @@ func TestActionRunStepPassesArgumentsAndRecordsTheExitCode(t *testing.T) {
 	if api != "https://api.acme.test" || outputs != "exit-code=0" || code != 0 {
 		t.Fatalf("api=%q outputs=%q code=%d", api, outputs, code)
 	}
+	_, _, outputs, code = run("run", "", "", "5")
+	if outputs != "exit-code=5" || code != 5 {
+		t.Fatalf("a spend cap reaches the workflow unchanged: outputs=%q code=%d", outputs, code)
+	}
 	args, _, outputs, code = run("sync", "", "", "0")
 	if args != "" || outputs != "exit-code=2" || code != 2 {
 		t.Fatalf("removed commands never reach the CLI: args=%q outputs=%q code=%d", args, outputs, code)

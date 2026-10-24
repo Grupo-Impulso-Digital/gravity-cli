@@ -102,12 +102,18 @@ func TestRunHalts(t *testing.T) {
 		name     string
 		route    string
 		code     string
+		details  map[string]any
+		summary  string
+		typed    func(error) bool
 		status   int
 		passes   int
 		ingested bool
 	}{
 		{name: "unusable model at bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeModelUnavailable, status: http.StatusConflict},
-		{name: "budget exceeded mid pass", route: "POST /api/llm/v1/messages", code: api.CodeBudgetExceeded, status: http.StatusPaymentRequired, passes: 2, ingested: true},
+		{name: "budget exceeded mid pass", route: "POST /api/llm/v1/messages", code: api.CodeBudgetExceeded, details: map[string]any{"scope": "run", "limitUsd": 5, "spentUsd": 5.2}, summary: "This run's AI budget is used up: $5.20 spent of a $5.00 limit.", typed: api.IsBudgetError, status: http.StatusPaymentRequired, passes: 2, ingested: true},
+		{name: "budget exceeded at the bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeBudgetExceeded, details: map[string]any{"scope": "month", "resetsAt": "2026-11-01"}, summary: "The monthly AI budget is used up; it resets on 2026-11-01.", typed: api.IsBudgetError, status: http.StatusPaymentRequired},
+		{name: "ai disabled mid pass", route: "POST /api/llm/v1/messages", code: api.CodeAIDisabled, details: map[string]any{}, summary: "AI is turned off for this organization.", typed: api.IsLicenseError, status: http.StatusForbidden, passes: 2, ingested: true},
+		{name: "ai disabled at the bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeAIDisabled, details: map[string]any{}, summary: "AI is turned off for this organization.", typed: api.IsLicenseError, status: http.StatusForbidden},
 		{name: "no provider key mid pass", route: "POST /api/llm/v1/messages", code: api.CodeNoProviderKey, status: http.StatusPaymentRequired, passes: 2, ingested: true},
 	}
 	for _, tc := range cases {
@@ -117,14 +123,25 @@ func TestRunHalts(t *testing.T) {
 			p := newPlatform(t)
 			p.plan.Passes = []api.PlanPass{guidesPass("guides"), refPass("developer-api", "")}
 			p.routes[tc.route] = func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
-				apiErr(w, tc.status, tc.code, map[string]any{"details": map[string]any{"reason": "no_key", "requested": "claude-x"}})
+				details := tc.details
+				if details == nil {
+					details = map[string]any{"reason": "no_key", "requested": "claude-x"}
+				}
+				apiErr(w, tc.status, tc.code, map[string]any{"details": details})
 			}
 			res, err := run.Execute(context.Background(), newEnv(t, p, r, manifest(t, "")).Env, pushOpts())
 			if !errors.Is(err, run.ErrHalted) || !api.HasCode(err, tc.code) {
 				t.Fatalf("err = %v", err)
 			}
+			if tc.typed != nil && (!tc.typed(err) || !strings.Contains(err.Error(), tc.summary)) {
+				t.Fatalf("the halt carries the typed error: %T %v", err, err)
+			}
+			wantSummary := tc.summary
+			if wantSummary == "" {
+				wantSummary = tc.code
+			}
 			fin := p.find("POST", "/finish")
-			if len(fin) != 1 || fin[0].Body["status"] != api.StatusFailed || !strings.Contains(fin[0].Body["report"].(map[string]any)["summary"].(string), tc.code) {
+			if len(fin) != 1 || fin[0].Body["status"] != api.StatusFailed || !strings.Contains(fin[0].Body["report"].(map[string]any)["summary"].(string), wantSummary) {
 				t.Fatalf("finish = %+v", fin)
 			}
 			if got := len(p.find("POST", "/products/self/inventory")) > 0; got != tc.ingested {

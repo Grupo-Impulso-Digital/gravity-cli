@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,6 +60,50 @@ func TestSeatLimitIsTyped(t *testing.T) {
 	var sl *api.SeatLimitError
 	if !errors.As(err, &sl) || !api.IsLicenseError(err) {
 		t.Fatalf("expected *api.SeatLimitError, got %T: %v", err, err)
+	}
+}
+
+func TestAIDisabledIsTyped(t *testing.T) {
+	srv := respond(http.StatusForbidden, `{"error":{"code":"ai_disabled","message":"AI is disabled for this organization."}}`)
+	defer srv.Close()
+
+	_, err := api.New(srv.URL, "tok").WhoAmI(context.Background())
+	var ad *api.AIDisabledError
+	if !errors.As(err, &ad) || !api.IsLicenseError(err) {
+		t.Fatalf("expected *api.AIDisabledError, got %T: %v", err, err)
+	}
+	want := "AI is turned off for this organization. An organization admin can turn it on in Gravity › AI usage."
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
+	}
+	wrapped := fmt.Errorf("guides: %w", fmt.Errorf("model call: %w", err))
+	var ae *api.APIError
+	if !api.IsLicenseError(wrapped) || !api.HaltsRun(wrapped) || !api.HasCode(wrapped, api.CodeAIDisabled) || !errors.As(wrapped, &ae) || ae.StatusCode != http.StatusForbidden {
+		t.Fatalf("the typed error keeps the raw one reachable and halts the run: %v", wrapped)
+	}
+	if ae.IsAuth() || api.StopsRun(wrapped) || api.IsBudgetError(wrapped) || errors.Is(wrapped, api.ErrUnauthorized) {
+		t.Fatalf("the token is fine and the server did not end the run: %v", wrapped)
+	}
+}
+
+func TestAIDisabledOnTheModelGateway(t *testing.T) {
+	srv := respond(http.StatusForbidden, `{"error":{"code":"ai_disabled","message":"AI is disabled for this organization."}}`)
+	defer srv.Close()
+
+	_, err := api.New(srv.URL, "tok").Messages(context.Background(), api.MessagesRequest{})
+	var ad *api.AIDisabledError
+	if !errors.As(err, &ad) || !api.HaltsRun(err) {
+		t.Fatalf("err = %T %v", err, err)
+	}
+}
+
+func TestAIDisabledOnAnotherStatusIsNotTyped(t *testing.T) {
+	srv := respond(http.StatusBadRequest, `{"error":{"code":"ai_disabled"}}`)
+	defer srv.Close()
+
+	_, err := api.New(srv.URL, "tok").WhoAmI(context.Background())
+	if api.IsLicenseError(err) {
+		t.Fatalf("should not be a license error: %v", err)
 	}
 }
 

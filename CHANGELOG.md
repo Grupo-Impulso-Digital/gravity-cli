@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.3.0 — Unreleased
+
+### Added
+
+- A spend cap refusal (`402 budget_exceeded`) is a typed
+  `api.BudgetExceededError` and exits `5`, which CI can tell apart from an
+  operational error (`2`). The run still halts and is finished as failed. The
+  message says which cap was reached (this run, the month or a feature), the
+  limit and the spend, and when it resets, whichever the server sends, and
+  tells you to ask an organization admin to raise the cap in Gravity › AI usage.
+  `--json` carries `error.code: budget_exceeded`, `exitCode: 5` and
+  `error.details` (`scope`, `feature`, `limitUsd`, `spentUsd`, `resetsAt`).
+  Precedence: a licence refusal (`3`) and a rejected token (`4`) still win over
+  a spend cap anywhere in the error chain; the spend cap wins over the
+  command's own code. The GitHub action's `exit-code` output and the CI
+  templates pass `5` through unchanged. The server's CLI 1.2 body
+  (`details.scope`, `feature`, `limitUsd`, `spentUsd`, `resetsAt`, with
+  `runId` and `runKind` ignored) and the list form older callers get are both
+  read.
+- A `403 ai_disabled` (AI turned off for the organization) is a typed
+  `api.AIDisabledError` that exits `3`, with the licence refusals: "AI is
+  turned off for this organization. An organization admin can turn it on in
+  Gravity › AI usage." The run halts, no new pass starts, and it is finished
+  as failed; `--json` carries `ai_disabled`.
+- A `429 concurrency_limited` is retried after its `Retry-After` like any rate
+  limit.
+
 ## v1.2.0 — 2026-10-24
 
 ### Added

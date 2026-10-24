@@ -74,6 +74,13 @@ homebrew_casks:
       owner: Grupo-Impulso-Digital
       name: homebrew-tap
       token: "{{ .Env.GORELEASER_TOKEN }}"
+      branch: "gravity-{{ .Tag }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: Grupo-Impulso-Digital
+          name: homebrew-tap
+          branch: main
     skip_upload: auto
     homepage: "https://github.com/Grupo-Impulso-Digital/gravity-cli"
     description: "Keeps documentation in Gravity true to your code, from CI"
@@ -89,6 +96,13 @@ scoops:
       owner: Grupo-Impulso-Digital
       name: scoop-bucket
       token: "{{ .Env.GORELEASER_TOKEN }}"
+      branch: "gravity-{{ .Tag }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: Grupo-Impulso-Digital
+          name: scoop-bucket
+          branch: main
     skip_upload: auto
     homepage: "https://github.com/Grupo-Impulso-Digital/gravity-cli"
     description: "Keeps documentation in Gravity true to your code, from CI"

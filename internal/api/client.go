@@ -122,7 +122,7 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		apiErr := decodeError(status, header, data)
 		apiErr.Method, apiErr.Path = r.method, r.path
 		if !retryable(status) || attempt == attempts {
-			return classifyLicense(apiErr)
+			return classify(apiErr)
 		}
 		lastErr = apiErr
 		if serr := c.wait(ctx, c.backoff(attempt, apiErr.RetryAfter)); serr != nil {
@@ -164,7 +164,7 @@ func (c *Client) doLLM(ctx context.Context, r request, payload []byte, out any) 
 			apiErr := decodeError(status, header, data)
 			apiErr.Method, apiErr.Path = r.method, r.path
 			if !retryable(status) {
-				return classifyLicense(apiErr)
+				return classify(apiErr)
 			}
 			failure, retryAfter = apiErr, apiErr.RetryAfter
 		}
@@ -288,6 +288,13 @@ func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 // Put issues a PUT request with a JSON body.
 func (c *Client) Put(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, request{method: http.MethodPut, path: path, body: body}, out)
+}
+
+func classify(e *APIError) error {
+	if be := classifyBudget(e); be != nil {
+		return be
+	}
+	return classifyLicense(e)
 }
 
 func decodeError(status int, header http.Header, data []byte) *APIError {

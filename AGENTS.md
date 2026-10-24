@@ -108,7 +108,8 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   computes the version from the tags (`internal/release`), pushes the tag
   with `GITHUB_TOKEN`, runs GoReleaser from that tag (archives,
   `checksums.txt`, the Homebrew cask in `Grupo-Impulso-Digital/homebrew-tap`,
-  the Scoop manifest in `Grupo-Impulso-Digital/scoop-bucket`), moves the
+  the Scoop manifest in `Grupo-Impulso-Digital/scoop-bucket`, each as a pull
+  request, see below), merges those two pull requests, moves the
   major tag (`v1`) that `uses: …/ci/github@v1` resolves, and runs `docs.yml`
   on the tag. A failed publish is retried with "Re-run failed jobs"; a full
   re-run refuses the already tagged commit.
@@ -128,9 +129,23 @@ patch the newest released line. `main` is frozen: nothing merges into it.
 - `CHANGELOG.md` keeps the next version's section at the top
   (`## vX.Y.Z — Unreleased`); the `bump` you release with must produce that
   version.
-- A Homebrew tap or Scoop bucket failure (the `GORELEASER_TOKEN` PAT needs
-  contents:write on `homebrew-tap` and `scoop-bucket`) leaves a warning on the
-  run; the GitHub release and the major tag still ship.
+- **The tap and the bucket change through pull requests.** The organization
+  ruleset `org-protected-branches` covers every repository's default branch: a
+  pull request is required (0 approvals) and nobody bypasses it for a direct
+  push, so GoReleaser's own push failed with `409 Repository rule violations`
+  on v1.2.0. `homebrew_casks[].repository` and `scoops[].repository` therefore
+  set `branch: gravity-{{ .Tag }}` and `pull_request` (`enabled: true`, base
+  `main` of the same repository); GoReleaser pushes the manifest to that
+  branch and opens the pull request. After it, `release.yml`'s "Merge the
+  Homebrew tap and Scoop bucket pull requests" step (stable releases only,
+  pre-releases skip the cask and manifest) finds each pull request by its head
+  branch `gravity-${TAG}`, squash-merges it with `GORELEASER_TOKEN` (three
+  tries, since a new pull request can report itself unmergeable for a moment),
+  then deletes the branch. A missing pull request, a failed merge or an
+  unset token is a `::warning::` that names the repository and the pull
+  request to merge by hand; the GitHub release and the major tag still ship.
+  `internal/distribution` pins the keys, the shared branch name and the
+  merge step.
 - **Majors are pinned everywhere.** `install.sh`/`install.ps1` default to
   `GRAVITY_VERSION=1` and resolve `<major>` to the newest `v<major>.x.y`
   release; the action's `version` input defaults to `1`; the CI templates
@@ -139,9 +154,10 @@ patch the newest released line. `main` is frozen: nothing merges into it.
 - **Validate** with `goreleaser check`; dry-run with
   `goreleaser release --snapshot --clean` (writes `dist/`).
 - **Secrets**: the default `GITHUB_TOKEN` pushes the tag, creates the release
-  and moves the major tag; a fine-grained `GORELEASER_TOKEN` (Contents
-  read/write on the tap and bucket repositories only) publishes the cask and
-  manifest. Without it the binaries still ship.
+  and moves the major tag; a fine-grained `GORELEASER_TOKEN` (Contents and
+  Pull requests read/write on the tap and bucket repositories only) pushes the
+  release branches, opens the pull requests and merges them. Without it the
+  binaries still ship.
 - `install.sh` reconstructs the archive name from the tag and `uname`; keep it
   in lockstep with the archive `name_template`.
 - The binaries are unsigned; the cask strips the quarantine attribute.
@@ -163,20 +179,47 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   strings are lowercase and unpunctuated. No `panic` in non-test code.
 - **Exit-code contract** (`internal/cli/exit.go`): `0` success/no findings,
   `1` findings produced, `2` operational error (network/bad input),
-  `3` license refusal, `4` no usable credentials (`token_missing`,
+  `3` license or organization-policy refusal (`module_disabled`, `seat_limit`,
+  `ai_disabled`), `4` no usable credentials (`token_missing`,
   `token_unresolved`, any `401`, which `api.StopsRun` also treats as
-  run-stopping); precedence 3 > 2 > 1 > 0. Only a job `internal/ci` marks
-  `NoSecrets()` (a fork pull request, a Dependabot event) may skip without a
-  token. Commands return an
+  run-stopping), `5` an AI spend cap reached (`budget_exceeded`); precedence
+  3 > 2 > 1 > 0 for pass outcomes. In an error chain `CodeFor` ranks 3 > 4 > 5 >
+  the command's own code (2, 1), so a spend cap beats the `2` a halted run
+  used to end with but never a licence or credential refusal. Only a job
+  `internal/ci` marks `NoSecrets()` (a fork pull request, a Dependabot event)
+  may skip without a token. Commands return an
   `*ExitError` (with an `ErrCode` for the `--json` envelope); never call
   `os.Exit` inside a command.
+- **Spend cap refusals** (`internal/api/budget.go`): a 402 whose envelope code
+  is `budget_exceeded` decodes to `*api.BudgetExceededError` (embeds the raw
+  `*APIError`, so `HaltsRun` and `HasCode` still see it). Its `BudgetDetails`
+  (`scope` `run`/`month`/`feature`, `feature`, `limitUsd`, `spentUsd`,
+  `resetsAt`) are all optional: the repository budget the server sends today
+  as `details: [{path: "budget.maxCostUsdPerRun" | "…PerMonth", message:
+  "<limit>"}]` and the org cap object are both read, and the message stays
+  correct with none of them (`This run's AI budget is used up: $5.20 spent of
+  a $5.00 limit. Ask an organization admin to raise the cap in Gravity › AI
+  usage.`). `CodeFor` maps it to `5` from anywhere in the chain, `runError`
+  keeps the typed error as the whole message of a halted run, and the
+  `--json` envelope carries `error.code: budget_exceeded` plus the details in
+  `error.details`. The run still halts and is finished as failed. A pass
+  skipped with the plan's `budget_exceeded` reason is not an error and does not
+  change the exit code.
 - **License refusals** (`internal/api/license.go`): a 403 whose envelope code is
   `module_disabled` (with `module`) or `seat_limit` decodes to
   `*api.ModuleDisabledError` / `*api.SeatLimitError`, whose message tells the
-  user to ask an administrator. They are *not* `IsAuth()` (the token is fine) and
-  `CodeFor` maps them to `3` from anywhere in the chain — so wrap with `%w`, never
-  flatten one into a `Failf` string. The CLI never calls `/api/mcp`, so the
-  JSON-RPC `MODULE_DISABLED` shape needs no handling here.
+  user to ask an administrator. A 403 `ai_disabled` (AI turned off by an
+  organization admin, no details) decodes the same way to `*api.AIDisabledError`
+  (`AI is turned off for this organization. An organization admin can turn it on
+  in Gravity › AI usage.`); it also halts the run (`api.HaltsRun`: no new pass
+  starts, the run is finished as failed) and `runError` keeps it as the whole
+  message. All three satisfy `api.IsLicenseError`, are *not* `IsAuth()` (the token
+  is fine) and `CodeFor` maps them to `3` from anywhere in the chain — so wrap
+  with `%w`, never flatten one into a `Failf` string. The `--json` envelope
+  carries the envelope code (`module_disabled`, `seat_limit`, `ai_disabled`). The
+  CLI never calls `/api/mcp`, so the JSON-RPC `MODULE_DISABLED` shape needs no
+  handling here. A 429 `concurrency_limited` is an ordinary rate limit: the
+  retry policy below waits its `Retry-After` (or `retryAfter`) and tries again.
 - **Token-security boundary** (`internal/auth`): a token comes only from
   `--token`, `GRAVITY_REPO_TOKEN`, `GRAVITY_TOKEN` or a profile in `~/.config/gravity/profiles.yaml`
   (mode `0600`). A `token:` anywhere in `.gravity.yaml` is a manifest error.
@@ -243,8 +286,9 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   calls get 15 min per attempt and retry `429`, `5xx` and network errors until
   30 min in total (`LLMTimeout`, `LLMRetryCap`). `lease_lost` and
   `run_not_running` stop a run without a finish call (`api.StopsRun`);
-  `budget_exceeded` and `no_provider_key` halt it, then finish it as failed
-  (`api.HaltsRun`).
+  `budget_exceeded`, `no_provider_key` and `ai_disabled` halt it, then finish it
+  as failed (`api.HaltsRun`; `budget_exceeded` ends with exit `5`, `ai_disabled`
+  with `3`, `no_provider_key` with `2`).
 - **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
   all human output on stderr. With `CI=true` or without a terminal, output is
   plain ASCII and nothing prompts. There is no global `--ci` flag in 1.x
