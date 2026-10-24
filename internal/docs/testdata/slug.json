@@ -1,0 +1,74 @@
+[
+    {
+        "in": "Activité utilisateur",
+        "out": "activite-utilisateur"
+    },
+    {
+        "in": "État des actifs",
+        "out": "etat-des-actifs"
+    },
+    {
+        "in": "Registre des états des actifs",
+        "out": "registre-des-etats-des-actifs"
+    },
+    {
+        "in": "Dépannage",
+        "out": "depannage"
+    },
+    {
+        "in": "État du système",
+        "out": "etat-du-systeme"
+    },
+    {
+        "in": "Remplacement du nœud",
+        "out": "remplacement-du-noeud"
+    },
+    {
+        "in": "Vue d'ensemble",
+        "out": "vue-d-ensemble"
+    },
+    {
+        "in": "Opérations à distance",
+        "out": "operations-a-distance"
+    },
+    {
+        "in": "Niveau de gradation à 50 %",
+        "out": "niveau-de-gradation-a-50"
+    },
+    {
+        "in": "Çà et là, où êtes-vous ?",
+        "out": "ca-et-la-ou-etes-vous"
+    },
+    {
+        "in": "Configuración inicial",
+        "out": "configuracion-inicial"
+    },
+    {
+        "in": "Año fiscal",
+        "out": "ano-fiscal"
+    },
+    {
+        "in": "¿Cómo está el señor Núñez?",
+        "out": "como-esta-el-senor-nunez"
+    },
+    {
+        "in": "Guía rápida de instalación",
+        "out": "guia-rapida-de-instalacion"
+    },
+    {
+        "in": "Pingüino",
+        "out": "pinguino"
+    },
+    {
+        "in": "ÉTÉ À Noël",
+        "out": "ete-a-noel"
+    },
+    {
+        "in": "Œuvre Straße Ærø Łódź",
+        "out": "oeuvre-strasse-aero-lodz"
+    },
+    {
+        "in": "はじめに",
+        "out": ""
+    }
+]

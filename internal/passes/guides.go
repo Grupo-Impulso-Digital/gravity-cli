@@ -11,6 +11,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/changeset"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
 )
 
@@ -105,7 +106,7 @@ func createPath(prefix, planned []string) []string {
 	var rest []string
 	for _, seg := range planned {
 		if strings.Trim(seg, " -_/") != "" {
-			rest = append(rest, normalize.ProductSlug(seg))
+			rest = append(rest, firstOf(docs.Slug(seg), normalize.ProductSlug(seg)))
 		}
 	}
 	if hasPrefix(rest, prefix) {

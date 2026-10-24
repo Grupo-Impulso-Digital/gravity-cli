@@ -130,3 +130,25 @@ func TestVerbatimDryRunRecordsTranslations(t *testing.T) {
 		t.Fatalf("recorded = %+v", got)
 	}
 }
+
+func TestVerbatimTranslatesPagesUnderTheirLiveSlug(t *testing.T) {
+	r := newRepo(t)
+	head := r.commit("docs", map[string]string{
+		"docs/handbook/dépannage.md":    "# Dépannage\n\nRedémarrez.\n",
+		"docs/handbook/dépannage.en.md": "# Troubleshooting\n\nRestart.\n",
+	})
+	fake := newFakeAPI()
+	fake.addPage("sp_1", &api.PageContent{Page: api.PageInfo{ID: "pg_dep", Slug: "d-pannage", Title: "Dépannage", Lock: &api.PageLock{Pass: "handbook", Path: "docs/handbook/dépannage.md", Hash: "sha256:old"}}})
+	w := &writes{}
+	if _, err := (passes.Verbatim{}).Run(context.Background(), input(t, r, fake, verbatimPass(), manifest(), "", head, api.ModeWrite), sink(w)); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.verbatim) != 2 {
+		t.Fatalf("imports = %+v", w.verbatim)
+	}
+	for _, req := range w.verbatim {
+		if req.Page.Slug != "d-pannage" {
+			t.Fatalf("%s@%s targets %s, want the live slug d-pannage", req.File.Path, req.Language, req.Page.Slug)
+		}
+	}
+}

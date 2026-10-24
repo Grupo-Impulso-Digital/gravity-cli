@@ -182,6 +182,8 @@ to `debug.ReadBuildInfo`.
   - `go.yaml.in/yaml/v3`: the manifest, CI files and the action under test.
   - `santhosh-tekuri/jsonschema/v6`: validating the manifest against the
     embedded schema, as the spec requires.
+  - `golang.org/x/text`: NFKD for `docs.Slug`, which transliterates exactly
+    like the platform's `slugText` (already in the module graph).
   - `charmbracelet/huh`: the prompts of `setup`, `run` and `approve`, with an
     accessible line mode that also drives the scripted tests.
   - `charmbracelet/bubbletea` + `charmbracelet/bubbles`: the live per-step
@@ -388,6 +390,15 @@ to `debug.ReadBuildInfo`.
 - **The manifest schema gained `structure:` and verbatim `allowEmpty`.** The
   platform's `docs/pipelines/gravity.schema.json` must carry the same bytes
   (`pinnedSchemaSHA256`).
+- **Slugs transliterate; identifiers do not.** `docs.Slug` matches the
+  platform's `slugText` (`internal/docs/testdata/slug.json` mirrors its
+  vectors) for page, collection and space slugs and heading anchors.
+  `docs.LegacySlug` (CLI 1.1 and earlier, accents dropped) keeps block keys
+  stable, and pages created under it are found by it: the reference pass
+  falls back to the legacy slug, and the verbatim pass keeps the live slug of
+  the pages it manages and a collection that exists only under its legacy
+  slug (`Mapping.Settle`). `normalize.ProductSlug` is a contract with the
+  platform's `productSlug` and still drops accents.
 - **No live integration tests**: server interactions use `httptest` mocks.
 - **`gosec` is intentionally not enabled yet**; the git `exec.Command` and
   computed-path reads are sandboxed.

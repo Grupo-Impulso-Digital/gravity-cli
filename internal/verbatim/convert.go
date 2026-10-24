@@ -324,7 +324,7 @@ func (c *converter) block(n ast.Node, src []byte, loc *locator) {
 
 func (c *converter) heading(h *ast.Heading, src []byte) {
 	txt := c.inline(h, src)
-	s := docs.Slug(plainText(h, src))
+	s := docs.LegacySlug(plainText(h, src))
 	if s == "" {
 		s = fmt.Sprintf("section-%d", len(c.blocks)+1)
 	}

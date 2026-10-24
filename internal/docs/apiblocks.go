@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/checks"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
@@ -123,9 +125,30 @@ func APIBlocks(spec []byte, generator string) ([]api.ChangeBlock, error) {
 
 var commitRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
-// Slug lowercases text and collapses non-alphanumerics into single dashes, like the viewer's anchor slug.
+// Slug transliterates text to ASCII and collapses non-alphanumerics into single dashes, exactly like the platform's slugText.
 func Slug(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
+	return dashes(transliterate(s))
+}
+
+// LegacySlug is the slug of CLI 1.1 and earlier, which dropped every non-ASCII letter ("État" became "tat").
+func LegacySlug(s string) string {
+	return dashes(strings.ToLower(s))
+}
+
+var foldedLetters = strings.NewReplacer("ß", "ss", "æ", "ae", "œ", "oe", "ø", "o", "ð", "d", "þ", "th", "đ", "d", "ł", "l", "ı", "i")
+
+func transliterate(s string) string {
+	s = norm.NFKD.String(foldedLetters.Replace(strings.ToLower(s)))
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x300 || r > 0x36f {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func dashes(s string) string {
 	var b strings.Builder
 	prevDash := false
 	for _, r := range s {

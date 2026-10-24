@@ -10,6 +10,7 @@ import (
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/api"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/config"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/detect"
+	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/docs"
 	"github.com/Grupo-Impulso-Digital/gravity-cli/internal/normalize"
 )
 
@@ -233,7 +234,7 @@ func Suggest(in Inputs) []Suggestion {
 		if i >= 2 {
 			break
 		}
-		slug := normalize.ProductSlug(path.Base(f.Path))
+		slug := firstNonEmpty(docs.Slug(path.Base(f.Path)), normalize.ProductSlug(path.Base(f.Path)))
 		cands = append(cands, candidate{
 			template: config.TemplateVerbatimDocs, name: "docs-" + slug, slug: slug, title: titleCase(path.Base(f.Path)),
 			source:  fmt.Sprintf("%s (%d files)", f.Path, f.Files),

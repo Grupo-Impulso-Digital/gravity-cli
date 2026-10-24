@@ -130,6 +130,18 @@
 - The pass token budget (400k tokens per pass); the server's run and month
   budgets apply.
 
+### Fixed
+
+- Slugs keep accented letters as their ASCII base, exactly like Gravity's
+  slugifier: the API reference page of the tag `État des actifs` is
+  `etat-des-actifs`, no longer `tat-des-actifs`, and the same holds for
+  verbatim pages, collections and heading anchors, guides collections and
+  the docs spaces `setup` suggests. Pages created under the old slug are
+  updated in place: the reference pass falls back to it, and the verbatim
+  pass keeps the live slug of the pages it manages and an existing
+  collection's old slug. Block keys keep the old form, so no existing block
+  changes identity. Product slugs are unchanged.
+
 ## v1.1.1 — Unreleased
 
 ### Fixed
