@@ -108,7 +108,8 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   computes the version from the tags (`internal/release`), pushes the tag
   with `GITHUB_TOKEN`, runs GoReleaser from that tag (archives,
   `checksums.txt`, the Homebrew cask in `Grupo-Impulso-Digital/homebrew-tap`,
-  the Scoop manifest in `Grupo-Impulso-Digital/scoop-bucket`), moves the
+  the Scoop manifest in `Grupo-Impulso-Digital/scoop-bucket`, each as a pull
+  request, see below), merges those two pull requests, moves the
   major tag (`v1`) that `uses: …/ci/github@v1` resolves, and runs `docs.yml`
   on the tag. A failed publish is retried with "Re-run failed jobs"; a full
   re-run refuses the already tagged commit.
@@ -128,9 +129,23 @@ patch the newest released line. `main` is frozen: nothing merges into it.
 - `CHANGELOG.md` keeps the next version's section at the top
   (`## vX.Y.Z — Unreleased`); the `bump` you release with must produce that
   version.
-- A Homebrew tap or Scoop bucket failure (the `GORELEASER_TOKEN` PAT needs
-  contents:write on `homebrew-tap` and `scoop-bucket`) leaves a warning on the
-  run; the GitHub release and the major tag still ship.
+- **The tap and the bucket change through pull requests.** The organization
+  ruleset `org-protected-branches` covers every repository's default branch: a
+  pull request is required (0 approvals) and nobody bypasses it for a direct
+  push, so GoReleaser's own push failed with `409 Repository rule violations`
+  on v1.2.0. `homebrew_casks[].repository` and `scoops[].repository` therefore
+  set `branch: gravity-{{ .Tag }}` and `pull_request` (`enabled: true`, base
+  `main` of the same repository); GoReleaser pushes the manifest to that
+  branch and opens the pull request. After it, `release.yml`'s "Merge the
+  Homebrew tap and Scoop bucket pull requests" step (stable releases only,
+  pre-releases skip the cask and manifest) finds each pull request by its head
+  branch `gravity-${TAG}`, squash-merges it with `GORELEASER_TOKEN` (three
+  tries, since a new pull request can report itself unmergeable for a moment),
+  then deletes the branch. A missing pull request, a failed merge or an
+  unset token is a `::warning::` that names the repository and the pull
+  request to merge by hand; the GitHub release and the major tag still ship.
+  `internal/distribution` pins the keys, the shared branch name and the
+  merge step.
 - **Majors are pinned everywhere.** `install.sh`/`install.ps1` default to
   `GRAVITY_VERSION=1` and resolve `<major>` to the newest `v<major>.x.y`
   release; the action's `version` input defaults to `1`; the CI templates
@@ -139,9 +154,10 @@ patch the newest released line. `main` is frozen: nothing merges into it.
 - **Validate** with `goreleaser check`; dry-run with
   `goreleaser release --snapshot --clean` (writes `dist/`).
 - **Secrets**: the default `GITHUB_TOKEN` pushes the tag, creates the release
-  and moves the major tag; a fine-grained `GORELEASER_TOKEN` (Contents
-  read/write on the tap and bucket repositories only) publishes the cask and
-  manifest. Without it the binaries still ship.
+  and moves the major tag; a fine-grained `GORELEASER_TOKEN` (Contents and
+  Pull requests read/write on the tap and bucket repositories only) pushes the
+  release branches, opens the pull requests and merges them. Without it the
+  binaries still ship.
 - `install.sh` reconstructs the archive name from the tag and `uname`; keep it
   in lockstep with the archive `name_template`.
 - The binaries are unsigned; the cask strips the quarantine attribute.
