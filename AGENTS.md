@@ -165,11 +165,29 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   `1` findings produced, `2` operational error (network/bad input),
   `3` license refusal, `4` no usable credentials (`token_missing`,
   `token_unresolved`, any `401`, which `api.StopsRun` also treats as
-  run-stopping); precedence 3 > 2 > 1 > 0. Only a job `internal/ci` marks
-  `NoSecrets()` (a fork pull request, a Dependabot event) may skip without a
-  token. Commands return an
+  run-stopping), `5` an AI spend cap reached (`budget_exceeded`); precedence
+  3 > 2 > 1 > 0 for pass outcomes. In an error chain `CodeFor` ranks 3 > 4 > 5 >
+  the command's own code (2, 1), so a spend cap beats the `2` a halted run
+  used to end with but never a licence or credential refusal. Only a job
+  `internal/ci` marks `NoSecrets()` (a fork pull request, a Dependabot event)
+  may skip without a token. Commands return an
   `*ExitError` (with an `ErrCode` for the `--json` envelope); never call
   `os.Exit` inside a command.
+- **Spend cap refusals** (`internal/api/budget.go`): a 402 whose envelope code
+  is `budget_exceeded` decodes to `*api.BudgetExceededError` (embeds the raw
+  `*APIError`, so `HaltsRun` and `HasCode` still see it). Its `BudgetDetails`
+  (`scope` `run`/`month`/`feature`, `feature`, `limitUsd`, `spentUsd`,
+  `resetsAt`) are all optional: the repository budget the server sends today
+  as `details: [{path: "budget.maxCostUsdPerRun" | "…PerMonth", message:
+  "<limit>"}]` and the org cap object are both read, and the message stays
+  correct with none of them (`This run's AI budget is used up: $5.20 spent of
+  a $5.00 limit. Ask an organization admin to raise the cap in Gravity › AI
+  usage.`). `CodeFor` maps it to `5` from anywhere in the chain, `runError`
+  keeps the typed error as the whole message of a halted run, and the
+  `--json` envelope carries `error.code: budget_exceeded` plus the details in
+  `error.details`. The run still halts and is finished as failed. A pass
+  skipped with the plan's `budget_exceeded` reason is not an error and does not
+  change the exit code.
 - **License refusals** (`internal/api/license.go`): a 403 whose envelope code is
   `module_disabled` (with `module`) or `seat_limit` decodes to
   `*api.ModuleDisabledError` / `*api.SeatLimitError`, whose message tells the
@@ -244,7 +262,8 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   30 min in total (`LLMTimeout`, `LLMRetryCap`). `lease_lost` and
   `run_not_running` stop a run without a finish call (`api.StopsRun`);
   `budget_exceeded` and `no_provider_key` halt it, then finish it as failed
-  (`api.HaltsRun`).
+  (`api.HaltsRun`; `budget_exceeded` ends with exit `5`, `no_provider_key`
+  with `2`).
 - **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
   all human output on stderr. With `CI=true` or without a terminal, output is
   plain ASCII and nothing prompts. There is no global `--ci` flag in 1.x

@@ -67,10 +67,11 @@ command is cobra's usage error.
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, a stale or dirty branch, a recording that no longer matches. |
 | `3` | Licence refusal (`module_disabled`, `seat_limit`). |
 | `4` | No usable credentials: no token (`token_missing`), only unexpanded CI variables such as a literal `$(GRAVITY_REPO_TOKEN)` in CI, or locally with no profile token (`token_unresolved`), or any `401` (`unauthorized`), which also stops a run without its finish call. |
+| `5` | An AI spend cap is used up (`budget_exceeded`, a 402 decoded to `*api.BudgetExceededError`): the run halts and is finished as failed. |
 | `130` | Interrupted: the run was finished with `status: cancelled` (or cancelled through `POST /runs/{id}/cancel`). |
 
 `CodeFor` in `internal/cli/exit.go` applies them: a licence refusal anywhere in
-the error chain wins, then a `401`, then the command's own `*ExitError`.
+the error chain wins, then a `401`, then a spend cap refusal, then the command's own `*ExitError`.
 
 ## Endpoint map
 
@@ -397,7 +398,11 @@ source?>`), `<existing_units>`, `<entrypoint_files>`, `<units>` and
 - `budget_exceeded` and `no_provider_key` halt the run: the pass in flight
   ends, no other pass starts, in-flight passes are canceled, pages already
   sent stay, and the run is finished as failed with the reason
-  (`run.ErrHalted`).
+  (`run.ErrHalted`). `budget_exceeded` then exits `5`; its `details` are read
+  from the list shape (`[{path: "budget.maxCostUsdPerRun" | "…PerMonth",
+  message: "<limit>"}]`) or from an object (`scope` `run` | `month` |
+  `feature`, `feature`, `limitUsd`, `spentUsd`, `resetsAt`), every field
+  optional.
 
 ## LLM gateway
 

@@ -166,7 +166,7 @@ func (a *app) runPipeline(ctx context.Context, f runFlags) error {
 func (a *app) failWith(err error, data *runData) error {
 	var ee *ExitError
 	if errors.As(err, &ee) && a.ui.JSON() {
-		if ferr := a.ui.Failure(ui.ErrorInfo{Code: errorCode(err), Message: err.Error(), ExitCode: CodeFor(err)}, data); ferr != nil {
+		if ferr := a.ui.Failure(ui.ErrorInfo{Code: errorCode(err), Message: err.Error(), ExitCode: CodeFor(err), Details: errorDetails(err)}, data); ferr != nil {
 			return ferr
 		}
 	}

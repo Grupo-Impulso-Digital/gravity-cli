@@ -411,6 +411,8 @@ func TestExplain(t *testing.T) {
 
 func TestExitCodeTable(t *testing.T) {
 	license := &api.ModuleDisabledError{Module: "cli", APIError: &api.APIError{StatusCode: 403, Code: api.CodeModuleDisabled}}
+	budget := &api.BudgetExceededError{BudgetDetails: api.BudgetDetails{Scope: api.BudgetScopeMonth}, APIError: &api.APIError{StatusCode: 402, Code: api.CodeBudgetExceeded}}
+	unauthorized := &api.APIError{StatusCode: 401, Code: api.CodeUnauthorized}
 	cases := []struct {
 		err  error
 		code int
@@ -424,6 +426,16 @@ func TestExitCodeTable(t *testing.T) {
 		{Fail(CodeError, fmt.Errorf("wrapped: %w", license)), CodeLicense},
 		{&api.SeatLimitError{APIError: &api.APIError{StatusCode: 403, Code: api.CodeSeatLimit}}, CodeLicense},
 		{&config.ManifestError{}, CodeError},
+		{budget, CodeBudget},
+		{Fail(CodeError, fmt.Errorf("wrapped: %w", budget)), CodeBudget},
+		{fmt.Errorf("run halted: %w", fmt.Errorf("guides: %w", budget)), CodeBudget},
+		{Fail(CodeFindings, budget), CodeBudget},
+		{&ExitError{Code: CodeBudget}, CodeBudget},
+		{&api.APIError{StatusCode: 402, Code: api.CodeBudgetExceeded}, CodeError},
+		{&api.APIError{StatusCode: 402, Code: api.CodeNoProviderKey}, CodeError},
+		{errors.Join(budget, license), CodeLicense},
+		{errors.Join(budget, unauthorized), CodeCredentials},
+		{errors.Join(budget, errors.New("also failed")), CodeBudget},
 	}
 	for i, tc := range cases {
 		if got := CodeFor(tc.err); got != tc.code {
@@ -432,6 +444,12 @@ func TestExitCodeTable(t *testing.T) {
 	}
 	if errorCode(&config.ManifestError{}) != api.CodeManifestInvalid || errorCode(&api.APIError{Code: api.CodeLeaseHeld}) != api.CodeLeaseHeld {
 		t.Fatal("errorCode mapping")
+	}
+	if errorCode(budget) != api.CodeBudgetExceeded || errorCode(&ExitError{Code: CodeBudget}) != api.CodeBudgetExceeded || errorCode(fmt.Errorf("x: %w", budget)) != api.CodeBudgetExceeded {
+		t.Fatal("errorCode of a budget refusal")
+	}
+	if d, ok := errorDetails(fmt.Errorf("x: %w", budget)).(api.BudgetDetails); !ok || d.Scope != api.BudgetScopeMonth || errorDetails(license) != nil || errorDetails(nil) != nil {
+		t.Fatal("errorDetails")
 	}
 }
 

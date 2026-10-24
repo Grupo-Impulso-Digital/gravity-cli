@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.3.0 — Unreleased
+
+### Added
+
+- A spend cap refusal (`402 budget_exceeded`) is a typed
+  `api.BudgetExceededError` and exits `5`, which CI can tell apart from an
+  operational error (`2`). The run still halts and is finished as failed. The
+  message says which cap was reached (this run, the month or a feature), the
+  limit and the spend, and when it resets, whichever the server sends, and
+  tells you to ask an organization admin to raise the cap in Gravity › AI usage.
+  `--json` carries `error.code: budget_exceeded`, `exitCode: 5` and
+  `error.details` (`scope`, `feature`, `limitUsd`, `spentUsd`, `resetsAt`).
+  Precedence: a licence refusal (`3`) and a rejected token (`4`) still win over
+  a spend cap anywhere in the error chain; the spend cap wins over the
+  command's own code. The GitHub action's `exit-code` output and the CI
+  templates pass `5` through unchanged.
+
 ## v1.2.0 — 2026-10-24
 
 ### Added

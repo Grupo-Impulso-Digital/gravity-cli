@@ -197,7 +197,7 @@ func (e *APIError) hint() string {
 	case CodeNoProviderKey:
 		return "add an LLM provider key in Gravity's AI settings"
 	case CodeBudgetExceeded:
-		return "the repository's run or monthly AI budget is spent; raise it in Gravity"
+		return "ask an organization admin to raise the cap in Gravity › AI usage"
 	}
 	if e.StatusCode == http.StatusUnauthorized && e.Code == "" {
 		return "check the token or run `gravity login`"

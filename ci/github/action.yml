@@ -40,7 +40,7 @@ outputs:
     description: The Gravity run (or the bundle to review) this job produced.
     value: ${{ steps.gravity.outputs.run-url }}
   exit-code:
-    description: "gravity's exit code: 0 success, 1 findings, 2 error, 3 licence refusal, 4 missing, unresolved or rejected token."
+    description: "gravity's exit code: 0 success, 1 findings, 2 error, 3 licence refusal, 4 missing, unresolved or rejected token, 5 AI spend cap used up."
     value: ${{ steps.gravity.outputs.exit-code }}
 
 runs:
