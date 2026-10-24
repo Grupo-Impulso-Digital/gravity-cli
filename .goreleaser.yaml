@@ -79,9 +79,9 @@ homebrew_casks:
     description: "Keeps documentation in Gravity true to your code, from CI"
     hooks:
       post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/gravity"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/gravity"]
           end
 
 scoops:

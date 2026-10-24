@@ -195,7 +195,7 @@ jobs:
         continue-on-error: true
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: v2.19.0
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
