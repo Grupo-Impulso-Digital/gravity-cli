@@ -130,6 +130,27 @@ func TestReleasesComeFromTheWorkflow(t *testing.T) {
 	}
 }
 
+func TestDependabotTargetsTheTrunk(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "dependabot.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Updates []struct {
+			Ecosystem    string `yaml:"package-ecosystem"`
+			TargetBranch string `yaml:"target-branch"`
+		} `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range cfg.Updates {
+		if u.TargetBranch != "develop" {
+			t.Errorf("dependabot %s targets %q, want develop", u.Ecosystem, u.TargetBranch)
+		}
+	}
+}
+
 func TestCIGuardsTheTrunk(t *testing.T) {
 	var wf struct {
 		On   map[string]map[string][]string `yaml:"on"`
