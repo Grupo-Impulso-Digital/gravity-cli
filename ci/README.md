@@ -66,6 +66,15 @@ the provider's secret store. The CLI reads `GRAVITY_REPO_TOKEN` first, then
 `GRAVITY_TOKEN` (a user or organization token). Never commit a token, and
 never put it in `.gravity.yaml` (a `token:` there is a manifest error).
 
+A repository token expires after 365 days unless it was minted otherwise (the
+app offers 30, 90 or 365 days, or never). `gravity ci setup` prints the date.
+From 14 days before it, every `gravity run` and `gravity check` warns, as a
+`::warning::` annotation in a GitHub Actions job and as a plain line in the
+other providers' logs, and `gravity status` lists it. Once it has passed, the
+job fails with `401 token_expired` (exit `4`). Run `gravity ci setup` again, or
+mint a token in the app under CLI & tokens › Repo tokens, and replace the CI
+secret `GRAVITY_REPO_TOKEN`.
+
 How each template hands the token over:
 
 | Template | Variables |

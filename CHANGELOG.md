@@ -1,6 +1,34 @@
 # Changelog
 
-## v1.4.0 — Unreleased
+## v1.5.0 — Unreleased
+
+### Added
+
+- `gravity ci setup` prints when the repository token it minted expires, in the
+  summary next to the secret it installed or printed (`Expires: 2027-10-25`
+  with a reminder to run it again before then, or `Expires: never`). The server
+  now gives a repository token a 365-day lifetime by default, and the CLI keeps
+  sending `expiresInDays: null` to ask for that default. `--json` carries the
+  date as `data.token.expiresAt`.
+- `gravity run` and `gravity check` warn when their token has fewer than 14 days
+  left (`token_expiring`), from the `whoami` answer every run already fetches,
+  so there is no extra request. In a GitHub Actions job the warning is a
+  `::warning title=Gravity token expiring::` annotation; on other CI providers
+  and locally it is a plain warning, and `--json` lists it under `warnings`.
+
+### Changed
+
+- The `token_expired` hint and the `token_expiring` warning of `gravity status`
+  follow the kind of token, read from its prefix. A repository token is told to
+  run `gravity ci setup`, or to mint one under CLI & tokens › Repo tokens in the
+  app, and then to update the CI secret `GRAVITY_REPO_TOKEN`; a user token keeps
+  `gravity login`; an organization token is sent to CLI & tokens. A server
+  message that already says what to do (its `token_expired` text is now specific
+  to the kind of token) is shown as it is, without the hint repeated after it.
+  A rejected repository token in a profile no longer gets the advice to run
+  `gravity login`.
+
+## v1.4.0 — 2026-10-25
 
 ### Added
 
