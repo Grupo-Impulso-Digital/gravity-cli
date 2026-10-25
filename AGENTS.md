@@ -180,7 +180,7 @@ patch the newest released line. `main` is frozen: nothing merges into it.
 - **Exit-code contract** (`internal/cli/exit.go`): `0` success/no findings,
   `1` findings produced, `2` operational error (network/bad input),
   `3` license or organization-policy refusal (`module_disabled`, `seat_limit`,
-  `ai_disabled`), `4` no usable credentials (`token_missing`,
+  `ai_disabled`, `no_provider_key`), `4` no usable credentials (`token_missing`,
   `token_unresolved`, any `401`, which `api.StopsRun` also treats as
   run-stopping), `5` an AI spend cap reached (`budget_exceeded`); precedence
   3 > 2 > 1 > 0 for pass outcomes. In an error chain `CodeFor` ranks 3 > 4 > 5 >
@@ -220,6 +220,26 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   CLI never calls `/api/mcp`, so the JSON-RPC `MODULE_DISABLED` shape needs no
   handling here. A 429 `concurrency_limited` is an ordinary rate limit: the
   retry policy below waits its `Retry-After` (or `retryAfter`) and tries again.
+- **Missing AI provider** (`internal/api/provider.go`): a 402 `no_provider_key`
+  (the organization has neither Origin nor a provider key) decodes to
+  `*api.NoProviderKeyError`: `No AI provider is connected for this
+  organization. An organization admin can connect Origin or add a provider key
+  in Gravity › Settings › AI.` It is a licence-class refusal like `ai_disabled`
+  (an admin changes the organization's AI settings; retrying or signing in
+  again does not help), so `api.IsLicenseError` is true, `CodeFor` maps it to
+  `3` from anywhere in the chain, `runError` keeps it as the whole message of a
+  halted run and `--json` carries `error.code: no_provider_key`. It halts the
+  run like the other AI refusals (`api.HaltsRun`). It used to exit `2`.
+- **Doctor** (`internal/cli/doctor.go`): `gravity doctor` needs a token, not a
+  repository. It calls `GET /whoami` and `GET /api/llm/v1/config` and prints
+  the connected providers, the default model and the active spend caps (per
+  run, per month, per feature, with the month's spend). The caps are the
+  optional `spend` field of the config response (`api.Spend`: `monthStart`,
+  `resetsAt`, `org` and `features`, each line `feature`, `spentUsd`,
+  `maxUsdPerRun`, `maxUsdPerMonth`); a server that does not send it gets one
+  line saying so and `spend: null` in `--json`, never invented numbers.
+  `hasKey: false` ends doctor with the `no_provider_key` error (exit `3`) after
+  printing everything else, with the data in the failure envelope.
 - **Token-security boundary** (`internal/auth`): a token comes only from
   `--token`, `GRAVITY_REPO_TOKEN`, `GRAVITY_TOKEN` or a profile in `~/.config/gravity/profiles.yaml`
   (mode `0600`). A `token:` anywhere in `.gravity.yaml` is a manifest error.
@@ -288,7 +308,7 @@ patch the newest released line. `main` is frozen: nothing merges into it.
   `run_not_running` stop a run without a finish call (`api.StopsRun`);
   `budget_exceeded`, `no_provider_key` and `ai_disabled` halt it, then finish it
   as failed (`api.HaltsRun`; `budget_exceeded` ends with exit `5`, `ai_disabled`
-  with `3`, `no_provider_key` with `2`).
+  and `no_provider_key` with `3`).
 - **Output** (`internal/ui`): `--json` writes exactly one envelope on stdout and
   all human output on stderr. With `CI=true` or without a terminal, output is
   plain ASCII and nothing prompts. There is no global `--ci` flag in 1.x

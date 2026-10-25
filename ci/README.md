@@ -48,7 +48,9 @@ overrides the detection anywhere.
 Deploys are never gated by documentation writes. Only `check` findings exit
 `1`; a failed pass or a missing target exits `2`, a spend cap that halts the
 run exits `5` (the run is finished as failed; an organization admin raises the
-cap in Gravity › AI usage), and an unapproved target only skips its pass
+cap in Gravity › AI usage), an organization without an AI provider exits `3`
+(an admin connects Origin or adds a provider key in Gravity › Settings › AI),
+and an unapproved target only skips its pass
 unless `--strict`.
 
 The first CI run of an AI pass (no watermark yet) is skipped with
@@ -135,7 +137,7 @@ Azure, fails with exit `4`, so a missing secret never passes silently. The GitHu
 | Output | Value |
 | ------ | ----- |
 | `run-url` | The Gravity run, or the bundle to review when the run proposed changes. |
-| `exit-code` | `0` success, `1` findings, `2` error, `3` licence or organization-policy refusal (including AI turned off), `4` missing, unresolved or rejected token, `5` AI spend cap used up. |
+| `exit-code` | `0` success, `1` findings, `2` error, `3` licence or organization-policy refusal (including AI turned off and no AI provider connected), `4` missing, unresolved or rejected token, `5` AI spend cap used up. |
 
 The action resolves the version through `install.sh`, caches the binary per
 resolved release with `actions/cache`, and installs it with `install.sh`

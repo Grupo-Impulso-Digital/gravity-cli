@@ -414,6 +414,7 @@ func TestExitCodeTable(t *testing.T) {
 	budget := &api.BudgetExceededError{BudgetDetails: api.BudgetDetails{Scope: api.BudgetScopeMonth}, APIError: &api.APIError{StatusCode: 402, Code: api.CodeBudgetExceeded}}
 	unauthorized := &api.APIError{StatusCode: 401, Code: api.CodeUnauthorized}
 	aiOff := &api.AIDisabledError{APIError: &api.APIError{StatusCode: 403, Code: api.CodeAIDisabled}}
+	noKey := api.NewNoProviderKeyError()
 	cases := []struct {
 		err  error
 		code int
@@ -442,6 +443,10 @@ func TestExitCodeTable(t *testing.T) {
 		{errors.Join(budget, aiOff), CodeLicense},
 		{errors.Join(aiOff, unauthorized), CodeLicense},
 		{&api.APIError{StatusCode: 403, Code: api.CodeAIDisabled}, CodeError},
+		{noKey, CodeLicense},
+		{Fail(CodeError, fmt.Errorf("run halted: %w", fmt.Errorf("guides: %w", noKey))), CodeLicense},
+		{errors.Join(budget, noKey), CodeLicense},
+		{errors.Join(noKey, unauthorized), CodeLicense},
 		{&api.APIError{StatusCode: 429, Code: api.CodeConcurrencyLimited}, CodeError},
 	}
 	for i, tc := range cases {
@@ -457,6 +462,9 @@ func TestExitCodeTable(t *testing.T) {
 	}
 	if errorCode(aiOff) != api.CodeAIDisabled || errorCode(Fail(CodeError, fmt.Errorf("x: %w", aiOff))) != api.CodeAIDisabled {
 		t.Fatal("errorCode of an AI refusal")
+	}
+	if errorCode(noKey) != api.CodeNoProviderKey || errorCode(Fail(CodeError, fmt.Errorf("x: %w", noKey))) != api.CodeNoProviderKey {
+		t.Fatal("errorCode of a missing provider")
 	}
 	if d, ok := errorDetails(fmt.Errorf("x: %w", budget)).(api.BudgetDetails); !ok || d.Scope != api.BudgetScopeMonth || errorDetails(license) != nil || errorDetails(nil) != nil {
 		t.Fatal("errorDetails")

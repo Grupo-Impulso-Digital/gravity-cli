@@ -1,0 +1,8 @@
+Gravity - AI - Acme
+ok AI provider connected: anthropic, openai
+  Default model  claude-sonnet-4-5 (anthropic)
+Spend caps  monthly caps reset on 2026-11-01
+  SCOPE         PER RUN  PER MONTH  SPENT THIS MONTH
+  Organization  $5.00    $200.00    $42.10
+  Ask AI        -        $20.00     $3.10
+  CLI           $2.50    -          $30.00

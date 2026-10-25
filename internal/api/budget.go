@@ -40,11 +40,11 @@ func (e *BudgetExceededError) Error() string {
 	b.WriteString(" is used up")
 	switch {
 	case e.LimitUSD != nil && e.SpentUSD != nil:
-		fmt.Fprintf(&b, ": %s spent of a %s limit", usd(*e.SpentUSD), usd(*e.LimitUSD))
+		fmt.Fprintf(&b, ": %s spent of a %s limit", USD(*e.SpentUSD), USD(*e.LimitUSD))
 	case e.LimitUSD != nil:
-		fmt.Fprintf(&b, ": the limit is %s", usd(*e.LimitUSD))
+		fmt.Fprintf(&b, ": the limit is %s", USD(*e.LimitUSD))
 	case e.SpentUSD != nil:
-		fmt.Fprintf(&b, ": %s spent", usd(*e.SpentUSD))
+		fmt.Fprintf(&b, ": %s spent", USD(*e.SpentUSD))
 	}
 	if !e.ResetsAt.IsZero() {
 		b.WriteString("; it resets on " + resetLabel(e.ResetsAt))
@@ -164,7 +164,8 @@ func resetLabel(t time.Time) string {
 	return t.Format("2006-01-02 15:04") + " UTC"
 }
 
-func usd(v float64) string {
+// USD formats an amount of dollars: two decimals, or all of them for less than a cent.
+func USD(v float64) string {
 	if v > 0 && v < 0.01 {
 		return "$" + strconv.FormatFloat(v, 'f', -1, 64)
 	}

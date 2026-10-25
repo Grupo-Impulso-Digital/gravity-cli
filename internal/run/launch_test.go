@@ -114,7 +114,8 @@ func TestRunHalts(t *testing.T) {
 		{name: "budget exceeded at the bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeBudgetExceeded, details: map[string]any{"scope": "month", "resetsAt": "2026-11-01"}, summary: "The monthly AI budget is used up; it resets on 2026-11-01.", typed: api.IsBudgetError, status: http.StatusPaymentRequired},
 		{name: "ai disabled mid pass", route: "POST /api/llm/v1/messages", code: api.CodeAIDisabled, details: map[string]any{}, summary: "AI is turned off for this organization.", typed: api.IsLicenseError, status: http.StatusForbidden, passes: 2, ingested: true},
 		{name: "ai disabled at the bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeAIDisabled, details: map[string]any{}, summary: "AI is turned off for this organization.", typed: api.IsLicenseError, status: http.StatusForbidden},
-		{name: "no provider key mid pass", route: "POST /api/llm/v1/messages", code: api.CodeNoProviderKey, status: http.StatusPaymentRequired, passes: 2, ingested: true},
+		{name: "no provider key mid pass", route: "POST /api/llm/v1/messages", code: api.CodeNoProviderKey, summary: "No AI provider is connected for this organization.", typed: func(err error) bool { _, ok := api.AsNoProviderKey(err); return ok }, status: http.StatusPaymentRequired, passes: 2, ingested: true},
+		{name: "no provider key at the bundle fetch", route: "GET /api/llm/v1/instructions", code: api.CodeNoProviderKey, summary: "No AI provider is connected for this organization.", typed: api.IsLicenseError, status: http.StatusPaymentRequired},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

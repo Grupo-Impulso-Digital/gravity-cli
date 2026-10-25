@@ -64,6 +64,7 @@ type LLMConfig struct {
 	Tone               string   `json:"tone"`
 	HasKey             bool     `json:"hasKey"`
 	AvailableProviders []string `json:"availableProviders"`
+	Spend              *Spend   `json:"spend,omitempty"`
 }
 
 // LLMConfig calls GET /api/llm/v1/config.

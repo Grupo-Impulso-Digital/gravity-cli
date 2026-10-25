@@ -294,6 +294,9 @@ func classify(e *APIError) error {
 	if be := classifyBudget(e); be != nil {
 		return be
 	}
+	if nk := classifyProvider(e); nk != nil {
+		return nk
+	}
 	return classifyLicense(e)
 }
 

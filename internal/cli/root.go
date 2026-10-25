@@ -51,6 +51,7 @@ func newRootCommand(a *app) *cobra.Command {
 		newApproveCmd(a),
 		newCICmd(a),
 		newStatusCmd(a),
+		newDoctorCmd(a),
 		newCheckCmd(a),
 		newExplainCmd(a),
 		newAgentCmd(a),

@@ -54,12 +54,13 @@ func (e *AIDisabledError) Error() string {
 // Unwrap exposes the raw *APIError.
 func (e *AIDisabledError) Unwrap() error { return e.APIError }
 
-// IsLicenseError reports whether err is a license or organization-policy refusal (module_disabled, seat_limit, ai_disabled) rather than an auth, network or input failure.
+// IsLicenseError reports whether err is a license or organization-policy refusal (module_disabled, seat_limit, ai_disabled, no_provider_key) rather than an auth, network or input failure.
 func IsLicenseError(err error) bool {
 	var md *ModuleDisabledError
 	var sl *SeatLimitError
 	var ad *AIDisabledError
-	return errors.As(err, &md) || errors.As(err, &sl) || errors.As(err, &ad)
+	_, nk := AsNoProviderKey(err)
+	return errors.As(err, &md) || errors.As(err, &sl) || errors.As(err, &ad) || nk
 }
 
 func classifyLicense(e *APIError) error {
