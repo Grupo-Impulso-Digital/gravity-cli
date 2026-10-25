@@ -100,6 +100,7 @@ type APIError struct {
 	Holder     *LeaseHolder
 	Method     string
 	Path       string
+	TokenKind  string
 }
 
 func (e *APIError) Error() string {
@@ -179,7 +180,10 @@ func (e *APIError) fieldSummary() string {
 func (e *APIError) hint() string {
 	switch e.Code {
 	case CodeTokenExpired:
-		return "run `gravity login` to get a new token"
+		if e.saysHowToRenew() {
+			return ""
+		}
+		return RenewHint(e.TokenKind)
 	case CodeRepoNotConnected:
 		return "run `gravity setup` to connect this repository"
 	case CodeModelUnavailable:
@@ -205,6 +209,28 @@ func (e *APIError) hint() string {
 		return "check the token or run `gravity login`"
 	}
 	return ""
+}
+
+func (e *APIError) saysHowToRenew() bool {
+	for _, marker := range []string{"gravity login", "gravity ci setup", "CLI & tokens"} {
+		if strings.Contains(e.Message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// RenewHint says how to replace an expired or expiring token of the given kind; an unknown kind gets the generic advice.
+func RenewHint(kind string) string {
+	switch kind {
+	case TokenKindRepo:
+		return "run `gravity ci setup` to mint a new one, or mint one under CLI & tokens › Repo tokens in the app, then update the CI secret GRAVITY_REPO_TOKEN"
+	case TokenKindUser:
+		return "run `gravity login` to renew it"
+	case TokenKindOrg:
+		return "mint a new one under CLI & tokens in the app and replace the one in use"
+	}
+	return "run `gravity login`, or mint a new token under CLI & tokens in the app"
 }
 
 // Is matches the package sentinels by envelope code.

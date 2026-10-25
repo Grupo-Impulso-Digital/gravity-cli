@@ -145,13 +145,18 @@ func (p *Printer) Debugf(format string, args ...any) {
 
 // Warn records a warning for the envelope and prints it to stderr.
 func (p *Printer) Warn(code, message string) {
+	p.WarnLine(code, message, p.Mark(MarkWarn)+" "+message)
+}
+
+// WarnLine records a warning for the envelope like Warn and prints line to stderr in place of the default rendering.
+func (p *Printer) WarnLine(code, message, line string) {
 	for _, w := range p.warnings {
 		if w.Code == code && w.Message == message {
 			return
 		}
 	}
 	p.warnings = append(p.warnings, Warning{Code: code, Message: message})
-	fmt.Fprintf(p.errw, "%s %s\n", p.Mark(MarkWarn), message)
+	fmt.Fprintln(p.errw, line)
 }
 
 // Warnings returns the recorded warnings.

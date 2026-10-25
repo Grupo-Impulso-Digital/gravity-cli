@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -189,15 +188,8 @@ func capabilityWarnings(s *session, conn *api.ConnectResponse, plan *api.Plan, n
 	add := func(code, pass, msg string) {
 		out = append(out, capabilityWarning{Code: code, Pass: pass, Message: msg})
 	}
-	if exp := s.whoData.Token.ExpiresAt; exp != nil && *exp != "" {
-		if t, err := time.Parse(time.RFC3339, *exp); err == nil {
-			switch left := t.Sub(now); {
-			case left <= 0:
-				add("token_expired", "", "the token expired on "+t.Format("2006-01-02")+"; run `gravity login` again")
-			case left < 14*24*time.Hour:
-				add("token_expiring", "", fmt.Sprintf("the token expires in %s (%s); run `gravity login` to renew it", plural(int(math.Ceil(left.Hours()/24)), "day", "days"), t.Format("2006-01-02")))
-			}
-		}
+	if code, msg := tokenExpiryNotice(s.whoData.Token.Kind, s.whoData.Token.ExpiresAt, now); code != "" {
+		add(code, "", msg)
 	}
 	for _, f := range cisetup.Outdated(s.info.root) {
 		add("ci_outdated", "", f.Path+" "+f.Reason+": "+f.Fix+", or run `gravity ci setup` to update a file it wrote")

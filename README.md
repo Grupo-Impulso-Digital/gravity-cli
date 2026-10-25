@@ -508,7 +508,7 @@ Gravity does not fence pages per repository.
 | `gravity review [runId\|latest]` | Open a run's change request (prints the link without a terminal or with `--json`); defaults to `latest`. |
 | `gravity runs` | Recent runs (`--limit`, default 10; `--watch` until none is running); `runs show <id>` per-pass state, `runs cancel <id>`. |
 | `gravity approve [site/space]... [--all]` | List the spaces waiting for a grant and why, grant them (user token); a pass name grants that pass's space. |
-| `gravity ci setup\|check` | Write the CI file, mint and install `GRAVITY_REPO_TOKEN` (`--provider github\|gitlab\|bitbucket\|azure\|jenkins\|circleci\|none`, `--no-secret`); check the file and the secret (exit `1` when incomplete). |
+| `gravity ci setup\|check` | Write the CI file, mint and install `GRAVITY_REPO_TOKEN` (`--provider github\|gitlab\|bitbucket\|azure\|jenkins\|circleci\|none`, `--no-secret`) and print when it expires (365 days unless the server says otherwise); check the file and the secret (exit `1` when incomplete). |
 | `gravity doctor` | Whether AI is ready for the organization: connected providers, default model and the active spend caps (per run, per month, per feature, with the month's spend, when the server reports them). Exits `3` when no provider is connected. Needs a token, not a repository. |
 | `gravity status` | Auth, connection, manifest, passes with targets and watermarks, recent runs, open bundles, tokens, health and capability warnings; `--runs N` (default 5), `--check`. |
 | `gravity check` | The pull request gate: check passes (or the built-in check: drift, coverage of new operations, verbatim notes) plus every pass's doc impact; `--pass`, `--from`, `--to`, `--fail-on`, `--annotate`, `--comment`. |
@@ -576,6 +576,18 @@ default `.gravity.yaml`), `-C/--dir <dir>`, `--json`, `--no-color`
   fails with `token_unresolved` (a missing secret must not pass), while a local
   run falls back to the profile with a warning. Tokens are never read from
   `.gravity.yaml`.
+- Token lifetimes: a `gravity login` token lasts 90 days. A repository token
+  from `gravity ci setup` lasts 365 days, the server's default; one minted in
+  the app under CLI & tokens › Repo tokens can be 30, 90 or 365 days, or never
+  expire. `gravity ci setup` prints the expiry date of the token it minted,
+  `gravity whoami` shows it, and `gravity status`, `gravity run` and
+  `gravity check` warn from 14 days before it (`token_expiring`; a
+  `::warning::` annotation in a GitHub Actions job, a plain warning
+  elsewhere), using the `whoami` answer a run already fetches, so there is no
+  extra request. After it, every call fails with `401 token_expired` and exit
+  `4`. Replace a user token with `gravity login`; replace a repository token by
+  running `gravity ci setup` again, or by minting one in the app, and update the
+  CI secret `GRAVITY_REPO_TOKEN`.
 - API URL: `--api-url` > `GRAVITY_API_URL` > manifest `apiUrl` > profile
   `apiUrl` > `https://api.gravitydocs.io`. A profile token is only sent to the
   host that issued it (`token_host_mismatch` otherwise). API URLs must use
@@ -607,7 +619,7 @@ between them.
 | `1` | Findings: `validate` errors (also before a local real run, and in a local dry run that sending would fail on), `check` findings in `failOn`, structure conflicts, refused approvals, `ci check` on an incomplete setup, `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, a branch behind or diverged from its upstream, uncommitted tracked files, a recording that no longer matches HEAD. |
 | `3` | Licence or organization-policy refusal (`module_disabled`, `seat_limit`, `ai_disabled`, `no_provider_key`): ask a workspace administrator. With `ai_disabled`, AI is turned off for the organization and an admin can turn it on in Gravity › AI usage; with `no_provider_key`, no AI provider is connected and an admin connects Origin or adds a provider key in Gravity › Settings › AI (`gravity doctor` reports it too). The run halts and is finished as failed. |
-| `4` | No usable credentials: no token (`token_missing`), only CI variables that were never expanded such as a literal `$(GRAVITY_REPO_TOKEN)`, in CI or locally without a profile token (`token_unresolved`), or a token the server rejects (`401`, also in the middle of a run). |
+| `4` | No usable credentials: no token (`token_missing`), only CI variables that were never expanded such as a literal `$(GRAVITY_REPO_TOKEN)`, in CI or locally without a profile token (`token_unresolved`), or a token the server rejects (`401`, also in the middle of a run), an expired one included (`token_expired`). |
 | `5` | An AI spend cap is used up (`budget_exceeded`): this run's, the month's or a feature's. The run halts and is finished as failed; ask an organization admin to raise the cap in Gravity › AI usage. |
 | `130` | Interrupted (Ctrl-C or SIGTERM): the run was finished as cancelled and its lease released. |
 

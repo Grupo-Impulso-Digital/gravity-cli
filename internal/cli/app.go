@@ -222,6 +222,9 @@ func (a *app) credentialHint(err error) string {
 	if a.lastCreds != nil && a.lastCreds.TokenSource != auth.SourceProfile {
 		return "; the token in " + a.lastCreds.TokenFrom() + " was rejected"
 	}
+	if api.HasCode(err, api.CodeTokenExpired) {
+		return ""
+	}
 	return "; run `gravity login` to sign in again"
 }
 

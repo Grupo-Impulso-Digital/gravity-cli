@@ -80,6 +80,10 @@ Error `lease_held` after the timeout means nothing ran.
 
 - Exit `4` / `unauthorized`: `gravity login` (profile token expired or revoked). In CI, the
   `GRAVITY_REPO_TOKEN` secret is missing or revoked: `gravity ci setup` re-mints and installs it.
+- Exit `4` / `token_expired`: the token passed its expiry. A `gravity login` token lasts 90 days (renew it with
+  `gravity login`); a repository token lasts 365 days by default (`gravity ci setup` prints the date and mints
+  a replacement, or mint one in the app under CLI & tokens › Repo tokens, then update the CI secret
+  `GRAVITY_REPO_TOKEN`). `gravity status` and every CI run warn 14 days ahead (`token_expiring`).
 - `token_unresolved`: an env var holds `${{ ... }}` / `$VAR` literally; fix the CI secret wiring.
 - `token_host_mismatch`: the manifest `apiUrl` differs from the host the profile was issued for; log in to
   that host explicitly if trusted.

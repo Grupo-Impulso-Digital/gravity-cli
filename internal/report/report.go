@@ -307,6 +307,11 @@ func GitHubAnnotations(findings []api.Finding) []string {
 	return out
 }
 
+// GitHubWarning renders one warning annotation without a file.
+func GitHubWarning(title, message string) string {
+	return fmt.Sprintf("::warning title=%s::%s", propEscape(title), dataEscape(message))
+}
+
 func dataEscape(s string) string {
 	return strings.NewReplacer("%", "%25", "\r", "%0D", "\n", "%0A").Replace(s)
 }

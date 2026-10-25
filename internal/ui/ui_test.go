@@ -81,6 +81,16 @@ func TestJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestWarnLineRecordsOnceAndPrintsTheGivenLine(t *testing.T) {
+	var out, errb bytes.Buffer
+	p := New(&out, &errb, Options{})
+	p.WarnLine("token_expiring", "the token expires soon", "::warning::the token expires soon")
+	p.WarnLine("token_expiring", "the token expires soon", "::warning::the token expires soon")
+	if errb.String() != "::warning::the token expires soon\n" || len(p.Warnings()) != 1 || p.Warnings()[0].Code != "token_expiring" {
+		t.Fatalf("stderr = %q, warnings = %+v", errb.String(), p.Warnings())
+	}
+}
+
 func TestJSONFailureEnvelope(t *testing.T) {
 	var out, errb bytes.Buffer
 	p := New(&out, &errb, Options{JSON: true})

@@ -231,6 +231,67 @@ func TestTokenExpiredHint(t *testing.T) {
 	}
 }
 
+func TestTokenExpiredHintFollowsTheTokenKind(t *testing.T) {
+	const generic = `{"error":{"code":"token_expired","message":"Token expired"}}`
+	cases := []struct {
+		name    string
+		token   string
+		body    string
+		kind    string
+		want    []string
+		wantNot []string
+	}{
+		{"repo", "gr_repo_x", generic, api.TokenKindRepo, []string{"run `gravity ci setup`", "CLI & tokens › Repo tokens", "update the CI secret GRAVITY_REPO_TOKEN"}, []string{"gravity login"}},
+		{"user", "gr_user_x", generic, api.TokenKindUser, []string{"run `gravity login` to renew it"}, []string{"gravity ci setup"}},
+		{"org", "sk_live_x", generic, api.TokenKindOrg, []string{"mint a new one under CLI & tokens in the app"}, []string{"gravity login", "gravity ci setup"}},
+		{"unknown", "tok", generic, "", []string{"run `gravity login`", "CLI & tokens"}, []string{"gravity ci setup"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := respond(http.StatusUnauthorized, tc.body)
+			defer srv.Close()
+			_, err := api.New(srv.URL, tc.token).WhoAmI(context.Background())
+			var ae *api.APIError
+			if !errors.As(err, &ae) || ae.TokenKind != tc.kind || ae.Code != api.CodeTokenExpired {
+				t.Fatalf("err = %v", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("missing %q in %v", want, err)
+				}
+			}
+			for _, not := range tc.wantNot {
+				if strings.Contains(err.Error(), not) {
+					t.Errorf("unexpected %q in %v", not, err)
+				}
+			}
+		})
+	}
+}
+
+func TestTokenExpiredKeepsAServerMessageThatSaysWhatToDo(t *testing.T) {
+	for _, msg := range []string{
+		"This repository token has expired. Mint a new one with gravity ci setup, or under CLI & tokens in the app, and update the CI secret.",
+		"This token has expired. Run gravity login.",
+		"This organization key has expired. Mint a new one under CLI & tokens in the app.",
+	} {
+		srv := respond(http.StatusUnauthorized, `{"error":{"code":"token_expired","message":"`+msg+`"}}`)
+		_, err := api.New(srv.URL, "gr_repo_x").WhoAmI(context.Background())
+		srv.Close()
+		if want := msg + " [401 token_expired]"; err == nil || err.Error() != want {
+			t.Errorf("err = %v, want %q", err, want)
+		}
+	}
+}
+
+func TestTokenKindOf(t *testing.T) {
+	for token, want := range map[string]string{"gr_user_a": api.TokenKindUser, "gr_repo_a": api.TokenKindRepo, "sk_live_a": api.TokenKindOrg, "tok": "", "": ""} {
+		if got := api.TokenKindOf(token); got != want {
+			t.Errorf("TokenKindOf(%q) = %q, want %q", token, got, want)
+		}
+	}
+}
+
 func TestHTMLErrorSummary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

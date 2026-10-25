@@ -65,6 +65,14 @@ func TestGitHubAnnotations(t *testing.T) {
 	}
 }
 
+func TestGitHubWarningEscapesTitleAndMessage(t *testing.T) {
+	got := report.GitHubWarning("Gravity token expiring", "the token expires in 3 days (2026-11-02); 100% sure,\nrenew it")
+	want := "::warning title=Gravity token expiring::the token expires in 3 days (2026-11-02); 100%25 sure,%0Arenew it"
+	if got != want {
+		t.Fatalf("warning = %q", got)
+	}
+}
+
 func TestUpsertCreatesOnlyWhenAsked(t *testing.T) {
 	var posted int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
