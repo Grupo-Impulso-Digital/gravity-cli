@@ -562,7 +562,7 @@ func TestLogoutNamesTheCLIAndMachinesScreen(t *testing.T) {
 	for api, app := range map[string]string{"https://api.gravitydocs.io": "https://app.gravitydocs.io", "https://api.gravity.impulso-dev.com": "https://gravity.impulso-dev.com"} {
 		h.env["GRAVITY_API_URL"] = api
 		expectCode(t, h, h.run("logout"), 0)
-		if !strings.Contains(h.stderr.String(), "CLI & machines ("+app+"/app/settings/tokens)") {
+		if !strings.Contains(h.stderr.String(), "CLI & tokens ("+app+"/app/cli)") {
 			t.Fatalf("stderr = %s", h.stderr.String())
 		}
 	}
