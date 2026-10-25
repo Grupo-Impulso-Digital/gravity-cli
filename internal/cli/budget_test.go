@@ -94,3 +94,33 @@ func TestRunHaltedByAIDisabledExitsThree(t *testing.T) {
 		t.Fatalf("stderr = %s", h.stderr.String())
 	}
 }
+
+func TestRunHaltedByNoProviderKeyExitsThree(t *testing.T) {
+	h := newHarness(t)
+	h.env["GRAVITY_TOKEN"] = "gr_repo_ci"
+	h.platform.json("GET /api/v1/whoami", 200, whoamiRepo)
+	h.commitSpec(t)
+	pp := referencePlanPass("reference")
+	pp["options"] = map[string]any{"prose": true, "claims": false}
+	h.pipelineRoutes(t, pipelinePlan(t, pp))
+	h.platform.json("GET /api/llm/v1/instructions", 402, `{"error":{"code":"no_provider_key","message":"No LLM provider key is configured for this organization. Add one in Settings → AI."}}`)
+
+	expectCode(t, h, h.run("run", "--dry-run", "--json"), CodeLicense)
+	e := h.envelope()["error"].(map[string]any)
+	want := "No AI provider is connected for this organization. An organization admin can connect Origin or add a provider key in Gravity › Settings › AI."
+	if e["code"] != api.CodeNoProviderKey || e["exitCode"] != float64(CodeLicense) || e["message"] != want || e["details"] != nil {
+		t.Fatalf("error = %v", e)
+	}
+	finish := h.platform.find("POST", "/api/v1/runs/prun_1/finish")
+	if len(finish) != 1 || finish[0].Body["status"] != api.StatusFailed {
+		t.Fatalf("the halted run is finished as failed: %+v", finish)
+	}
+	if len(h.platform.find("POST", "/api/llm/v1/messages")) != 0 {
+		t.Fatal("no model call without a provider")
+	}
+
+	expectCode(t, h, h.run("run", "--dry-run"), CodeLicense)
+	if plain := "gravity: No AI provider is connected for this organization. An organization admin can connect Origin or add a provider key in Gravity > Settings > AI."; !strings.Contains(h.stderr.String(), plain) || strings.Contains(h.stderr.String(), "run halted") {
+		t.Fatalf("stderr = %s", h.stderr.String())
+	}
+}

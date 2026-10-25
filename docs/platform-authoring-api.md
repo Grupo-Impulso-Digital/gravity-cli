@@ -9,7 +9,7 @@ the answer. The typed requests and responses live in `internal/api`.
 **Audience:** CLI contributors and the Gravity platform team.
 **Consumers:** `login`, `logout`, `whoami`, `org`, `setup`, `show`,
 `validate`, `structure`, `run`, `review`, `runs`, `approve`, `ci`, `status`,
-`check`, `explain`, `agent` and `version`. CLI 1.1 has no stubs for removed commands: an unknown
+`doctor`, `check`, `explain`, `agent` and `version`. CLI 1.1 has no stubs for removed commands: an unknown
 command is cobra's usage error.
 
 ## Conventions
@@ -67,7 +67,7 @@ command is cobra's usage error.
 | `0` | Success, or nothing to do; a fork or Dependabot pull request without a token. |
 | `1` | Findings: `validate` errors (also before a local real run and after a local dry run), `check` findings in `failOn`, structure conflicts, refused approvals, `ci check`, `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, a stale or dirty branch, a recording that no longer matches. |
-| `3` | Licence or organization-policy refusal (`module_disabled`, `seat_limit`, `ai_disabled`). |
+| `3` | Licence or organization-policy refusal (`module_disabled`, `seat_limit`, `ai_disabled`, and `no_provider_key`, a 402 decoded to `*api.NoProviderKeyError`: no Origin and no provider key). |
 | `4` | No usable credentials: no token (`token_missing`), only unexpanded CI variables such as a literal `$(GRAVITY_REPO_TOKEN)` in CI, or locally with no profile token (`token_unresolved`), or any `401` (`unauthorized`), which also stops a run without its finish call. |
 | `5` | An AI spend cap is used up (`budget_exceeded`, a 402 decoded to `*api.BudgetExceededError`): the run halts and is finished as failed. |
 | `130` | Interrupted: the run was finished with `status: cancelled` (or cancelled through `POST /runs/{id}/cancel`). |
@@ -110,6 +110,7 @@ the error chain wins, then a `401`, then a spend cap refusal, then the command's
 | `GET` | `/api/v1/content/resolve`, `/api/v1/content/pages/{pageId}/provenance` | `explain` |
 | `POST` | `/api/v1/nucleus/recall`, `/api/v1/nucleus/memories` | `nucleus` passes, doc tools |
 | `POST` | `/api/llm/v1/messages` | every AI pass |
+| `GET` | `/api/llm/v1/config` | `doctor`: `{provider, model, hasKey, availableProviders}` and, when the server sends it, `spend` (below) |
 | `GET` | `/api/llm/v1/instructions?runPassId=&model=&maxOutput=` | `run`: the instructions bundle of every run pass that calls a model, fetched once right after `POST /runs` (`api.Client.InstructionsBundle`); `model` from `--model`, `maxOutput` from the hidden `--max-output` |
 
 ## Guided runs (CLI 1.1)
@@ -405,7 +406,10 @@ source?>`), `<existing_units>`, `<entrypoint_files>`, `<units>` and
   message: "<limit>"}]`) or from an object (`scope` `run` | `month` |
   `feature`, `feature`, `limitUsd`, `spentUsd`, `resetsAt`), every field
   optional; CLI 1.2+ callers (those sending `context.instructionsVersion`) get
-  the object, older ones the list. `ai_disabled` exits `3`. A `429`
+  the object, older ones the list. `ai_disabled` and `no_provider_key` exit `3`
+  (the latter decodes to `*api.NoProviderKeyError`, message "No AI provider is
+  connected for this organization. An organization admin can connect Origin or
+  add a provider key in Gravity › Settings › AI."). A `429`
   `concurrency_limited` (body `retryAfter`, header `Retry-After`) is retried
   by the gateway client after that wait.
 
@@ -417,8 +421,16 @@ source?>`), `<existing_units>`, `<entrypoint_files>`, `<units>` and
 `map-units`. The CLI has no prompts of its own: every system prompt and tool
 description comes from the run pass's instructions bundle (below), and the
 gateway adds no layers to a call that carries `instructionsVersion`.
-`402 no_provider_key` means the organization has no LLM key; it halts the
-run. The CLI never calls `GET /api/llm/v1/prompts/{name}` (kept by
+`402 no_provider_key` means the organization has no AI provider (neither
+Origin nor a provider key); it halts the run and exits `3`. `gravity doctor`
+reads `GET /api/llm/v1/config`: `provider`, `model`, `hasKey` (`false` is the
+same refusal, so doctor ends with it) and `availableProviders`, plus an
+optional `spend` object the CLI shows when present: `{monthStart, resetsAt,
+org, features}` where `org` and every `features[]` line is `{feature,
+spentUsd, maxUsdPerRun, maxUsdPerMonth}` (`feature` is `all` for the
+organization; limits are `null` when unset; extra keys such as `projectedUsd`
+are ignored). A server that omits `spend` leaves doctor with a note that it
+does not report the caps. The CLI never calls `GET /api/llm/v1/prompts/{name}` (kept by
 the server for CLI 1.1).
 
 ### Agent loop (CLI 1.2)

@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.4.0 — Unreleased
+
+### Added
+
+- `gravity doctor` reports whether AI is ready for the organization: the
+  connected providers, the default model and the active spend caps (this run,
+  the month and each feature, with the month's spend and the reset date). It
+  reads `GET /api/llm/v1/config`, needs a token but not a repository, and shows
+  the caps only when the server sends them (the optional `spend` object); an
+  older server gets a note instead of numbers, and `--json` carries
+  `data.spend: null`. With no provider connected it prints the rest, then ends
+  with the `no_provider_key` error and exit `3`.
+- A `402 no_provider_key` (the organization has neither Origin nor a provider
+  key) is a typed `api.NoProviderKeyError` with a message that says what to do:
+  "No AI provider is connected for this organization. An organization admin can
+  connect Origin or add a provider key in Gravity › Settings › AI." The run
+  still halts and is finished as failed; `--json` carries
+  `error.code: no_provider_key` and `exitCode: 3`.
+
+### Changed
+
+- A missing AI provider exits `3`, the code of the other refusals an
+  organization admin has to lift (`module_disabled`, `seat_limit`,
+  `ai_disabled`), instead of the generic `2`; it ranks with them above a
+  rejected token (`4`) and a spend cap (`5`). The CI templates and the GitHub
+  action pass it through unchanged.
+
 ## v1.3.0 — Unreleased
 
 ### Added

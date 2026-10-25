@@ -299,7 +299,8 @@ list in one reply:
 - There is no CLI token budget: the repository's run and month budgets in
   Gravity apply. `budget_exceeded`, `no_provider_key` and `ai_disabled` halt
   the whole run, which is finished as failed; `budget_exceeded` exits `5` and
-  says which cap was reached, `ai_disabled` exits `3` (see Exit codes). A `429`
+  says which cap was reached, `ai_disabled` and `no_provider_key` exit `3` (see
+  Exit codes). `gravity doctor` shows the provider and the caps up front. A `429`
   `concurrency_limited` is retried after its `Retry-After`.
 
 Every pass report records which model, provider and instructions version it
@@ -508,6 +509,7 @@ Gravity does not fence pages per repository.
 | `gravity runs` | Recent runs (`--limit`, default 10; `--watch` until none is running); `runs show <id>` per-pass state, `runs cancel <id>`. |
 | `gravity approve [site/space]... [--all]` | List the spaces waiting for a grant and why, grant them (user token); a pass name grants that pass's space. |
 | `gravity ci setup\|check` | Write the CI file, mint and install `GRAVITY_REPO_TOKEN` (`--provider github\|gitlab\|bitbucket\|azure\|jenkins\|circleci\|none`, `--no-secret`); check the file and the secret (exit `1` when incomplete). |
+| `gravity doctor` | Whether AI is ready for the organization: connected providers, default model and the active spend caps (per run, per month, per feature, with the month's spend, when the server reports them). Exits `3` when no provider is connected. Needs a token, not a repository. |
 | `gravity status` | Auth, connection, manifest, passes with targets and watermarks, recent runs, open bundles, tokens, health and capability warnings; `--runs N` (default 5), `--check`. |
 | `gravity check` | The pull request gate: check passes (or the built-in check: drift, coverage of new operations, verbatim notes) plus every pass's doc impact; `--pass`, `--from`, `--to`, `--fail-on`, `--annotate`, `--comment`. |
 | `gravity explain <page>` | Per block: last writer (repository, pass, commit, run), history, ownership and the page lock; `<page>` is a page id, `<site>/<space>/<page>` or a viewer URL; `--block <key>`. |
@@ -604,7 +606,7 @@ between them.
 | `0` | Success, or nothing to do (no change in scope; a fork or Dependabot pull request without a token). |
 | `1` | Findings: `validate` errors (also before a local real run, and in a local dry run that sending would fail on), `check` findings in `failOn`, structure conflicts, refused approvals, `ci check` on an incomplete setup, `status --check` on an unhealthy repository. |
 | `2` | Operational error: network, bad input, invalid manifest, missing target, failed pass, unknown or inapplicable `--pass`, lease timeout, a branch behind or diverged from its upstream, uncommitted tracked files, a recording that no longer matches HEAD. |
-| `3` | Licence or organization-policy refusal (`module_disabled`, `seat_limit`, `ai_disabled`): ask a workspace administrator. With `ai_disabled`, AI is turned off for the organization and an admin can turn it on in Gravity › AI usage; the run halts and is finished as failed. |
+| `3` | Licence or organization-policy refusal (`module_disabled`, `seat_limit`, `ai_disabled`, `no_provider_key`): ask a workspace administrator. With `ai_disabled`, AI is turned off for the organization and an admin can turn it on in Gravity › AI usage; with `no_provider_key`, no AI provider is connected and an admin connects Origin or adds a provider key in Gravity › Settings › AI (`gravity doctor` reports it too). The run halts and is finished as failed. |
 | `4` | No usable credentials: no token (`token_missing`), only CI variables that were never expanded such as a literal `$(GRAVITY_REPO_TOKEN)`, in CI or locally without a profile token (`token_unresolved`), or a token the server rejects (`401`, also in the middle of a run). |
 | `5` | An AI spend cap is used up (`budget_exceeded`): this run's, the month's or a feature's. The run halts and is finished as failed; ask an organization admin to raise the cap in Gravity › AI usage. |
 | `130` | Interrupted (Ctrl-C or SIGTERM): the run was finished as cancelled and its lease released. |
@@ -624,7 +626,8 @@ by Dependabot by their actor; only those skip with a notice when the token is
 missing. Bitbucket runs no pipeline for a fork
 in the target repository, so a missing token there is always `4`. In CI, a
 run exits `1` only for `check` findings; a failed pass or a missing target
-exits `2`, and a spend cap that halts the run exits `5`. Unapproved targets,
+exits `2`, a spend cap that halts the run exits `5`, and a missing AI provider
+exits `3`. Unapproved targets,
 missing scopes and missing modules only skip their pass, unless `--strict`
 turns the first two into `2` and missing modules into `3`.
 
@@ -633,8 +636,9 @@ turns the first two into `2` and missing modules into `3`.
 - 1.1 removed `gravity init` (use `gravity setup` and `gravity ci setup`),
   `gravity passes` (use `gravity show`) and `gravity preview` (use
   `gravity run --dry-run`). The 0.x commands that 1.0 replaced (`auth`,
-  `doctor`, `ping`, `repos`, `spaces`, `sync`, `docs`, ...) are gone too,
-  without stubs: an unknown command is a usage error and exits `2`.
+  `ping`, `repos`, `spaces`, `sync`, `docs`, ...) are gone too, without
+  stubs: an unknown command is a usage error and exits `2`. `gravity doctor`
+  came back in 1.4 with a new job: the organization's AI provider and spend caps.
 - A manifest without `version: 2` is a schema error; 1.1 no longer converts v1
   manifests. Run `gravity setup` to write a fresh one.
 - The v0.x `config.yaml` is ignored; sign in again with `gravity login`.
