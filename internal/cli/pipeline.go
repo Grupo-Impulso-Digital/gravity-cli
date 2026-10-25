@@ -113,6 +113,7 @@ func (a *app) pipelineSession(ctx context.Context, mode pipelineMode, f pipeline
 	}
 	s.who = who
 	s.opts.RepoParam = repoParam(who, info)
+	a.warnTokenExpiry(c, who, creds.TokenKind)
 	return s, nil
 }
 

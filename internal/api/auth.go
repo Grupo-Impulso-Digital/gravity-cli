@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // Token kinds.
@@ -13,6 +14,19 @@ const (
 	TokenKindUser = "user"
 	TokenKindRepo = "repo"
 )
+
+// TokenKindOf infers the token kind from its prefix; a token of an unknown shape has no kind.
+func TokenKindOf(token string) string {
+	switch {
+	case strings.HasPrefix(token, "gr_user_"):
+		return TokenKindUser
+	case strings.HasPrefix(token, "gr_repo_"):
+		return TokenKindRepo
+	case strings.HasPrefix(token, "sk_live_"):
+		return TokenKindOrg
+	}
+	return ""
+}
 
 // Device poll statuses.
 const (

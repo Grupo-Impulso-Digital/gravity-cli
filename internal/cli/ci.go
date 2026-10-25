@@ -186,7 +186,9 @@ func (a *app) ciSetup(ctx context.Context, provider string, noSecret bool) error
 	}
 	d.Token = ciToken{Scopes: setup.Scopes(passes), Secret: secretSkipped}
 	token := a.mintCIToken(ctx, s, conn, plan, &d)
+	expiry := ""
 	if token != "" {
+		expiry = tokenExpiryLine(d.Token.ExpiresAt)
 		installed := false
 		if !noSecret && provider == s.info.provider && (provider == cisetup.GitHub || provider == cisetup.GitLab) {
 			if inst := cisetup.FindInstaller(ctx, provider, s.info.remoteKey, a.secretRunner); inst != nil {
@@ -228,6 +230,9 @@ func (a *app) ciSetup(ctx context.Context, provider string, noSecret bool) error
 		if d.Token.Note != "" {
 			lines = append(lines, "Token: "+d.Token.Note)
 		}
+	}
+	if expiry != "" {
+		lines = append(lines, expiry)
 	}
 	if plan.CommentToken != "" {
 		lines = append(lines, "Comments: "+plan.CommentHint)

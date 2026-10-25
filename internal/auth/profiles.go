@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	yaml "go.yaml.in/yaml/v3"
 
@@ -53,17 +52,7 @@ func ConfigDir() (string, error) {
 }
 
 // TokenKindOf infers the token kind from its prefix.
-func TokenKindOf(token string) string {
-	switch {
-	case strings.HasPrefix(token, "gr_user_"):
-		return api.TokenKindUser
-	case strings.HasPrefix(token, "gr_repo_"):
-		return api.TokenKindRepo
-	case strings.HasPrefix(token, "sk_live_"):
-		return api.TokenKindOrg
-	}
-	return ""
-}
+func TokenKindOf(token string) string { return api.TokenKindOf(token) }
 
 // LoadProfiles reads profiles.yaml; a missing file is an empty set of profiles.
 func LoadProfiles() (*Profiles, error) {

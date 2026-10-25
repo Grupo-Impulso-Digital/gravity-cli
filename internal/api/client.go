@@ -119,8 +119,7 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		if status >= 200 && status < 300 {
 			return c.decodeOK(r, header, data, out)
 		}
-		apiErr := decodeError(status, header, data)
-		apiErr.Method, apiErr.Path = r.method, r.path
+		apiErr := c.apiError(r, status, header, data)
 		if !retryable(status) || attempt == attempts {
 			return classify(apiErr)
 		}
@@ -161,8 +160,7 @@ func (c *Client) doLLM(ctx context.Context, r request, payload []byte, out any) 
 		case status >= 200 && status < 300:
 			return c.decodeOK(r, header, data, out)
 		default:
-			apiErr := decodeError(status, header, data)
-			apiErr.Method, apiErr.Path = r.method, r.path
+			apiErr := c.apiError(r, status, header, data)
 			if !retryable(status) {
 				return classify(apiErr)
 			}
@@ -177,6 +175,12 @@ func (c *Client) doLLM(ctx context.Context, r request, payload []byte, out any) 
 		}
 		spent += wait
 	}
+}
+
+func (c *Client) apiError(r request, status int, header http.Header, data []byte) *APIError {
+	e := decodeError(status, header, data)
+	e.Method, e.Path, e.TokenKind = r.method, r.path, TokenKindOf(c.Token)
+	return e
 }
 
 func (c *Client) llmBackoff(attempt, retryAfter int) time.Duration {
