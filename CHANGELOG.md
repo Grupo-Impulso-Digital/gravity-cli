@@ -27,7 +27,7 @@
   rejected token (`4`) and a spend cap (`5`). The CI templates and the GitHub
   action pass it through unchanged.
 
-## v1.3.0 — Unreleased
+## v1.3.0 — 2026-10-25
 
 ### Added
 
