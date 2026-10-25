@@ -234,7 +234,7 @@ func (a *app) requireToken(creds auth.Credentials) error {
 	}
 	err := fmt.Errorf("not signed in: run `gravity login`, or set %s (a repository token) or %s", config.EnvRepoToken, config.EnvToken)
 	if c, _ := ci.Detect(context.Background(), ci.Env{Getenv: a.env}, nil); c.IsCI() {
-		err = fmt.Errorf("no Gravity token in this %s job: %s and %s are both empty; store the repository token (from `gravity init`, or the app's CLI & machines screen) as the CI secret %s and pass it to the gravity step", ciLabel(c.Provider), config.EnvRepoToken, config.EnvToken, config.EnvRepoToken)
+		err = fmt.Errorf("no Gravity token in this %s job: %s and %s are both empty; store the repository token (from `gravity init`, or the app's CLI & tokens screen) as the CI secret %s and pass it to the gravity step", ciLabel(c.Provider), config.EnvRepoToken, config.EnvToken, config.EnvRepoToken)
 	}
 	return &ExitError{Code: CodeCredentials, ErrCode: "token_missing", Err: err}
 }

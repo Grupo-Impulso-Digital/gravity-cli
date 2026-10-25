@@ -115,7 +115,7 @@ func (a *app) revokeExplicitToken(ctx context.Context, token, source string) (*t
 	tl := &tokenLogout{Source: source, Kind: auth.TokenKindOf(token)}
 	if tl.Kind != api.TokenKindUser {
 		app := appBaseURL(firstNonEmpty(a.gf.apiURL, a.env(config.EnvAPIURL), a.repoAPIURL(ctx), config.DefaultAPIURL))
-		a.ui.Warn("token_kind_unsupported", "the "+source+" token is not a user token (gr_user_); repository and organization tokens are revoked in the app under Settings › CLI & machines ("+app+"/app/settings/tokens), not by gravity logout")
+		a.ui.Warn("token_kind_unsupported", "the "+source+" token is not a user token (gr_user_); repository and organization tokens are revoked in the app under CLI & tokens ("+app+"/app/cli), not by gravity logout")
 		return tl, nil
 	}
 	creds, err := a.credentials(a.repoAPIURL(ctx))

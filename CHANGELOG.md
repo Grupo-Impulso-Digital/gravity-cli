@@ -27,6 +27,9 @@
   to the kind of token) is shown as it is, without the hint repeated after it.
   A rejected repository token in a profile no longer gets the advice to run
   `gravity login`.
+- `gravity logout` and the missing-token error of a CI job name the app's
+  CLI & tokens screen (`/app/cli`) instead of the old Settings › CLI & machines
+  (`/app/settings/tokens`).
 
 ## v1.4.0 — 2026-10-25
 
